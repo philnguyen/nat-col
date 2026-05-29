@@ -26,6 +26,23 @@ structure Node (α : Type u) where
   elements : Array α
 deriving BEq, Repr
 
+/-- The derived structural `BEq` decides propositional equality: it compares the two fields
+with their own (lawful) `BEq`s. Needed so that maps — whose leaves are `Node α` — inherit
+`LawfulBEq`. -/
+instance {α : Type u} [BEq α] [LawfulBEq α] : LawfulBEq (Node α) where
+  eq_of_beq {a b} h := by
+    obtain ⟨ma, ea⟩ := a
+    obtain ⟨mb, eb⟩ := b
+    -- the derived `==` on constructors reduces to a conjunction of the field comparisons
+    have h' : (ma == mb && ea == eb) = true := h
+    rw [Bool.and_eq_true] at h'
+    rw [eq_of_beq h'.1, eq_of_beq h'.2]
+  rfl {a} := by
+    obtain ⟨m, e⟩ := a
+    show (m == m && e == e) = true
+    rw [Bool.and_eq_true]
+    exact ⟨BEq.rfl, BEq.rfl⟩
+
 namespace Node
 
 /-- The empty node (no slots present). -/

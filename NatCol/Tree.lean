@@ -146,6 +146,38 @@ def beq [BEq L] : (h : Nat) → Tree L h → Tree L h → Bool
   | h + 1, a, b => a.positionsMask == b.positionsMask && a.elements.isEqv b.elements (beq h)
 termination_by h => h
 
+/-- `beq` is reflexive at every height (given a reflexive leaf `BEq`). -/
+theorem beq_refl [BEq L] [LawfulBEq L] : (h : Nat) → (t : Tree L h) → beq h t t = true := by
+  intro h
+  induction h with
+  | zero => intro t; simp only [beq]; exact BEq.rfl
+  | succ h ih =>
+    intro t
+    obtain ⟨m, e⟩ := t
+    simp only [beq, Bool.and_eq_true]
+    refine ⟨BEq.rfl, ?_⟩
+    rw [Array.isEqv_iff_rel]
+    exact ⟨rfl, fun i _ => ih e[i]⟩
+
+/-- `beq` decides propositional equality: structurally-equal trees are equal. (This is the
+heart of `LawfulBEq (NatCollection L)`; it holds for *any* tree, canonical or not.) -/
+theorem eq_of_beq [BEq L] [LawfulBEq L] :
+    (h : Nat) → {a b : Tree L h} → beq h a b = true → a = b := by
+  intro h
+  induction h with
+  | zero => intro a b hb; simp only [beq] at hb; exact LawfulBEq.eq_of_beq hb
+  | succ h ih =>
+    intro a b hb
+    obtain ⟨ma, ea⟩ := a
+    obtain ⟨mb, eb⟩ := b
+    simp only [beq, Bool.and_eq_true] at hb
+    obtain ⟨hm, he⟩ := hb
+    rw [Array.isEqv_iff_rel] at he
+    obtain ⟨hsize, hpt⟩ := he
+    have hmeq : ma = mb := LawfulBEq.eq_of_beq hm
+    have heeq : ea = eb := Array.ext hsize (fun i hi₁ _ => ih (hpt i hi₁))
+    rw [hmeq, heeq]
+
 /-- Collect `(key, value)` pairs into `acc`, ascending by key. `pfx` carries the key bits
 fixed by higher levels. -/
 def toArrayAux (pfx : Nat) : (h : Nat) → Tree L h → Array (Nat × V) → Array (Nat × V)

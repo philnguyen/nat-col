@@ -37,6 +37,13 @@ namespace NatMap
 variable {α : Type u}
 
 instance [BEq α] : BEq (NatMap α) := inferInstanceAs (BEq (NatCollection (Node α)))
+instance [BEq α] [LawfulBEq α] : LawfulBEq (NatMap α) :=
+  inferInstanceAs (LawfulBEq (NatCollection (Node α)))
+instance [BEq α] [LawfulBEq α] : DecidableEq (NatMap α) :=
+  inferInstanceAs (DecidableEq (NatCollection (Node α)))
+instance [Hashable α] : Hashable (NatMap α) := inferInstanceAs (Hashable (NatCollection (Node α)))
+instance [BEq α] [LawfulBEq α] [Hashable α] : LawfulHashable (NatMap α) where
+  hash_eq _ _ h := by rw [eq_of_beq h]
 instance : EmptyCollection (NatMap α) := ⟨NatCollection.empty⟩
 
 /-- The empty map. -/
@@ -118,6 +125,16 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 #guard !(NatMap.ofList [(1, 11)]).restricts Nat.ble (NatMap.ofList [(1, 10)])           -- 11 ≤ 10 fails
 #guard (NatMap.empty : NatMap Nat).restricts Nat.ble m1                                 -- empty restricts all
 #guard m1.restricts (· == ·) m1                                                         -- reflexive
+
+-- lawful/decidable equality and a compatible hash (requires the value type to be lawful/hashable)
+example : LawfulBEq (NatMap Nat) := inferInstance
+example : LawfulHashable (NatMap Nat) := inferInstance
+example : DecidableEq (NatMap Nat) := inferInstance
+-- insertion order doesn't matter: equal maps compare equal, decide `=`, and hash equally
+#guard NatMap.ofList [(1, 10), (2, 20)] = NatMap.ofList [(2, 20), (1, 10)]
+#guard ¬ (NatMap.ofList [(1, 10)] = NatMap.ofList [(1, 11)])
+#guard (NatMap.ofList [(1, 10), (2, 20)] == NatMap.ofList [(2, 20), (1, 10)]) = true
+#guard hash (NatMap.ofList [(1, 10), (2, 20)]) == hash (NatMap.ofList [(2, 20), (1, 10)])
 
 end Tests
 

@@ -35,6 +35,11 @@ def NatSet : Type := NatCollection UInt32
 namespace NatSet
 
 instance : BEq NatSet := inferInstanceAs (BEq (NatCollection UInt32))
+instance : LawfulBEq NatSet := inferInstanceAs (LawfulBEq (NatCollection UInt32))
+instance : DecidableEq NatSet := inferInstanceAs (DecidableEq (NatCollection UInt32))
+instance : Hashable NatSet := inferInstanceAs (Hashable (NatCollection UInt32))
+instance : LawfulHashable NatSet where
+  hash_eq _ _ h := by rw [eq_of_beq h]
 instance : EmptyCollection NatSet := ⟨NatCollection.empty⟩
 
 /-- The empty set. -/
@@ -121,6 +126,19 @@ section Tests
 #guard (NatSet.ofList [1, 2]) ⊆ (NatSet.ofList [1, 2])                      -- reflexive
 #guard ¬ ((NatSet.ofList [1, 2, 3]) ⊆ (NatSet.ofList [1, 2]))
 #guard ¬ ((NatSet.ofList [1, 1000]) ⊆ (NatSet.ofList [1, 2]))               -- taller -> not subset
+
+-- lawful structural equality, decidable propositional equality, and a hash that respects it
+example : LawfulBEq NatSet := inferInstance
+example : LawfulHashable NatSet := inferInstance
+example : DecidableEq NatSet := inferInstance
+-- with `DecidableEq`, `#guard` can take propositional `=` directly (decided via `beq`)
+#guard NatSet.ofList [1, 2, 3] = NatSet.ofList [3, 2, 1, 2]
+#guard ¬ (NatSet.ofList [1, 2] = NatSet.ofList [1, 2, 3])
+-- the same set built two ways is `==` and hashes equally (canonical form)
+#guard (NatSet.ofList [1, 2, 3] == NatSet.ofList [3, 2, 1, 2]) = true
+#guard hash (NatSet.ofList [1, 2, 3]) == hash (NatSet.ofList [3, 2, 1, 2])
+-- mixed heights collapse to the same canonical value, so hashes still agree
+#guard hash (NatSet.ofList [1, 1000] |>.erase 1000) == hash (NatSet.ofList [1])
 
 end Tests
 

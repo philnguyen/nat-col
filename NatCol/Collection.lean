@@ -119,6 +119,37 @@ def beq [BEq L] (a b : NatCollection L) : Bool :=
 
 instance [BEq L] : BEq (NatCollection L) := ⟨beq⟩
 
+/-- Hash a collection by its `(key, value)` list. The list is derived structurally, so
+`BEq`-equal collections hash equally; since the list is also sorted and canonical, the hash
+agrees with logical equality too. -/
+instance [Hashable V] : Hashable (NatCollection L) := ⟨fun c => hash c.toList⟩
+
+/-- `beq` decides propositional equality, so the structural `BEq` is lawful. With this,
+`LawfulHashable (NatCollection L)` follows automatically from the core
+`[LawfulBEq] → [LawfulHashable]` instance. -/
+instance [BEq L] [LawfulBEq L] : LawfulBEq (NatCollection L) where
+  eq_of_beq {a b} hb := by
+    have hb' : NatCollection.beq a b = true := hb
+    unfold NatCollection.beq at hb'
+    split at hb'
+    · rename_i hh
+      obtain ⟨ha, ta⟩ := a
+      obtain ⟨hbh, tb⟩ := b
+      dsimp only at hh hb'
+      subst hh
+      have : ta = tb := Tree.eq_of_beq _ hb'
+      rw [this]
+    · exact absurd hb' (by simp)
+  rfl {a} := by
+    show NatCollection.beq a a = true
+    unfold NatCollection.beq
+    rw [dif_pos (rfl : a.height = a.height)]
+    exact Tree.beq_refl a.height a.tree
+
+/-- Decidable propositional equality, built from the lawful `BEq` (so it agrees with the
+`==` test and, via canonical form, with logical equality). -/
+instance [BEq L] [LawfulBEq L] : DecidableEq (NatCollection L) := _root_.instDecidableEqOfLawfulBEq
+
 end NatCollection
 
 end NatCol
