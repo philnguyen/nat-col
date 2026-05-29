@@ -52,6 +52,14 @@ def inter (s t : NatSet) : NatSet := NatCollection.meet (fun _ _ => ()) s t
 /-- Subset test. -/
 def subset (s t : NatSet) : Bool := NatCollection.restricts (fun _ _ => true) s t
 
+instance : Union NatSet := ⟨union⟩
+instance : Inter NatSet := ⟨inter⟩
+
+-- `subset` is `Bool`-valued, so phrase `s ⊆ t` as `subset … = true` and make it
+-- decidable, keeping it usable in `#guard` / `decide`.
+instance : HasSubset NatSet := ⟨fun s t => s.subset t = true⟩
+instance (s t : NatSet) : Decidable (s ⊆ t) := inferInstanceAs (Decidable (s.subset t = true))
+
 /-- Elements in ascending order. -/
 def toList (s : NatSet) : List Nat := (NatCollection.toList s).map Prod.fst
 /-- Build a set from a list of elements. -/
@@ -92,27 +100,27 @@ section Tests
 #guard (NatSet.ofList [3, 1, 2, 1, 3]).toList == [1, 2, 3]
 #guard (NatSet.ofList [100, 2000, 30000]).size == 3
 
--- union
-#guard ((NatSet.ofList [1, 2]).union (NatSet.ofList [2, 3])).toList == [1, 2, 3]
-#guard (NatSet.ofList [1, 2]).union ∅ == NatSet.ofList [1, 2]               -- right identity
-#guard (∅ : NatSet).union (NatSet.ofList [1, 2]) == NatSet.ofList [1, 2]    -- left identity
-#guard (NatSet.ofList [1, 2]).union (NatSet.ofList [1, 2]) == NatSet.ofList [1, 2]  -- idempotent
-#guard ((NatSet.ofList [1, 1000]).union (NatSet.ofList [2, 5])).toList == [1, 2, 5, 1000]  -- mixed heights
+-- union (via the `∪` notation)
+#guard ((NatSet.ofList [1, 2]) ∪ (NatSet.ofList [2, 3])).toList == [1, 2, 3]
+#guard (NatSet.ofList [1, 2]) ∪ ∅ == NatSet.ofList [1, 2]               -- right identity
+#guard (∅ : NatSet) ∪ (NatSet.ofList [1, 2]) == NatSet.ofList [1, 2]    -- left identity
+#guard (NatSet.ofList [1, 2]) ∪ (NatSet.ofList [1, 2]) == NatSet.ofList [1, 2]  -- idempotent
+#guard ((NatSet.ofList [1, 1000]) ∪ (NatSet.ofList [2, 5])).toList == [1, 2, 5, 1000]  -- mixed heights
 
--- intersection
-#guard ((NatSet.ofList [1, 2, 3]).inter (NatSet.ofList [2, 3, 4])).toList == [2, 3]
-#guard (NatSet.ofList [1, 2]).inter ∅ == (∅ : NatSet)                       -- right annihilator
-#guard (∅ : NatSet).inter (NatSet.ofList [1, 2]) == (∅ : NatSet)            -- left annihilator
-#guard (NatSet.ofList [1, 2]).inter (NatSet.ofList [1, 2]) == NatSet.ofList [1, 2]  -- idempotent
-#guard (NatSet.ofList [1, 2]).inter (NatSet.ofList [3, 4]) == (∅ : NatSet)  -- disjoint -> empty
-#guard ((NatSet.ofList [1, 1000]).inter (NatSet.ofList [1000, 2])).toList == [1000]  -- mixed heights, shrinks
+-- intersection (via the `∩` notation)
+#guard ((NatSet.ofList [1, 2, 3]) ∩ (NatSet.ofList [2, 3, 4])).toList == [2, 3]
+#guard (NatSet.ofList [1, 2]) ∩ ∅ == (∅ : NatSet)                       -- right annihilator
+#guard (∅ : NatSet) ∩ (NatSet.ofList [1, 2]) == (∅ : NatSet)            -- left annihilator
+#guard (NatSet.ofList [1, 2]) ∩ (NatSet.ofList [1, 2]) == NatSet.ofList [1, 2]  -- idempotent
+#guard (NatSet.ofList [1, 2]) ∩ (NatSet.ofList [3, 4]) == (∅ : NatSet)  -- disjoint -> empty
+#guard ((NatSet.ofList [1, 1000]) ∩ (NatSet.ofList [1000, 2])).toList == [1000]  -- mixed heights, shrinks
 
--- subset
-#guard (∅ : NatSet).subset (NatSet.ofList [1, 2])                          -- empty restricts all
-#guard (NatSet.ofList [1, 2]).subset (NatSet.ofList [1, 2, 3])
-#guard (NatSet.ofList [1, 2]).subset (NatSet.ofList [1, 2])                 -- reflexive
-#guard !(NatSet.ofList [1, 2, 3]).subset (NatSet.ofList [1, 2])
-#guard !(NatSet.ofList [1, 1000]).subset (NatSet.ofList [1, 2])             -- taller -> not subset
+-- subset (via the `⊆` notation)
+#guard (∅ : NatSet) ⊆ (NatSet.ofList [1, 2])                               -- empty restricts all
+#guard (NatSet.ofList [1, 2]) ⊆ (NatSet.ofList [1, 2, 3])
+#guard (NatSet.ofList [1, 2]) ⊆ (NatSet.ofList [1, 2])                      -- reflexive
+#guard ¬ ((NatSet.ofList [1, 2, 3]) ⊆ (NatSet.ofList [1, 2]))
+#guard ¬ ((NatSet.ofList [1, 1000]) ⊆ (NatSet.ofList [1, 2]))               -- taller -> not subset
 
 end Tests
 

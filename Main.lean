@@ -12,9 +12,9 @@ def main : IO Unit := do
   IO.println s!"t             = {t.toList}"
   IO.println s!"s.size        = {s.size}"
   IO.println s!"s.contains 4  = {s.contains 4}   s.contains 7 = {s.contains 7}"
-  IO.println s!"s ∪ t         = {(s.union t).toList}"
-  IO.println s!"s ∩ t         = {(s.inter t).toList}"
-  IO.println s!"t ⊆ (s ∪ t)   = {t.subset (s.union t)}"
+  IO.println s!"s ∪ t         = {(s ∪ t).toList}"
+  IO.println s!"s ∩ t         = {(s ∩ t).toList}"
+  IO.println s!"t ⊆ (s ∪ t)   = {t.subset (s ∪ t)}"
   IO.println s!"erase 1000    = {(s.erase 1000).toList}"
 
   IO.println ""

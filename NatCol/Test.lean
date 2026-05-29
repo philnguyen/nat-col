@@ -21,40 +21,40 @@ private def b : NatSet := NatSet.ofList [2, 3, 40, 50]
 private def c : NatSet := NatSet.ofList [3, 40, 2000]
 
 -- commutativity
-#guard a.union b == b.union a
-#guard a.inter b == b.inter a
+#guard a ∪ b == b ∪ a
+#guard a ∩ b == b ∩ a
 
 -- associativity
-#guard (a.union b).union c == a.union (b.union c)
-#guard (a.inter b).inter c == a.inter (b.inter c)
+#guard (a ∪ b) ∪ c == a ∪ (b ∪ c)
+#guard (a ∩ b) ∩ c == a ∩ (b ∩ c)
 
 -- idempotence
-#guard a.union a == a
-#guard a.inter a == a
+#guard a ∪ a == a
+#guard a ∩ a == a
 
 -- absorption
-#guard a.union (a.inter b) == a
-#guard a.inter (a.union b) == a
+#guard a ∪ (a ∩ b) == a
+#guard a ∩ (a ∪ b) == a
 
 -- inclusion–exclusion on sizes
-#guard (a.union b).size + (a.inter b).size == a.size + b.size
+#guard (a ∪ b).size + (a ∩ b).size == a.size + b.size
 
--- union ⊇ each side; inter ⊆ each side (via subset)
-#guard a.subset (a.union b)
-#guard b.subset (a.union b)
-#guard (a.inter b).subset a
-#guard (a.inter b).subset b
+-- union ⊇ each side; inter ⊆ each side
+#guard a ⊆ (a ∪ b)
+#guard b ⊆ (a ∪ b)
+#guard (a ∩ b) ⊆ a
+#guard (a ∩ b) ⊆ b
 
 -- subset is transitive and antisymmetric (concretely)
-#guard (NatSet.ofList [40]).subset a && a.subset (a.union b) && (NatSet.ofList [40]).subset (a.union b)
-#guard (a.subset b == false) || (b.subset a == false) || (a == b)  -- antisymmetry shape
+#guard (NatSet.ofList [40]) ⊆ a ∧ a ⊆ (a ∪ b) ∧ (NatSet.ofList [40]) ⊆ (a ∪ b)
+#guard a ⊆ b → b ⊆ a → a == b  -- antisymmetry
 
 /-! ## Height growth then shrink round-trips back to a canonical value -/
 
 -- inserting a deep key then erasing it returns the original (canonical) set
 #guard (a.insert 1000000 |>.erase 1000000) == a
 -- union with a tall singleton then intersecting it away shrinks back
-#guard (a.union (NatSet.ofList [5000000])).inter a == a
+#guard (a ∪ (NatSet.ofList [5000000])) ∩ a == a
 -- building the same set two ways compares equal regardless of height history
 #guard NatSet.ofList [1, 2, 40, 1000] == (NatSet.empty.insert 1000 |>.insert 40 |>.insert 2 |>.insert 1)
 
@@ -69,9 +69,9 @@ private def big : NatSet := NatSet.ofList (List.range 100)
 private def odds : NatSet := (List.range 100).foldl (fun s k => if k % 2 == 0 then s.erase k else s) big
 #guard odds.size == 50
 #guard odds.toList == ((List.range 100).filter (fun k => k % 2 == 1))
-#guard odds.subset big
-#guard big.inter odds == odds
-#guard big.union odds == big
+#guard odds ⊆ big
+#guard big ∩ odds == odds
+#guard big ∪ odds == big
 
 /-! ## Maps: lattice laws with associative/commutative combine -/
 
