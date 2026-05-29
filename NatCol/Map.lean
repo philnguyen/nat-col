@@ -126,6 +126,24 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 #guard (NatMap.empty : NatMap Nat).restricts Nat.ble m1                                 -- empty restricts all
 #guard m1.restricts (· == ·) m1                                                         -- reflexive
 
+/-! ### Lattice laws with an associative/commutative combine, on concrete instances -/
+
+private def p : NatMap Nat := NatMap.ofList [(1, 1), (2, 2), (40, 40), (1000, 1000)]
+private def q : NatMap Nat := NatMap.ofList [(2, 20), (3, 30), (40, 400)]
+
+-- with `+` (associative & commutative), join is associative & commutative
+#guard p.join (· + ·) q == q.join (· + ·) p
+#guard (p.join (· + ·) q).join (· + ·) p == p.join (· + ·) (q.join (· + ·) p)
+-- meet with `+`: only shared keys (2, 40), values summed
+#guard (p.meet (· + ·) q).toList == [(2, 22), (40, 440)]
+-- domain of join = union of domains; domain of meet = intersection
+#guard (p.join (· + ·) q).size == 5
+#guard (p.meet (· + ·) q).size == 2
+-- restricts is reflexive/transitive on a chain of growing domains
+#guard (NatMap.ofList [(40, 40)]).restricts (· == ·) p
+#guard p.restricts (· == ·) p
+#guard (NatMap.ofList [(40, 40)]).restricts (· == ·) (p.join (fun x _ => x) q)
+
 -- lawful/decidable equality and a compatible hash (requires the value type to be lawful/hashable)
 example : LawfulBEq (NatMap Nat) := inferInstance
 example : LawfulHashable (NatMap Nat) := inferInstance

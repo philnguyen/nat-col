@@ -6,4 +6,3 @@ import NatCol.Tree
 import NatCol.Collection
 import NatCol.Set
 import NatCol.Map
-import NatCol.Test

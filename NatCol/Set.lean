@@ -127,6 +127,59 @@ section Tests
 #guard ¬ ((NatSet.ofList [1, 2, 3]) ⊆ (NatSet.ofList [1, 2]))
 #guard ¬ ((NatSet.ofList [1, 1000]) ⊆ (NatSet.ofList [1, 2]))               -- taller -> not subset
 
+/-! ### Lattice laws across operations, on concrete (mixed-height) instances -/
+
+private def a : NatSet := NatSet.ofList [1, 2, 40, 1000]
+private def b : NatSet := NatSet.ofList [2, 3, 40, 50]
+private def c : NatSet := NatSet.ofList [3, 40, 2000]
+
+-- commutativity
+#guard a ∪ b == b ∪ a
+#guard a ∩ b == b ∩ a
+-- associativity
+#guard (a ∪ b) ∪ c == a ∪ (b ∪ c)
+#guard (a ∩ b) ∩ c == a ∩ (b ∩ c)
+-- idempotence
+#guard a ∪ a == a
+#guard a ∩ a == a
+-- absorption
+#guard a ∪ (a ∩ b) == a
+#guard a ∩ (a ∪ b) == a
+-- inclusion–exclusion on sizes
+#guard (a ∪ b).size + (a ∩ b).size == a.size + b.size
+-- union ⊇ each side; inter ⊆ each side
+#guard a ⊆ (a ∪ b)
+#guard b ⊆ (a ∪ b)
+#guard (a ∩ b) ⊆ a
+#guard (a ∩ b) ⊆ b
+-- subset is transitive and antisymmetric (concretely)
+#guard (NatSet.ofList [40]) ⊆ a ∧ a ⊆ (a ∪ b) ∧ (NatSet.ofList [40]) ⊆ (a ∪ b)
+#guard a ⊆ b → b ⊆ a → a == b  -- antisymmetry
+
+/-! ### Height growth then shrink round-trips back to a canonical value -/
+
+-- inserting a deep key then erasing it returns the original (canonical) set
+#guard (a.insert 1000000 |>.erase 1000000) == a
+-- union with a tall singleton then intersecting it away shrinks back
+#guard (a ∪ (NatSet.ofList [5000000])) ∩ a == a
+-- building the same set two ways compares equal regardless of height history
+#guard NatSet.ofList [1, 2, 40, 1000] == (NatSet.empty.insert 1000 |>.insert 40 |>.insert 2 |>.insert 1)
+
+/-! ### Small stress test -/
+
+private def big : NatSet := NatSet.ofList (List.range 100)
+
+#guard big.size == 100
+#guard big.contains 0 && big.contains 99 && !big.contains 100
+#guard big.toList == List.range 100
+-- erasing every even number leaves the 50 odds, in order
+private def odds : NatSet := (List.range 100).foldl (fun s k => if k % 2 == 0 then s.erase k else s) big
+#guard odds.size == 50
+#guard odds.toList == ((List.range 100).filter (fun k => k % 2 == 1))
+#guard odds ⊆ big
+#guard big ∩ odds == odds
+#guard big ∪ odds == big
+
 -- lawful structural equality, decidable propositional equality, and a hash that respects it
 example : LawfulBEq NatSet := inferInstance
 example : LawfulHashable NatSet := inferInstance
