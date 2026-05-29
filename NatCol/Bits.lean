@@ -9,14 +9,24 @@ compactly using the standard HAMT index trick (popcount of the mask below a slot
 
 namespace NatCol
 
-/-- Number of set bits in `x` (population count). -/
+/-- Number of set bits in `x` (population count), via the classic SWAR bit-twiddling
+algorithm: counts bits within each pair, then folds the partial sums up through 4-bit
+and 8-bit groups, and finally sums the four byte counts with one multiply — all in a
+fixed handful of shifts/masks rather than a 32-iteration loop. -/
 def popCount (x : UInt32) : Nat :=
-  (List.range 32).foldl (fun acc i => acc + ((x >>> UInt32.ofNat i) &&& 1).toNat) 0
+  let x : UInt32 := x - ((x >>> 1) &&& (0x55555555 : UInt32))
+  let x : UInt32 := (x &&& (0x33333333 : UInt32)) + ((x >>> 2) &&& (0x33333333 : UInt32))
+  let x : UInt32 := (x + (x >>> 4)) &&& (0x0F0F0F0F : UInt32)
+  ((x * (0x01010101 : UInt32)) >>> 24).toNat
 
 #guard popCount 0 == 0
 #guard popCount 1 == 1
 #guard popCount 0xFFFFFFFF == 32
 #guard popCount 0b10110 == 3
+#guard popCount 0x80000000 == 1      -- high bit only
+#guard popCount 0xAAAAAAAA == 16     -- alternating bits (even positions)
+#guard popCount 0x55555555 == 16     -- alternating bits (odd positions)
+#guard popCount 0x0F0F0F0F == 16     -- exercises the byte-fold step
 
 /-- Is bit `i` of `x` set? `i` is expected in `0..31`. -/
 def testBit (x i : UInt32) : Bool := (x >>> i) &&& 1 == 1
