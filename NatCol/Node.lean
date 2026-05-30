@@ -55,8 +55,15 @@ instance {α : Type u} [BEq α] [LawfulBEq α] : LawfulBEq (Node α) where
 
 namespace Node
 
-/-- The empty node (no slots present). -/
-def empty : Node α := ⟨0, #[], by simp [show popCount 0 = 0 from rfl]⟩
+/-- The empty node (no slots present), backed by a zero-capacity array. -/
+def empty : Node α := ⟨0, Array.emptyWithCapacity 0, by simp [show popCount 0 = 0 from rfl]⟩
+
+/-- An empty node (no slots present) whose element array is pre-allocated with capacity `c`.
+The capacity is only an allocation hint, so this is equal *as a value* to `Node.empty`;
+`join`/`meet` start their accumulator here, sized to the result's final element count, so the
+ascending inserts that build the result never reallocate. -/
+private def emptyWithCapacity (c : Nat) : Node α :=
+  ⟨0, Array.emptyWithCapacity c, by simp [show popCount 0 = 0 from rfl]⟩
 
 /-- A node with a single child at slot `i`. -/
 def singleton (i : UInt32) (a : α) : Node α :=
@@ -128,11 +135,13 @@ def foldl {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node 
 /-- Union of two nodes. Slots in exactly one side are reused as-is; slots in both are
 merged with `combine` (a `none` result drops the slot).
 
-The result is assembled by `insert`ing present slots into `Node.empty` in ascending order.
-Each `insert` of a fresh, larger slot appends to the element array (its compact index is the
-current size) — identical data to a plain `push` — but routes through the
-compactness-preserving `alter`, so the result is compact by construction with no extra
-proof. -/
+The result is assembled by `insert`ing present slots into an empty accumulator in ascending
+order. Each `insert` of a fresh, larger slot appends to the element array (its compact index
+is the current size) — identical data to a plain `push` — but routes through the
+compactness-preserving `alter`, so the result is compact by construction with no extra proof.
+The accumulator is pre-sized to `popCount (a.positionsMask ||| b.positionsMask)`, the exact
+slot count of the union mask (an upper bound on the result, since `combine` may prune), so
+those appends never reallocate. -/
 def join (combine : α → α → Option α) (a b : Node α) : Node α :=
   let step := fun (st : Node α × Nat × Nat) i =>
     let (acc, ja, jb) := st
@@ -154,11 +163,14 @@ def join (combine : α → α → Option α) (a b : Node α) : Node α :=
       | some y => (acc.insert iu y, ja, jb + 1)
       | none   => (acc, ja, jb + 1)
     | false, false => (acc, ja, jb)
-  ((List.range 32).foldl step (Node.empty, 0, 0)).1
+  ((List.range 32).foldl step
+    (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask)), 0, 0)).1
 
 /-- Intersection of two nodes. Only slots present in both survive, merged with
-`combine`; a `none` result (empty intersection) drops the slot. As with `join`, the result
-is built from `Node.empty` by ascending `insert`, so it is compact by construction. -/
+`combine`; a `none` result (empty intersection) drops the slot. As with `join`, the result is
+built by ascending `insert` into an empty accumulator, so it is compact by construction. The
+accumulator is pre-sized to `popCount (a.positionsMask &&& b.positionsMask)`, the slot count
+of the intersection mask (an upper bound on the result), so the inserts never reallocate. -/
 def meet (combine : α → α → Option α) (a b : Node α) : Node α :=
   let step := fun (st : Node α × Nat × Nat) i =>
     let (acc, ja, jb) := st
@@ -174,7 +186,8 @@ def meet (combine : α → α → Option α) (a b : Node α) : Node α :=
     | true, false => (acc, ja + 1, jb)
     | false, true => (acc, ja, jb + 1)
     | false, false => (acc, ja, jb)
-  ((List.range 32).foldl step (Node.empty, 0, 0)).1
+  ((List.range 32).foldl step
+    (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)), 0, 0)).1
 
 /-- `a` restricts `b`: every slot of `a` is present in `b`, and `rel` holds on every
 shared child. -/
@@ -295,7 +308,7 @@ theorem join_forall {α} {P : α → Prop} {combine : α → α → Option α} {
         · exact hacc _ h
       · exact hacc _ hz
     · exact hacc _ hz
-  · intro z hz; simp [Node.empty] at hz
+  · intro z hz; simp [Node.emptyWithCapacity] at hz
 
 /-- Every child of a `meet` result satisfies `P`, provided all `combine` outputs do (only
 slots present in both operands survive, so the operands' own children are irrelevant). -/
@@ -319,7 +332,7 @@ theorem meet_forall {α} {P : α → Prop} {combine : α → α → Option α} {
     · exact hacc _ hz
     · exact hacc _ hz
     · exact hacc _ hz
-  · intro z hz; simp [Node.empty] at hz
+  · intro z hz; simp [Node.emptyWithCapacity] at hz
 
 /-- `singleton`'s mask is a single set bit. -/
 private theorem singleton_positionsMask {α} (i : UInt32) (a : α) :
