@@ -96,12 +96,12 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 
 -- modify touches present keys only
 #guard (m1.modify 2 (· + 5)).get? 2 == some 25
-#guard m1.modify 99 (· + 5) == m1
+#guard m1.modify 99 (· + 5) = m1
 
 -- erase
 #guard (m1.erase 2).get? 2 == none
 #guard (m1.erase 2).size == 2
-#guard (NatMap.empty.insert 42 1 |>.erase 42) == (NatMap.empty : NatMap Nat)
+#guard (NatMap.empty.insert 42 1 |>.erase 42) = (NatMap.empty : NatMap Nat)
 
 -- toList sorted by key irrespective of insertion order
 #guard (NatMap.empty.insert 3 30 |>.insert 1 10 |>.insert 2 20).toList == [(1, 10), (2, 20), (3, 30)]
@@ -110,16 +110,16 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 -- join: collisions combined (sum), others copied through
 #guard ((NatMap.ofList [(1, 10), (2, 20)]).join (· + ·) (NatMap.ofList [(2, 2), (3, 3)])).toList
         == [(1, 10), (2, 22), (3, 3)]
-#guard m1.join (· + ·) NatMap.empty == m1                              -- right identity
-#guard (NatMap.empty : NatMap Nat).join (· + ·) m1 == m1              -- left identity
-#guard m1.join (fun a _ => a) m1 == m1                                 -- idempotent (left-biased)
+#guard m1.join (· + ·) NatMap.empty = m1                              -- right identity
+#guard (NatMap.empty : NatMap Nat).join (· + ·) m1 = m1              -- left identity
+#guard m1.join (fun a _ => a) m1 = m1                                 -- idempotent (left-biased)
 
 -- meet: only shared keys survive, combined
 #guard ((NatMap.ofList [(1, 10), (2, 20)]).meet (· + ·) (NatMap.ofList [(2, 2), (3, 3)])).toList
         == [(2, 22)]
-#guard m1.meet (· + ·) NatMap.empty == (NatMap.empty : NatMap Nat)    -- annihilator
-#guard (NatMap.ofList [(1, 1)]).meet (· + ·) (NatMap.ofList [(2, 2)]) == (NatMap.empty : NatMap Nat)  -- disjoint
-#guard m1.meet (fun a _ => a) m1 == m1                                 -- idempotent (left-biased)
+#guard m1.meet (· + ·) NatMap.empty = (NatMap.empty : NatMap Nat)    -- annihilator
+#guard (NatMap.ofList [(1, 1)]).meet (· + ·) (NatMap.ofList [(2, 2)]) = (NatMap.empty : NatMap Nat)  -- disjoint
+#guard m1.meet (fun a _ => a) m1 = m1                                 -- idempotent (left-biased)
 
 -- restricts: domain subset + predicate on coinciding values
 #guard (NatMap.ofList [(1, 10)]).restricts Nat.ble (NatMap.ofList [(1, 10), (2, 20)])
@@ -134,8 +134,8 @@ private def p : NatMap Nat := NatMap.ofList [(1, 1), (2, 2), (40, 40), (1000, 10
 private def q : NatMap Nat := NatMap.ofList [(2, 20), (3, 30), (40, 400)]
 
 -- with `+` (associative & commutative), join is associative & commutative
-#guard p.join (· + ·) q == q.join (· + ·) p
-#guard (p.join (· + ·) q).join (· + ·) p == p.join (· + ·) (q.join (· + ·) p)
+#guard p.join (· + ·) q = q.join (· + ·) p
+#guard (p.join (· + ·) q).join (· + ·) p = p.join (· + ·) (q.join (· + ·) p)
 -- meet with `+`: only shared keys (2, 40), values summed
 #guard (p.meet (· + ·) q).toList == [(2, 22), (40, 440)]
 -- domain of join = union of domains; domain of meet = intersection

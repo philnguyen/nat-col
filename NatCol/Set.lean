@@ -89,7 +89,7 @@ section Tests
 #guard !(NatSet.empty.insert 0).contains 32      -- 0 and 32 differ only above the first chunk
 
 -- idempotent insert, coherent size and equality
-#guard (NatSet.empty.insert 42 |>.insert 42) == NatSet.empty.insert 42
+#guard (NatSet.empty.insert 42 |>.insert 42) = NatSet.empty.insert 42
 #guard (NatSet.empty.insert 42 |>.insert 42).size == 1
 #guard (NatSet.empty.insert 1 |>.insert 2 |>.insert 3).size == 3
 
@@ -98,10 +98,10 @@ section Tests
 #guard (NatSet.empty.insert 5 |>.insert 1000 |>.insert 0 |>.toList) == [0, 5, 1000]
 
 -- erase undoes insert; erasing an absent key is a no-op; erase back to empty is canonical
-#guard (NatSet.empty.insert 42 |>.erase 42) == (∅ : NatSet)
+#guard (NatSet.empty.insert 42 |>.erase 42) = (∅ : NatSet)
 #guard (NatSet.empty.insert 42 |>.erase 42).isEmpty
-#guard (NatSet.empty.insert 42 |>.erase 99) == NatSet.empty.insert 42
-#guard (NatSet.empty.insert 5 |>.insert 1000 |>.erase 1000) == NatSet.empty.insert 5
+#guard (NatSet.empty.insert 42 |>.erase 99) = NatSet.empty.insert 42
+#guard (NatSet.empty.insert 5 |>.insert 1000 |>.erase 1000) = NatSet.empty.insert 5
 
 -- ofList / toList round trip (deduplicated, sorted)
 #guard (NatSet.ofList [3, 1, 2, 1, 3]).toList == [1, 2, 3]
@@ -109,17 +109,17 @@ section Tests
 
 -- union (via the `∪` notation)
 #guard ((NatSet.ofList [1, 2]) ∪ (NatSet.ofList [2, 3])).toList == [1, 2, 3]
-#guard (NatSet.ofList [1, 2]) ∪ ∅ == NatSet.ofList [1, 2]               -- right identity
-#guard (∅ : NatSet) ∪ (NatSet.ofList [1, 2]) == NatSet.ofList [1, 2]    -- left identity
-#guard (NatSet.ofList [1, 2]) ∪ (NatSet.ofList [1, 2]) == NatSet.ofList [1, 2]  -- idempotent
+#guard (NatSet.ofList [1, 2]) ∪ ∅ = NatSet.ofList [1, 2]               -- right identity
+#guard (∅ : NatSet) ∪ (NatSet.ofList [1, 2]) = NatSet.ofList [1, 2]    -- left identity
+#guard (NatSet.ofList [1, 2]) ∪ (NatSet.ofList [1, 2]) = NatSet.ofList [1, 2]  -- idempotent
 #guard ((NatSet.ofList [1, 1000]) ∪ (NatSet.ofList [2, 5])).toList == [1, 2, 5, 1000]  -- mixed heights
 
 -- intersection (via the `∩` notation)
 #guard ((NatSet.ofList [1, 2, 3]) ∩ (NatSet.ofList [2, 3, 4])).toList == [2, 3]
-#guard (NatSet.ofList [1, 2]) ∩ ∅ == (∅ : NatSet)                       -- right annihilator
-#guard (∅ : NatSet) ∩ (NatSet.ofList [1, 2]) == (∅ : NatSet)            -- left annihilator
-#guard (NatSet.ofList [1, 2]) ∩ (NatSet.ofList [1, 2]) == NatSet.ofList [1, 2]  -- idempotent
-#guard (NatSet.ofList [1, 2]) ∩ (NatSet.ofList [3, 4]) == (∅ : NatSet)  -- disjoint -> empty
+#guard (NatSet.ofList [1, 2]) ∩ ∅ = (∅ : NatSet)                       -- right annihilator
+#guard (∅ : NatSet) ∩ (NatSet.ofList [1, 2]) = (∅ : NatSet)            -- left annihilator
+#guard (NatSet.ofList [1, 2]) ∩ (NatSet.ofList [1, 2]) = NatSet.ofList [1, 2]  -- idempotent
+#guard (NatSet.ofList [1, 2]) ∩ (NatSet.ofList [3, 4]) = (∅ : NatSet)  -- disjoint -> empty
 #guard ((NatSet.ofList [1, 1000]) ∩ (NatSet.ofList [1000, 2])).toList == [1000]  -- mixed heights, shrinks
 
 -- subset (via the `⊆` notation)
@@ -136,17 +136,17 @@ private def b : NatSet := NatSet.ofList [2, 3, 40, 50]
 private def c : NatSet := NatSet.ofList [3, 40, 2000]
 
 -- commutativity
-#guard a ∪ b == b ∪ a
-#guard a ∩ b == b ∩ a
+#guard a ∪ b = b ∪ a
+#guard a ∩ b = b ∩ a
 -- associativity
-#guard (a ∪ b) ∪ c == a ∪ (b ∪ c)
-#guard (a ∩ b) ∩ c == a ∩ (b ∩ c)
+#guard (a ∪ b) ∪ c = a ∪ (b ∪ c)
+#guard (a ∩ b) ∩ c = a ∩ (b ∩ c)
 -- idempotence
-#guard a ∪ a == a
-#guard a ∩ a == a
+#guard a ∪ a = a
+#guard a ∩ a = a
 -- absorption
-#guard a ∪ (a ∩ b) == a
-#guard a ∩ (a ∪ b) == a
+#guard a ∪ (a ∩ b) = a
+#guard a ∩ (a ∪ b) = a
 -- inclusion–exclusion on sizes
 #guard (a ∪ b).size + (a ∩ b).size == a.size + b.size
 -- union ⊇ each side; inter ⊆ each side
@@ -156,16 +156,16 @@ private def c : NatSet := NatSet.ofList [3, 40, 2000]
 #guard (a ∩ b) ⊆ b
 -- subset is transitive and antisymmetric (concretely)
 #guard (NatSet.ofList [40]) ⊆ a ∧ a ⊆ (a ∪ b) ∧ (NatSet.ofList [40]) ⊆ (a ∪ b)
-#guard a ⊆ b → b ⊆ a → a == b  -- antisymmetry
+#guard a ⊆ b → b ⊆ a → a = b  -- antisymmetry
 
 /-! ### Height growth then shrink round-trips back to a canonical value -/
 
 -- inserting a deep key then erasing it returns the original (canonical) set
-#guard (a.insert 1000000 |>.erase 1000000) == a
+#guard (a.insert 1000000 |>.erase 1000000) = a
 -- union with a tall singleton then intersecting it away shrinks back
-#guard (a ∪ (NatSet.ofList [5000000])) ∩ a == a
+#guard (a ∪ (NatSet.ofList [5000000])) ∩ a = a
 -- building the same set two ways compares equal regardless of height history
-#guard NatSet.ofList [1, 2, 40, 1000] == (NatSet.empty.insert 1000 |>.insert 40 |>.insert 2 |>.insert 1)
+#guard NatSet.ofList [1, 2, 40, 1000] = (NatSet.empty.insert 1000 |>.insert 40 |>.insert 2 |>.insert 1)
 
 /-! ### Small stress test -/
 
@@ -179,8 +179,8 @@ private def odds : NatSet := (List.range 100).foldl (fun s k => if k % 2 == 0 th
 #guard odds.size == 50
 #guard odds.toList == ((List.range 100).filter (fun k => k % 2 == 1))
 #guard odds ⊆ big
-#guard big ∩ odds == odds
-#guard big ∪ odds == big
+#guard big ∩ odds = odds
+#guard big ∪ odds = big
 
 -- lawful structural equality, decidable propositional equality, and a hash that respects it
 example : LawfulBEq NatSet := inferInstance
