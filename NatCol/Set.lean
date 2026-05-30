@@ -72,6 +72,12 @@ instance : Inter NatSet := ⟨inter⟩
 instance : HasSubset NatSet := ⟨fun s t => s.subset t = true⟩
 instance (s t : NatSet) : Decidable (s ⊆ t) := inferInstanceAs (Decidable (s.subset t = true))
 
+-- `k ∈ s` reduces to the `Bool` `contains`, so it stays decidable (usable in `#guard` / `decide`);
+-- `k ∉ s` is `¬ k ∈ s`, available automatically.
+instance : Membership Nat NatSet := ⟨fun s k => s.contains k = true⟩
+instance (k : Nat) (s : NatSet) : Decidable (k ∈ s) :=
+  inferInstanceAs (Decidable (s.contains k = true))
+
 /-- Elements in ascending order. -/
 def toList (s : NatSet) : List Nat := (NatCollection.toList s).map Prod.fst
 /-- Build a set from a list of elements. -/
@@ -110,12 +116,12 @@ section Tests
 -- membership / size on a few common and edge keys (0, within a leaf, across leaves)
 #guard NatSet.empty.isEmpty
 #guard (∅ : NatSet).size == 0
-#guard !(∅ : NatSet).contains 42
+#guard 42 ∉ (∅ : NatSet)
 #guard (NatSet.empty.insert 42).size == 1
-#guard (NatSet.empty.insert 42).contains 42
-#guard !(NatSet.empty.insert 42).contains 43
-#guard (NatSet.empty.insert 0).contains 0
-#guard !(NatSet.empty.insert 0).contains 32      -- 0 and 32 differ only above the first chunk
+#guard 42 ∈ (NatSet.empty.insert 42)
+#guard 43 ∉ (NatSet.empty.insert 42)
+#guard 0 ∈ (NatSet.empty.insert 0)
+#guard 32 ∉ (NatSet.empty.insert 0)              -- 0 and 32 differ only above the first chunk
 
 -- idempotent insert, coherent size and equality
 #guard (NatSet.empty.insert 42 |>.insert 42) = NatSet.empty.insert 42
@@ -201,7 +207,7 @@ private def c : NatSet := NatSet.ofList [3, 40, 2000]
 private def big : NatSet := NatSet.ofList (List.range 100)
 
 #guard big.size == 100
-#guard big.contains 0 && big.contains 99 && !big.contains 100
+#guard 0 ∈ big ∧ 99 ∈ big ∧ 100 ∉ big
 #guard big.toList == List.range 100
 -- erasing every even number leaves the 50 odds, in order
 private def odds : NatSet := (List.range 100).foldl (fun s k => if k % 2 == 0 then s.erase k else s) big

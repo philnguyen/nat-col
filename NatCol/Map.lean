@@ -74,6 +74,12 @@ def toList (m : NatMap α) : List (Nat × α) := NatCollection.toList m
 /-- Build a map from `(key, value)` pairs (later pairs win on duplicate keys). -/
 def ofList (l : List (Nat × α)) : NatMap α := NatCollection.ofList l
 
+-- Membership is on keys: `k ∈ m` reduces to the `Bool` `contains`, so it stays decidable (usable
+-- in `#guard` / `decide`); `k ∉ m` is `¬ k ∈ m`, available automatically.
+instance : Membership Nat (NatMap α) := ⟨fun m k => m.contains k = true⟩
+instance (k : Nat) (m : NatMap α) : Decidable (k ∈ m) :=
+  inferInstanceAs (Decidable (m.contains k = true))
+
 /-- The empty map is a left identity of `join`. -/
 @[simp, grind =] theorem join_empty_left (combine : α → α → α) (m : NatMap α) :
     NatMap.empty.join combine m = m := NatCollection.join_empty_left combine m
@@ -115,8 +121,8 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 #guard (NatMap.empty.insert 42 100 : NatMap Nat).get? 43 == none
 #guard (NatMap.empty.insert 42 100 : NatMap Nat).getD 42 0 == 100
 #guard (NatMap.empty.insert 42 100 : NatMap Nat).getD 43 0 == 0
-#guard m1.contains 2
-#guard !m1.contains 99
+#guard 2 ∈ m1
+#guard 99 ∉ m1
 #guard (NatMap.empty.insert 1000 7 : NatMap Nat).get? 1000 == some 7  -- multi-chunk key
 
 -- insert overwrites the value, keeps size
