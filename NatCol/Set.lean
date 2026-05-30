@@ -25,7 +25,7 @@ instance : LeafOps UInt32 Unit where
   join _ a b := a ||| b
   meet _ a b := a &&& b
   restricts _ a b := (a &&& b) == a
-  toArray u := (List.range 32).foldl (fun acc i =>
+  toArray u := Nat.fold 32 (fun i _ acc =>
     let iu := UInt32.ofNat i
     if testBit u iu then acc.push (iu, ()) else acc) #[]
   insert_ne_empty u i _ := beq_eq_false_iff_ne.mpr (setBit_ne_zero u i)

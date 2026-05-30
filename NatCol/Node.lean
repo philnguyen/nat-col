@@ -124,7 +124,7 @@ def modify (n : Node α) (i : UInt32) (f : α → α) : Node α := n.alter i (Op
 
 /-- Fold over present slots in ascending slot order, exposing the slot index. -/
 def foldl {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node α) : β :=
-  Prod.fst <| (List.range 32).foldl (fun (st : β × Nat) i =>
+  Prod.fst <| Nat.fold 32 (fun i _ (st : β × Nat) =>
     let iu := UInt32.ofNat i
     if testBit n.positionsMask iu then
       match n.elements[st.2]? with
@@ -163,7 +163,7 @@ def join (combine : α → α → Option α) (a b : Node α) : Node α :=
       | some y => (acc.insert iu y, ja, jb + 1)
       | none   => (acc, ja, jb + 1)
     | false, false => (acc, ja, jb)
-  ((List.range 32).foldl step
+  (Nat.fold 32 (fun i _ st => step st i)
     (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask)), 0, 0)).1
 
 /-- Intersection of two nodes. Only slots present in both survive, merged with
@@ -186,7 +186,7 @@ def meet (combine : α → α → Option α) (a b : Node α) : Node α :=
     | true, false => (acc, ja + 1, jb)
     | false, true => (acc, ja, jb + 1)
     | false, false => (acc, ja, jb)
-  ((List.range 32).foldl step
+  (Nat.fold 32 (fun i _ st => step st i)
     (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)), 0, 0)).1
 
 /-- `a` restricts `b`: every slot of `a` is present in `b`, and `rel` holds on every
@@ -205,7 +205,7 @@ def restricts (rel : α → α → Bool) (a b : Node α) : Bool :=
       | true, false => (ok, ja + 1, jb)
       | false, true => (ok, ja, jb + 1)
       | false, false => (ok, ja, jb)
-    (((List.range 32).foldl step (true, 0, 0))).1
+    (Nat.fold 32 (fun i _ st => step st i) (true, 0, 0)).1
 
 /-! ### Lemmas backing the `NatCollection` canonical-shape invariant
 
@@ -264,16 +264,16 @@ private theorem mem_insert {α} (n : Node α) (i : UInt32) (v x : α)
   · exact Or.inr h
   · exact Or.inl (hxa.trans (Option.some.inj ha).symm)
 
-/-- Generic foldl invariant: if every step keeps all accumulator elements satisfying `P`,
-the final accumulator does too. -/
-private theorem foldl_elements_forall {α} {P : α → Prop}
+/-- Generic `Nat.fold` invariant: if every step keeps all accumulator elements satisfying
+`P`, the final accumulator does too. -/
+private theorem fold_elements_forall {α} {P : α → Prop}
     (step : (Node α × Nat × Nat) → Nat → (Node α × Nat × Nat))
     (hstep : ∀ st i, (∀ z ∈ st.1.elements, P z) → ∀ z ∈ (step st i).1.elements, P z)
-    (l : List Nat) (st0 : Node α × Nat × Nat) (h0 : ∀ z ∈ st0.1.elements, P z) :
-    ∀ z ∈ (l.foldl step st0).1.elements, P z := by
-  induction l generalizing st0 with
-  | nil => exact h0
-  | cons hd tl ih => exact ih (step st0 hd) (hstep st0 hd h0)
+    (n : Nat) (st0 : Node α × Nat × Nat) (h0 : ∀ z ∈ st0.1.elements, P z) :
+    ∀ z ∈ (Nat.fold n (fun i _ st => step st i) st0).1.elements, P z := by
+  induction n with
+  | zero => exact h0
+  | succ k ih => rw [Nat.fold_succ]; exact hstep _ k ih
 
 /-- Every child of a `join` result satisfies `P`, provided both operands' children and all
 `combine` outputs do. -/
@@ -282,7 +282,7 @@ theorem join_forall {α} {P : α → Prop} {combine : α → α → Option α} {
     (hPc : ∀ x ∈ a.elements, ∀ y ∈ b.elements, ∀ v, combine x y = some v → P v) :
     ∀ z ∈ (Node.join combine a b).elements, P z := by
   unfold Node.join
-  apply foldl_elements_forall
+  apply fold_elements_forall
   · rintro ⟨acc, ja, jb⟩ i hacc z hz
     dsimp only at hz ⊢
     split at hz
@@ -316,7 +316,7 @@ theorem meet_forall {α} {P : α → Prop} {combine : α → α → Option α} {
     (hPc : ∀ x ∈ a.elements, ∀ y ∈ b.elements, ∀ v, combine x y = some v → P v) :
     ∀ z ∈ (Node.meet combine a b).elements, P z := by
   unfold Node.meet
-  apply foldl_elements_forall
+  apply fold_elements_forall
   · rintro ⟨acc, ja, jb⟩ i hacc z hz
     dsimp only at hz ⊢
     split at hz
