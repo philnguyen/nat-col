@@ -153,7 +153,7 @@ theorem beq_refl [BEq L] [LawfulBEq L] : (h : Nat) → (t : Tree L h) → beq h 
   | zero => intro t; simp only [beq]; exact BEq.rfl
   | succ h ih =>
     intro t
-    obtain ⟨m, e⟩ := t
+    obtain ⟨m, e, _⟩ := t
     simp only [beq, Bool.and_eq_true]
     refine ⟨BEq.rfl, ?_⟩
     rw [Array.isEqv_iff_rel]
@@ -168,15 +168,15 @@ theorem eq_of_beq [BEq L] [LawfulBEq L] :
   | zero => intro a b hb; simp only [beq] at hb; exact LawfulBEq.eq_of_beq hb
   | succ h ih =>
     intro a b hb
-    obtain ⟨ma, ea⟩ := a
-    obtain ⟨mb, eb⟩ := b
+    obtain ⟨ma, ea, ha⟩ := a
+    obtain ⟨mb, eb, hb'⟩ := b
     simp only [beq, Bool.and_eq_true] at hb
     obtain ⟨hm, he⟩ := hb
     rw [Array.isEqv_iff_rel] at he
     obtain ⟨hsize, hpt⟩ := he
     have hmeq : ma = mb := LawfulBEq.eq_of_beq hm
     have heeq : ea = eb := Array.ext hsize (fun i hi₁ _ => ih (hpt i hi₁))
-    rw [hmeq, heeq]
+    subst hmeq; subst heeq; rfl
 
 /-- Collect `(key, value)` pairs into `acc`, ascending by key. `pfx` carries the key bits
 fixed by higher levels. -/

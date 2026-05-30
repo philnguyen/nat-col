@@ -27,3 +27,4 @@ A design is at [DESIGN.md](docs/DESIGN.md)
 - If using `grind`, always use `grind?`, then see precisely what are needed and revise with `grind only`.
 - The newly stable tactics `cbv` and `decide_cbv` might be useful at places.
 - Try to make proofs human readable: the strategy/structure should be apparent, with tedious details taken care of by tactics/helpers. This is analogous to how one would handwave proofs in a paper due to space constraint, deferring details to the appendix.
+- Helper lemmas that are only used locally should be marked `private`, just like helper functions.

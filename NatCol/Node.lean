@@ -20,36 +20,48 @@ No `Inhabited α` is required: reads go through `xs[i]?`, and `set!`/`insertIdx!
 
 namespace NatCol
 
-/-- A sparse array of up to 32 children, addressed by a 5-bit slot index. -/
+/-- A sparse array of up to 32 children, addressed by a 5-bit slot index.
+
+The `elements_compact` field is the structural invariant from `docs/DESIGN.md`: the
+elements array holds *exactly* the present children, so its size equals the number of set
+bits in `positionsMask`. Every `Node` value carries this proof, so it holds by
+construction everywhere a node appears — and the operations below each re-establish it. -/
 structure Node (α : Type u) where
   positionsMask : UInt32
   elements : Array α
-deriving BEq, Repr
+  elements_compact : elements.size = popCount positionsMask
 
-/-- The derived structural `BEq` decides propositional equality: it compares the two fields
-with their own (lawful) `BEq`s. Needed so that maps — whose leaves are `Node α` — inherit
-`LawfulBEq`. -/
+/-- Structural equality on the data fields (the `elements_compact` proof is irrelevant). -/
+instance {α : Type u} [BEq α] : BEq (Node α) where
+  beq a b := a.positionsMask == b.positionsMask && a.elements == b.elements
+
+/-- The structural `BEq` decides propositional equality: it compares the two data fields
+with their own (lawful) `BEq`s, and the proof field is equal by proof irrelevance. Needed so
+that maps — whose leaves are `Node α` — inherit `LawfulBEq`. -/
 instance {α : Type u} [BEq α] [LawfulBEq α] : LawfulBEq (Node α) where
   eq_of_beq {a b} h := by
-    obtain ⟨ma, ea⟩ := a
-    obtain ⟨mb, eb⟩ := b
-    -- the derived `==` on constructors reduces to a conjunction of the field comparisons
+    obtain ⟨ma, ea, ha⟩ := a
+    obtain ⟨mb, eb, hb⟩ := b
     have h' : (ma == mb && ea == eb) = true := h
     rw [Bool.and_eq_true] at h'
-    rw [eq_of_beq h'.1, eq_of_beq h'.2]
+    obtain ⟨h1, h2⟩ := h'
+    have hmeq : ma = mb := eq_of_beq h1
+    have heeq : ea = eb := eq_of_beq h2
+    subst hmeq; subst heeq; rfl
   rfl {a} := by
-    obtain ⟨m, e⟩ := a
-    show (m == m && e == e) = true
+    show (a.positionsMask == a.positionsMask && a.elements == a.elements) = true
     rw [Bool.and_eq_true]
     exact ⟨BEq.rfl, BEq.rfl⟩
 
 namespace Node
 
 /-- The empty node (no slots present). -/
-def empty : Node α := ⟨0, #[]⟩
+def empty : Node α := ⟨0, #[], by simp [show popCount 0 = 0 from rfl]⟩
 
 /-- A node with a single child at slot `i`. -/
-def singleton (i : UInt32) (a : α) : Node α := ⟨setBit 0 i, #[a]⟩
+def singleton (i : UInt32) (a : α) : Node α :=
+  ⟨setBit 0 i, #[a], by
+    rw [popCount_setBit 0 i (testBit_zero i)]; simp [show popCount 0 = 0 from rfl]⟩
 
 /-- Has no present slots. -/
 def isEmpty (n : Node α) : Bool := n.positionsMask == 0
@@ -62,16 +74,37 @@ def get? (n : Node α) (i : UInt32) : Option α :=
   if testBit n.positionsMask i then n.elements[arrayIndex n.positionsMask i]? else none
 
 /-- General single-slot update: `f` sees the current value at slot `i` (if any) and
-returns the new value (`none` removes the slot). -/
+returns the new value (`none` removes the slot).
+
+Matching on `hpres : testBit … = true/false` records whether the slot was present, which
+is exactly what the compactness proofs need: a present slot's compact index is `< size`
+(so `eraseIdx`/`set` are in bounds and clearing the bit drops the count by one), and an
+absent slot's index is `≤ size` (so `insertIdx` is in bounds and setting the bit raises
+the count by one). -/
 def alter (n : Node α) (i : UInt32) (f : Option α → Option α) : Node α :=
-  let present := testBit n.positionsMask i
-  let idx := arrayIndex n.positionsMask i
-  let cur := if present then n.elements[idx]? else none
-  match present, f cur with
-  | true,  some a => ⟨n.positionsMask, n.elements.set! idx a⟩
-  | true,  none   => ⟨clearBit n.positionsMask i, n.elements.eraseIdx! idx⟩
-  | false, some a => ⟨setBit n.positionsMask i, n.elements.insertIdx! idx a⟩
-  | false, none   => n
+  match hpres : testBit n.positionsMask i with
+  | true =>
+    match f n.elements[arrayIndex n.positionsMask i]? with
+    | some a => ⟨n.positionsMask, n.elements.set! (arrayIndex n.positionsMask i) a, by
+        simp only [Array.set!, Array.size_setIfInBounds]; exact n.elements_compact⟩
+    | none => ⟨clearBit n.positionsMask i, n.elements.eraseIdx! (arrayIndex n.positionsMask i), by
+        have hlt : arrayIndex n.positionsMask i < n.elements.size := by
+          rw [n.elements_compact]; exact arrayIndex_lt n.positionsMask i hpres
+        have hcl := popCount_clearBit n.positionsMask i hpres
+        rw [show n.elements.eraseIdx! (arrayIndex n.positionsMask i)
+              = n.elements.eraseIdx (arrayIndex n.positionsMask i) hlt from dif_pos hlt,
+            Array.size_eraseIdx, n.elements_compact]
+        omega⟩
+  | false =>
+    match f none with
+    | some a => ⟨setBit n.positionsMask i, n.elements.insertIdx! (arrayIndex n.positionsMask i) a, by
+        have hle : arrayIndex n.positionsMask i ≤ n.elements.size := by
+          rw [n.elements_compact]; exact arrayIndex_le n.positionsMask i
+        have hsb := popCount_setBit n.positionsMask i hpres
+        rw [show n.elements.insertIdx! (arrayIndex n.positionsMask i) a
+              = n.elements.insertIdx (arrayIndex n.positionsMask i) a hle from dif_pos hle,
+            Array.size_insertIdx, n.elements_compact, hsb]⟩
+    | none => n
 
 /-- Insert (or overwrite) the child at slot `i`. -/
 def insert (n : Node α) (i : UInt32) (a : α) : Node α := n.alter i (fun _ => some a)
@@ -93,50 +126,55 @@ def foldl {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node 
     else st) (init, 0)
 
 /-- Union of two nodes. Slots in exactly one side are reused as-is; slots in both are
-merged with `combine` (a `none` result drops the slot). -/
+merged with `combine` (a `none` result drops the slot).
+
+The result is assembled by `insert`ing present slots into `Node.empty` in ascending order.
+Each `insert` of a fresh, larger slot appends to the element array (its compact index is the
+current size) — identical data to a plain `push` — but routes through the
+compactness-preserving `alter`, so the result is compact by construction with no extra
+proof. -/
 def join (combine : α → α → Option α) (a b : Node α) : Node α :=
-  let step := fun (st : UInt32 × Array α × Nat × Nat) i =>
-    let (mask, elems, ja, jb) := st
+  let step := fun (st : Node α × Nat × Nat) i =>
+    let (acc, ja, jb) := st
     let iu := UInt32.ofNat i
     match testBit a.positionsMask iu, testBit b.positionsMask iu with
     | true, true =>
       match a.elements[ja]?, b.elements[jb]? with
       | some x, some y =>
         match combine x y with
-        | some v => (setBit mask iu, elems.push v, ja + 1, jb + 1)
-        | none   => (mask, elems, ja + 1, jb + 1)
-      | _, _ => (mask, elems, ja + 1, jb + 1)
+        | some v => (acc.insert iu v, ja + 1, jb + 1)
+        | none   => (acc, ja + 1, jb + 1)
+      | _, _ => (acc, ja + 1, jb + 1)
     | true, false =>
       match a.elements[ja]? with
-      | some x => (setBit mask iu, elems.push x, ja + 1, jb)
-      | none   => (mask, elems, ja + 1, jb)
+      | some x => (acc.insert iu x, ja + 1, jb)
+      | none   => (acc, ja + 1, jb)
     | false, true =>
       match b.elements[jb]? with
-      | some y => (setBit mask iu, elems.push y, ja, jb + 1)
-      | none   => (mask, elems, ja, jb + 1)
-    | false, false => (mask, elems, ja, jb)
-  let (mask, elems, _, _) := (List.range 32).foldl step ((0 : UInt32), (#[] : Array α), 0, 0)
-  ⟨mask, elems⟩
+      | some y => (acc.insert iu y, ja, jb + 1)
+      | none   => (acc, ja, jb + 1)
+    | false, false => (acc, ja, jb)
+  ((List.range 32).foldl step (Node.empty, 0, 0)).1
 
 /-- Intersection of two nodes. Only slots present in both survive, merged with
-`combine`; a `none` result (empty intersection) drops the slot. -/
+`combine`; a `none` result (empty intersection) drops the slot. As with `join`, the result
+is built from `Node.empty` by ascending `insert`, so it is compact by construction. -/
 def meet (combine : α → α → Option α) (a b : Node α) : Node α :=
-  let step := fun (st : UInt32 × Array α × Nat × Nat) i =>
-    let (mask, elems, ja, jb) := st
+  let step := fun (st : Node α × Nat × Nat) i =>
+    let (acc, ja, jb) := st
     let iu := UInt32.ofNat i
     match testBit a.positionsMask iu, testBit b.positionsMask iu with
     | true, true =>
       match a.elements[ja]?, b.elements[jb]? with
       | some x, some y =>
         match combine x y with
-        | some v => (setBit mask iu, elems.push v, ja + 1, jb + 1)
-        | none   => (mask, elems, ja + 1, jb + 1)
-      | _, _ => (mask, elems, ja + 1, jb + 1)
-    | true, false => (mask, elems, ja + 1, jb)
-    | false, true => (mask, elems, ja, jb + 1)
-    | false, false => (mask, elems, ja, jb)
-  let (mask, elems, _, _) := (List.range 32).foldl step ((0 : UInt32), (#[] : Array α), 0, 0)
-  ⟨mask, elems⟩
+        | some v => (acc.insert iu v, ja + 1, jb + 1)
+        | none   => (acc, ja + 1, jb + 1)
+      | _, _ => (acc, ja + 1, jb + 1)
+    | true, false => (acc, ja + 1, jb)
+    | false, true => (acc, ja, jb + 1)
+    | false, false => (acc, ja, jb)
+  ((List.range 32).foldl step (Node.empty, 0, 0)).1
 
 /-- `a` restricts `b`: every slot of `a` is present in `b`, and `rel` holds on every
 shared child. -/
@@ -213,6 +251,12 @@ private def nB : Node Nat := (Node.singleton 4 99).insert 7 70
 
 -- foldl visits slots ascending
 #guard nA.foldl (fun acc i a => acc ++ [(i.toNat, a)]) [] == [(1, 10), (4, 40), (31, 310)]
+
+-- the `elements_compact` invariant is a field every node carries, so it is available on
+-- operation results too — here, on a `join` output — by construction, no side condition
+example : (Node.join (fun x y => some (x + y)) nA nB).elements.size
+        = popCount (Node.join (fun x y => some (x + y)) nA nB).positionsMask :=
+  (Node.join (fun x y => some (x + y)) nA nB).elements_compact
 
 end Tests
 
