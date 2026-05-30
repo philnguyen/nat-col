@@ -31,6 +31,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   insert_ne_empty n i v := Node.isEmpty_insert n i v
   isEmpty_modify n i g := Node.isEmpty_alter_invariant n i (Option.map g) (fun o => by cases o <;> rfl)
   isEmpty_empty := rfl
+  eq_empty_of_isEmpty n h := Node.eq_empty_of_isEmpty n h
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -73,8 +74,12 @@ def toList (m : NatMap α) : List (Nat × α) := NatCollection.toList m
 def ofList (l : List (Nat × α)) : NatMap α := NatCollection.ofList l
 
 /-- The empty map is a left identity of `join`. -/
-@[simp] theorem join_empty_left (combine : α → α → α) (m : NatMap α) :
+@[simp, grind =] theorem join_empty_left (combine : α → α → α) (m : NatMap α) :
     NatMap.empty.join combine m = m := NatCollection.join_empty_left combine m
+
+/-- The empty map is a right identity of `join`. -/
+@[simp, grind =] theorem join_empty_right (combine : α → α → α) (m : NatMap α) :
+    m.join combine NatMap.empty = m := NatCollection.join_empty_right combine m
 
 end NatMap
 

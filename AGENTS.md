@@ -23,7 +23,7 @@ A design is at [DESIGN.md](docs/DESIGN.md)
 
 # Theorems and proving
 - For general properties to be stated and proven as theorems, make sure some example tests pass first before bothering to prove them.
-- Theorems of the form `lhs = rhs` should aim for `rhs` being simpler than `lhs` and be marked as `@[simp]`.
+- Theorems of the form `lhs = rhs` should aim for `rhs` being simpler than `lhs` and be marked as `@[simp]` and `@[grind =]`.
 - If using `grind`, always use `grind?`, then see precisely what are needed and revise with `grind only`.
 - The newly stable tactics `cbv` and `decide_cbv` might be useful at places.
 - Try to make proofs human readable: the strategy/structure should be apparent, with tedious details taken care of by tactics/helpers. This is analogous to how one would handwave proofs in a paper due to space constraint, deferring details to the appendix.

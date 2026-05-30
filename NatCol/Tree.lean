@@ -50,6 +50,10 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   /-- The empty leaf reads as empty. Lets the collection layer prove `empty.isEmpty = true`,
   which the lattice identities (e.g. left identity of `join`) bottom out in. -/
   isEmpty_empty : isEmpty (empty : L) = true
+  /-- An empty leaf *is* the empty leaf (the canonical converse of `isEmpty_empty`). Lets the
+  collection layer recover `c = empty` from `c.isEmpty = true` at height 0, which the right
+  identity of `join` (`join a empty = a`) bottoms out in. -/
+  eq_empty_of_isEmpty : ∀ (l : L), isEmpty l = true → l = empty
 
 namespace Tree
 

@@ -400,6 +400,18 @@ theorem isEmpty_alter_invariant {α} (n : Node α) (i : UInt32) (g : Option α �
   unfold Node.isEmpty
   rw [positionsMask_alter_invariant n i g hg]
 
+/-- An empty node *is* `Node.empty`: a zero mask has popcount `0`, so by `elements_compact`
+the element array is empty too, pinning down both data fields (the proof field is irrelevant).
+This is the converse of `isEmpty` the collection layer needs to recover `c = empty`. -/
+theorem eq_empty_of_isEmpty {α} (n : Node α) (h : n.isEmpty = true) : n = Node.empty := by
+  obtain ⟨m, e, hc⟩ := n
+  simp only [Node.isEmpty] at h
+  have hm : m = 0 := eq_of_beq h
+  subst hm
+  have he : e = #[] := Array.size_eq_zero_iff.mp (by rw [hc]; rfl)
+  subst he
+  rfl
+
 end Node
 
 /-! ## Tests -/

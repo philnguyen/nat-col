@@ -181,16 +181,45 @@ instance [BEq L] [LawfulBEq L] : DecidableEq (NatCollection L) := _root_.instDec
 
 /-- The empty collection is recognized as empty (lifts the leaf law `LeafOps.isEmpty_empty`
 through `Tree.isEmpty 0 (Tree.empty 0)`). -/
-@[simp] theorem isEmpty_empty : (empty : NatCollection L).isEmpty = true := LeafOps.isEmpty_empty
+@[simp, grind =] theorem isEmpty_empty : (empty : NatCollection L).isEmpty = true := LeafOps.isEmpty_empty
 
 /-- The empty collection is a left identity of `join`: `join` returns its right operand
 verbatim once the left is empty, and `empty` is empty by `isEmpty_empty`. -/
-@[simp] theorem join_empty_left (combine : V → V → V) (b : NatCollection L) :
+@[simp, grind =] theorem join_empty_left (combine : V → V → V) (b : NatCollection L) :
     join combine empty b = b := by
   unfold join
   split
   · rfl
   · rename_i h; rw [isEmpty_empty] at h; exact absurd h (by decide)
+
+/-- An empty collection is *the* empty collection. At height ≥ 1 the canonical-shape field
+`TopProper` forces a slot above slot 0 to be set (`2 ≤ positionsMask`), so an empty collection
+must have height 0, where its leaf is the empty leaf by `LeafOps.eq_empty_of_isEmpty`. -/
+theorem eq_empty_of_isEmpty (c : NatCollection L) (hc : c.isEmpty = true) : c = empty := by
+  obtain ⟨height, tree, wf⟩ := c
+  cases height with
+  | zero =>
+    have htree : tree = LeafOps.empty := LeafOps.eq_empty_of_isEmpty tree hc
+    subst htree; rfl
+  | succ h =>
+    exfalso
+    have hmask : tree.positionsMask = 0 := eq_of_beq hc
+    have htop : 2 ≤ tree.positionsMask := wf.2
+    rw [hmask] at htop
+    exact absurd htop (by decide)
+
+/-- The empty collection is a right identity of `join`. Unlike the left identity this is not
+verbatim: when `a` is empty `join` returns `empty`, which equals `a` only because an empty
+collection *is* `empty` (`eq_empty_of_isEmpty`); otherwise the inner match returns `a` since
+`empty.isEmpty = true`. -/
+@[simp, grind =] theorem join_empty_right (combine : V → V → V) (a : NatCollection L) :
+    join combine a empty = a := by
+  unfold join
+  split
+  · rename_i h; exact (eq_empty_of_isEmpty a h).symm
+  · split
+    · rfl
+    · rename_i h; rw [isEmpty_empty] at h; exact absurd h (by decide)
 
 /-! ## Tests -/
 
