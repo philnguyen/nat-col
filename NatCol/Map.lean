@@ -82,11 +82,13 @@ instance (k : Nat) (m : NatMap α) : Decidable (k ∈ m) :=
   inferInstanceAs (Decidable (m.contains k = true))
 
 /-- The empty map is a left identity of `join`. -/
-@[simp, grind =] theorem join_empty_left (combine : α → α → α) (m : NatMap α) :
+@[simp, grind =]
+theorem join_empty_left (combine : α → α → α) (m : NatMap α) :
     NatMap.empty.join combine m = m := NatCollection.join_empty_left combine m
 
 /-- The empty map is a right identity of `join`. -/
-@[simp, grind =] theorem join_empty_right (combine : α → α → α) (m : NatMap α) :
+@[simp, grind =]
+theorem join_empty_right (combine : α → α → α) (m : NatMap α) :
     m.join combine NatMap.empty = m := NatCollection.join_empty_right combine m
 
 /-- `join` commutes when the combine is flipped: swapping the operands swaps the `combine`
@@ -103,15 +105,18 @@ theorem join_comm_of_comm (combine : α → α → α) (hcomm : ∀ x y, combine
   rw [join_comm, h]
 
 /-- The empty map is a left annihilator of `meet`. -/
-@[simp, grind =] theorem meet_empty_left (combine : α → α → α) (m : NatMap α) :
+@[simp, grind =]
+theorem meet_empty_left (combine : α → α → α) (m : NatMap α) :
     NatMap.empty.meet combine m = NatMap.empty := NatCollection.meet_empty_left combine m
 
 /-- The empty map is a right annihilator of `meet`. -/
-@[simp, grind =] theorem meet_empty_right (combine : α → α → α) (m : NatMap α) :
+@[simp, grind =]
+theorem meet_empty_right (combine : α → α → α) (m : NatMap α) :
     m.meet combine NatMap.empty = NatMap.empty := NatCollection.meet_empty_right combine m
 
 /-- The empty map restricts every map (its domain is vacuously a subset). -/
-@[simp, grind =] theorem restricts_empty_left (rel : α → α → Bool) (m : NatMap α) :
+@[simp, grind =]
+theorem restricts_empty_left (rel : α → α → Bool) (m : NatMap α) :
     NatMap.empty.restricts rel m = true := NatCollection.restricts_empty_left rel m
 
 /-- `restricts` is reflexive: a map restricts itself whenever `rel` holds on equal values

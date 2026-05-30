@@ -87,11 +87,13 @@ def toList (s : NatSet) : List Nat := (NatCollection.toList s).map Prod.fst
 def ofList (l : List Nat) : NatSet := l.foldl (fun s k => s.insert k) empty
 
 /-- The empty set is a left identity of `∪` (union). -/
-@[simp, grind =] theorem union_empty_left (s : NatSet) : NatSet.empty ∪ s = s :=
+@[simp, grind =]
+theorem union_empty_left (s : NatSet) : NatSet.empty ∪ s = s :=
   NatCollection.join_empty_left (fun _ _ => ()) s
 
 /-- The empty set is a right identity of `∪` (union). -/
-@[simp, grind =] theorem union_empty_right (s : NatSet) : s ∪ NatSet.empty = s :=
+@[simp, grind =]
+theorem union_empty_right (s : NatSet) : s ∪ NatSet.empty = s :=
   NatCollection.join_empty_right (fun _ _ => ()) s
 
 /-- Union is commutative. (The set `combine` is constantly `()`, so flipping it is a no-op and the
@@ -100,19 +102,23 @@ theorem union_comm (s t : NatSet) : s ∪ t = t ∪ s :=
   NatCollection.join_comm (fun _ _ => ()) s t
 
 /-- The empty set is a left annihilator of `∩` (intersection). -/
-@[simp, grind =] theorem inter_empty_left (s : NatSet) : NatSet.empty ∩ s = NatSet.empty :=
+@[simp, grind =]
+theorem inter_empty_left (s : NatSet) : NatSet.empty ∩ s = NatSet.empty :=
   NatCollection.meet_empty_left (fun _ _ => ()) s
 
 /-- The empty set is a right annihilator of `∩` (intersection). -/
-@[simp, grind =] theorem inter_empty_right (s : NatSet) : s ∩ NatSet.empty = NatSet.empty :=
+@[simp, grind =]
+theorem inter_empty_right (s : NatSet) : s ∩ NatSet.empty = NatSet.empty :=
   NatCollection.meet_empty_right (fun _ _ => ()) s
 
 /-- The empty set is a subset of (restricts) every set. -/
-@[simp] theorem subset_empty_left (s : NatSet) : NatSet.empty ⊆ s :=
+@[simp]
+theorem subset_empty_left (s : NatSet) : NatSet.empty ⊆ s :=
   NatCollection.restricts_empty_left (fun _ _ => true) s
 
 /-- Subset is reflexive: every set is a subset of itself. -/
-@[simp] theorem subset_refl (s : NatSet) : s ⊆ s :=
+@[simp]
+theorem subset_refl (s : NatSet) : s ⊆ s :=
   NatCollection.restricts_refl (fun _ _ => true) (fun _ => rfl) s
 
 end NatSet

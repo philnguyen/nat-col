@@ -201,11 +201,13 @@ instance [BEq L] [LawfulBEq L] : DecidableEq (NatCollection L) := _root_.instDec
 
 /-- The empty collection is recognized as empty (lifts the leaf law `LeafOps.isEmpty_empty`
 through `Tree.isEmpty 0 (Tree.empty 0)`). -/
-@[simp, grind =] theorem isEmpty_empty : (empty : NatCollection L).isEmpty = true := LeafOps.isEmpty_empty
+@[simp, grind =]
+theorem isEmpty_empty : (empty : NatCollection L).isEmpty = true := LeafOps.isEmpty_empty
 
 /-- The empty collection is a left identity of `join`: `join` returns its right operand
 verbatim once the left is empty, and `empty` is empty by `isEmpty_empty`. -/
-@[simp, grind =] theorem join_empty_left (combine : V → V → V) (b : NatCollection L) :
+@[simp, grind =]
+theorem join_empty_left (combine : V → V → V) (b : NatCollection L) :
     join combine empty b = b := by
   unfold join
   split
@@ -232,7 +234,8 @@ theorem eq_empty_of_isEmpty (c : NatCollection L) (hc : c.isEmpty = true) : c = 
 verbatim: when `a` is empty `join` returns `empty`, which equals `a` only because an empty
 collection *is* `empty` (`eq_empty_of_isEmpty`); otherwise the second branch returns `a` since
 `empty.isEmpty = true`. -/
-@[simp, grind =] theorem join_empty_right (combine : V → V → V) (a : NatCollection L) :
+@[simp, grind =]
+theorem join_empty_right (combine : V → V → V) (a : NatCollection L) :
     join combine a empty = a := by
   unfold join
   split
@@ -244,7 +247,8 @@ collection *is* `empty` (`eq_empty_of_isEmpty`); otherwise the second branch ret
 /-- The empty collection is a left annihilator of `meet`. Like the left identity of `join` (and
 unlike its right identity) this is verbatim: `meet`'s first branch fires once the left operand is
 empty (`isEmpty_empty`) and returns `empty` — no new leaf law required. -/
-@[simp, grind =] theorem meet_empty_left (combine : V → V → V) (b : NatCollection L) :
+@[simp, grind =]
+theorem meet_empty_left (combine : V → V → V) (b : NatCollection L) :
     meet combine empty b = empty := by
   unfold meet
   rw [if_pos isEmpty_empty]
@@ -253,7 +257,8 @@ empty (`isEmpty_empty`) and returns `empty` — no new leaf law required. -/
 the right *identity* of `join`) this is verbatim: when the left operand is empty the first branch
 returns `empty`; otherwise the second branch fires, since the right operand is empty
 (`isEmpty_empty`), and also returns `empty`. No new leaf law required. -/
-@[simp, grind =] theorem meet_empty_right (combine : V → V → V) (a : NatCollection L) :
+@[simp, grind =]
+theorem meet_empty_right (combine : V → V → V) (a : NatCollection L) :
     meet combine a empty = empty := by
   unfold meet
   split <;> first | rfl | rw [if_pos isEmpty_empty]
@@ -262,7 +267,8 @@ returns `empty`; otherwise the second branch fires, since the right operand is e
 verbatim: `restricts`'s first branch fires once the left operand is empty (`isEmpty_empty`) and
 returns `true` — the empty collection's keys are vacuously a subset of any other's, and `rel`
 holds vacuously. No new leaf law required. -/
-@[simp, grind =] theorem restricts_empty_left (rel : V → V → Bool) (b : NatCollection L) :
+@[simp, grind =]
+theorem restricts_empty_left (rel : V → V → Bool) (b : NatCollection L) :
     restricts rel empty b = true := by
   unfold restricts
   rw [if_pos isEmpty_empty]

@@ -12,6 +12,7 @@ A design is at [DESIGN.md](docs/DESIGN.md)
 - Prefer piping operations using `|>.` or `|>` to nesting parentheses.
 - If using a chain of `|>.`s, try to make them all `|>.`s instead of a mix of `|>.`s and nested `.`s.
 - If a piping chain is long, align the steps on multiple lines.
+- Annotations should be on their own separate line before a definition, except for one-line definitions of non-theorems.
 
 # Testing
 - Prefer `#guard`/`#guard_expr` commands or `example` with proofs instead of run-time code.
