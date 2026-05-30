@@ -286,6 +286,58 @@ theorem restricts_refl (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) 
     subst hd
     simp only [Tree.restrictsSpine]
     exact Tree.restrictsEq_self rel hrefl a.height a.tree
+
+/-- `normalizeAux` depends on its tree only up to equality — the `Full` proof is irrelevant — so
+equal trees normalize to equal collections. Backs `join_comm`'s equal-height case, where the two
+sides build the *same* tree by different (flipped) recursions. -/
+private theorem normalizeAux_congr {h : Nat} {t₁ t₂ : Tree L h} (heq : t₁ = t₂)
+    (hf₁ : Tree.Full h t₁) (hf₂ : Tree.Full h t₂) :
+    normalizeAux h t₁ hf₁ = normalizeAux h t₂ hf₂ := by
+  subst heq; rfl
+
+/-- `join` commutes when the combine is flipped: `join combine a b = join (fun x y => combine y x) b a`.
+The empty short-circuits line up directly (two empty operands are both `empty`); when the heights
+differ both sides descend the *same* (taller) tree's spine — the double flip cancels by η, so they
+are definitionally equal; at equal heights both reduce to a `joinEq` with `d = 0`, related by
+`Tree.joinEq_comm`. -/
+theorem join_comm (combine : V → V → V) (a b : NatCollection L) :
+    join combine a b = join (fun x y => combine y x) b a := by
+  unfold join
+  by_cases hae : a.isEmpty = true
+  · rw [dif_pos hae]
+    by_cases hbe : b.isEmpty = true
+    · -- both empty: each operand is `empty`
+      rw [dif_pos hbe, eq_empty_of_isEmpty a hae, eq_empty_of_isEmpty b hbe]
+    · -- only `a` empty: the flipped call skips its first guard, then returns `b` on the second
+      rw [dif_neg hbe, dif_pos hae]
+  · rw [dif_neg hae]
+    by_cases hbe : b.isEmpty = true
+    · -- only `b` empty: both calls return `a`
+      rw [dif_pos hbe, dif_pos hbe]
+    · -- both non-empty: clear the flipped call's `a.isEmpty` guard too, then compare heights
+      rw [dif_neg hbe, dif_neg hbe, dif_neg hae]
+      rcases Nat.lt_trichotomy a.height b.height with hlt | heq | hgt
+      · -- `a` shorter: both descend `b`'s spine (RHS's double flip cancels by η)
+        rw [dif_pos (Nat.le_of_lt hlt), dif_neg (Nat.not_le.mpr hlt)]
+      · -- equal heights: both reduce to a `joinEq` (`d = 0`); close by `joinEq_comm`
+        rw [dif_pos (Nat.le_of_eq heq), dif_pos (Nat.le_of_eq heq.symm)]
+        obtain ⟨ha, ta, wa⟩ := a
+        obtain ⟨hb, tb, wb⟩ := b
+        dsimp only at heq ⊢
+        subst hb
+        apply normalizeAux_congr
+        -- generalize the (zero) height difference to `subst` away the dependent `Tree.cast`s
+        suffices H : ∀ (d : Nat), d = 0 → ∀ (p₁ p₂ : ha = ha + d),
+            Tree.joinSpine combine ha d ta (Tree.cast p₁ tb)
+              = Tree.joinSpine (fun x y => combine y x) ha d tb (Tree.cast p₂ ta) from
+          H (ha - ha) (Nat.sub_self ha) (by omega) (by omega)
+        intro d hd p₁ p₂
+        subst hd
+        simp only [Tree.joinSpine]
+        exact Tree.joinEq_comm combine (fun x y => combine y x) (fun _ _ => rfl) ha ta tb
+      · -- `a` taller: both descend `a`'s spine with the same flipped combine
+        rw [dif_neg (Nat.not_le.mpr hgt), dif_pos (Nat.le_of_lt hgt)]
+
 section Tests
 
 -- The canonical-shape invariant is a field, so it is available on *every* collection — and

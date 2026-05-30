@@ -59,6 +59,11 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   layer prove reflexivity of `restricts`. -/
   restricts_refl : ∀ (rel : V → V → Bool), (∀ x, rel x x = true) →
     ∀ (l : L), restricts rel l l = true
+  /-- `join` commutes when the combine is flipped: merging `a` into `b` with `f` equals
+  merging `b` into `a` with `f`'s arguments swapped. Lets the collection layer derive
+  commutativity of `join`; `joinEq_comm` lifts it through the tree. -/
+  join_comm : ∀ (f g : V → V → V), (∀ x y, f x y = g y x) →
+    ∀ (a b : L), join f a b = join g b a
 
 namespace Tree
 
@@ -260,6 +265,21 @@ theorem restrictsEq_self (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true
     intro n
     simp only [restrictsEq]
     exact Node.restricts_self _ n (fun c _ => ih c)
+
+/-- `joinEq` commutes when the combine is flipped, at every height: merging `a` into `b` with
+`f` equals merging `b` into `a` with `f`'s arguments swapped. Bottoms out in `LeafOps.join_comm`
+at a leaf and `Node.join_comm` at each node (the per-slot merge flips by the induction
+hypothesis: the `if isEmpty` guard depends only on the recursively-merged child). -/
+theorem joinEq_comm (f g : V → V → V) (hfg : ∀ x y, f x y = g y x) :
+    (h : Nat) → (a b : Tree L h) → joinEq f h a b = joinEq g h b a := by
+  intro h
+  induction h with
+  | zero => intro a b; simp only [joinEq]; exact LeafOps.join_comm f g hfg a b
+  | succ h ih =>
+    intro a b
+    simp only [joinEq]
+    refine Node.join_comm a b fun x y => ?_
+    simp only [ih]
 
 /-- Collect `(key, value)` pairs into `acc`, ascending by key. `pfx` carries the key bits
 fixed by higher levels. -/

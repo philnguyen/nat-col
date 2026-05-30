@@ -35,6 +35,9 @@ instance : LeafOps UInt32 Unit where
   restricts_refl _ _ u := by
     show ((u &&& u) == u) = true
     simp [show u &&& u = u from by bv_decide]
+  join_comm _ _ _ a b := by
+    show (a ||| b) = (b ||| a)
+    bv_decide
 
 /-- A set of natural numbers. -/
 def NatSet : Type := NatCollection UInt32
@@ -90,6 +93,11 @@ def ofList (l : List Nat) : NatSet := l.foldl (fun s k => s.insert k) empty
 /-- The empty set is a right identity of `∪` (union). -/
 @[simp, grind =] theorem union_empty_right (s : NatSet) : s ∪ NatSet.empty = s :=
   NatCollection.join_empty_right (fun _ _ => ()) s
+
+/-- Union is commutative. (The set `combine` is constantly `()`, so flipping it is a no-op and the
+flip law `NatCollection.join_comm` gives unconditional commutativity.) -/
+theorem union_comm (s t : NatSet) : s ∪ t = t ∪ s :=
+  NatCollection.join_comm (fun _ _ => ()) s t
 
 /-- The empty set is a left annihilator of `∩` (intersection). -/
 @[simp, grind =] theorem inter_empty_left (s : NatSet) : NatSet.empty ∩ s = NatSet.empty :=

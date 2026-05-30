@@ -444,6 +444,35 @@ theorem restricts_self {α} (rel : α → α → Bool) (n : Node α)
       | (rename_i ha _; rw [Bool.true_and]; exact hrel _ (n.get_mem _ ha))
       | rfl
 
+/-- `Nat.fold` congruence: equal seeds and pointwise-equal steps give equal results. Backs
+`join_comm`, where the two folds differ only in their (definitionally pruning) per-slot steps
+and a commuted capacity hint. -/
+private theorem fold_step_congr {β : Type v} (stepf stepg : β → Nat → β) (initf initg : β)
+    (hinit : initf = initg) (hstep : ∀ acc i, stepf acc i = stepg acc i) (n : Nat) :
+    Nat.fold n (fun i _ acc => stepf acc i) initf
+      = Nat.fold n (fun i _ acc => stepg acc i) initg := by
+  subst hinit
+  induction n with
+  | zero => rfl
+  | succ k ih => rw [Nat.fold_succ, Nat.fold_succ, ih, hstep]
+
+/-- `join` commutes when the combine is flipped: merging `a` into `b` with `f` equals merging
+`b` into `a` with `f`'s arguments swapped. The two folds run over the same slots (`|||` is
+commutative, so the capacity seeds match); on each slot the present/absent cases line up and
+the both-present case agrees by `hfg`. -/
+theorem join_comm {α} {f g : α → α → Option α} (a b : Node α)
+    (hfg : ∀ x y, f x y = g y x) :
+    Node.join f a b = Node.join g b a := by
+  simp only [Node.join]
+  refine fold_step_congr _ _ _ _ ?_ ?_ 32
+  · -- the capacity seeds agree because `|||` is commutative
+    rw [show a.positionsMask ||| b.positionsMask = b.positionsMask ||| a.positionsMask from by
+      bv_decide]
+  · -- per slot: scan the four present/absent cases; the both-present one closes by `hfg`
+    intro acc i
+    dsimp only
+    split <;> symm <;> split <;> simp_all
+
 end Node
 
 /-! ## Tests -/

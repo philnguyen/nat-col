@@ -33,6 +33,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   isEmpty_empty := rfl
   eq_empty_of_isEmpty n h := Node.eq_empty_of_isEmpty n h
   restricts_refl rel hrefl n := Node.restricts_self rel n (fun x _ => hrefl x)
+  join_comm f g hfg a b := Node.join_comm a b (fun x y => by rw [hfg])
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -87,6 +88,19 @@ instance (k : Nat) (m : NatMap α) : Decidable (k ∈ m) :=
 /-- The empty map is a right identity of `join`. -/
 @[simp, grind =] theorem join_empty_right (combine : α → α → α) (m : NatMap α) :
     m.join combine NatMap.empty = m := NatCollection.join_empty_right combine m
+
+/-- `join` commutes when the combine is flipped: swapping the operands swaps the `combine`
+arguments. (Values at coinciding keys are resolved `combine left right`, so the order matters
+unless `combine` is symmetric — see `join_comm_of_comm`.) -/
+theorem join_comm (combine : α → α → α) (m₁ m₂ : NatMap α) :
+    m₁.join combine m₂ = m₂.join (fun x y => combine y x) m₁ :=
+  NatCollection.join_comm combine m₁ m₂
+
+/-- `join` is commutative when its combine is symmetric. -/
+theorem join_comm_of_comm (combine : α → α → α) (hcomm : ∀ x y, combine x y = combine y x)
+    (m₁ m₂ : NatMap α) : m₁.join combine m₂ = m₂.join combine m₁ := by
+  have h : (fun x y => combine y x) = combine := funext fun x => funext fun y => hcomm y x
+  rw [join_comm, h]
 
 /-- The empty map is a left annihilator of `meet`. -/
 @[simp, grind =] theorem meet_empty_left (combine : α → α → α) (m : NatMap α) :
@@ -180,6 +194,9 @@ applies it as `combine left-value right-value`. -/
         == [(1, 10), (5000, 500)]                                                       -- rhs taller
 #guard ((NatMap.ofList [(1, 10), (5000, 500)]).join (fun x _ => x) (NatMap.ofList [(1, 99)])).toList
         == [(1, 10), (5000, 500)]                                                       -- lhs taller (flipped)
+-- `join_comm` flip law: swapping operands and flipping the (non-symmetric) combine is the identity
+#guard (NatMap.ofList [(1, 10), (2, 20)]).join (fun x _ => x) (NatMap.ofList [(1, 99), (5000, 5)])
+     = (NatMap.ofList [(1, 99), (5000, 5)]).join (fun _ y => y) (NatMap.ofList [(1, 10), (2, 20)])
 
 -- meet: only shared keys survive at the smaller height, taller operand on either side
 #guard ((NatMap.ofList [(1, 10), (2, 20), (5000, 500)]).meet (· + ·) (NatMap.ofList [(1, 1), (3, 3)])).toList
