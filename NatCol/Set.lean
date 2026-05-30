@@ -94,11 +94,11 @@ def ofList (l : List Nat) : NatSet := l.foldl (fun s k => s.insert k) empty
   NatCollection.meet_empty_right (fun _ _ => ()) s
 
 /-- The empty set is a subset of (restricts) every set. -/
-@[simp, grind =] theorem subset_empty_left (s : NatSet) : NatSet.empty.subset s = true :=
+@[simp] theorem subset_empty_left (s : NatSet) : NatSet.empty ⊆ s :=
   NatCollection.restricts_empty_left (fun _ _ => true) s
 
 /-- Subset is reflexive: every set is a subset of itself. -/
-@[simp, grind =] theorem subset_refl (s : NatSet) : s.subset s = true :=
+@[simp] theorem subset_refl (s : NatSet) : s ⊆ s :=
   NatCollection.restricts_refl (fun _ _ => true) (fun _ => rfl) s
 
 end NatSet
