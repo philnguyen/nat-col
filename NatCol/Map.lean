@@ -89,6 +89,10 @@ def ofList (l : List (Nat × α)) : NatMap α := NatCollection.ofList l
 @[simp, grind =] theorem meet_empty_right (combine : α → α → α) (m : NatMap α) :
     m.meet combine NatMap.empty = NatMap.empty := NatCollection.meet_empty_right combine m
 
+/-- The empty map restricts every map (its domain is vacuously a subset). -/
+@[simp, grind =] theorem restricts_empty_left (rel : α → α → Bool) (m : NatMap α) :
+    NatMap.empty.restricts rel m = true := NatCollection.restricts_empty_left rel m
+
 end NatMap
 
 /-! ## Tests -/

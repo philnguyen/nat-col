@@ -90,6 +90,10 @@ def ofList (l : List Nat) : NatSet := l.foldl (fun s k => s.insert k) empty
 @[simp, grind =] theorem inter_empty_right (s : NatSet) : s ∩ NatSet.empty = NatSet.empty :=
   NatCollection.meet_empty_right (fun _ _ => ()) s
 
+/-- The empty set is a subset of (restricts) every set. -/
+@[simp, grind =] theorem subset_empty_left (s : NatSet) : NatSet.empty.subset s = true :=
+  NatCollection.restricts_empty_left (fun _ _ => true) s
+
 end NatSet
 
 /-! ## Tests -/

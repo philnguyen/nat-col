@@ -245,6 +245,15 @@ contradicts `isEmpty_empty`; no new leaf law required. -/
     | rfl
     | (rename_i _ h; rw [isEmpty_empty] at h; exact absurd h (by decide))
 
+/-- The empty collection restricts every collection. Like the left annihilator of `meet` this is
+verbatim: `restricts`'s first branch fires once the left operand is empty (`isEmpty_empty`) and
+returns `true` — the empty collection's keys are vacuously a subset of any other's, and `rel`
+holds vacuously. No new leaf law required. -/
+@[simp, grind =] theorem restricts_empty_left (rel : V → V → Bool) (b : NatCollection L) :
+    restricts rel empty b = true := by
+  unfold restricts
+  rw [if_pos isEmpty_empty]
+
 /-! ## Tests -/
 
 section Tests
