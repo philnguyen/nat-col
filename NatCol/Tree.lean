@@ -41,6 +41,12 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   restricts : (V → V → Bool) → L → L → Bool
   /-- Present `(slot, value)` pairs in ascending slot order. -/
   toArray   : L → Array (UInt32 × V)
+  /-- Inserting a value yields a non-empty leaf, so freshly-built subtrees are never empty.
+  Part of the canonical-shape invariant (`Tree.Full`). -/
+  insert_ne_empty : ∀ (l : L) (i : UInt32) (v : V), isEmpty (insert l i v) = false
+  /-- Modifying a value never changes whether a leaf is empty (it touches values, not
+  presence), so `modify` preserves canonical shape. -/
+  isEmpty_modify : ∀ (l : L) (i : UInt32) (g : V → V), isEmpty (modify l i g) = isEmpty l
 
 namespace Tree
 
@@ -116,10 +122,17 @@ def cast {ha hb : Nat} (h : ha = hb) (t : Tree L ha) : Tree L hb := h ▸ t
 
 /-- Union of two equal-height trees. Children present on only one side are reused by
 `Node.join` without recursion; shared children are merged recursively, combining leaf
-values with `c`. -/
+values with `c`.
+
+The recursive merge is guarded by `if isEmpty … then none`, exactly like `meetEq`. For
+canonical (non-empty) children this guard never fires — a union is never empty — so it does
+not change behavior, but it makes "no empty subtree" (`Tree.Full`) hold by construction:
+every surviving merged child is provably non-empty. -/
 def joinEq (c : V → V → V) : (h : Nat) → Tree L h → Tree L h → Tree L h
   | 0, a, b => LeafOps.join c a b
-  | h + 1, a, b => Node.join (fun x y => some (joinEq c h x y)) a b
+  | h + 1, a, b => Node.join (fun x y =>
+      let t := joinEq c h x y
+      if isEmpty h t then none else some t) a b
 termination_by h => h
 
 /-- Intersection of two equal-height trees. Children present on only one side are dropped
@@ -188,6 +201,178 @@ termination_by h => h
 
 /-- All `(key, value)` pairs, ascending by key. -/
 def toArray (h : Nat) (t : Tree L h) : Array (Nat × V) := toArrayAux 0 h t #[]
+
+/-! ### Canonical shape
+
+`Full` is "no empty subtree": every present child, at every level, is non-empty. `TopProper`
+is "no excessive height": the top node has a slot above slot 0 set (`2 ≤ positionsMask`), so
+the height is minimal. Their conjunction `Canonical` is the invariant the `NatCollection`
+layer carries as a proof field. Each lemma below shows one operation preserves or establishes
+the relevant piece; the collection layer assembles them. -/
+
+/-- No empty subtree: every present child, recursively, is non-empty. (Vacuous at a leaf —
+a leaf's own emptiness is governed at the collection's top, not here.) -/
+def Full : (h : Nat) → Tree L h → Prop
+  | 0, _ => True
+  | h + 1, n => ∀ c ∈ n.elements, Tree.isEmpty h c = false ∧ Full h c
+
+/-- Height-minimal at the top: the top node has a slot ≥ 1 set, so the height cannot be
+lowered. (Vacuous at a leaf.) -/
+def TopProper : (h : Nat) → Tree L h → Prop
+  | 0, _ => True
+  | _ + 1, n => 2 ≤ n.positionsMask
+
+/-- A canonical tree: no empty subtree and minimal height. -/
+def Canonical (h : Nat) (t : Tree L h) : Prop := Full h t ∧ TopProper h t
+
+/-- The empty tree has no subtrees, so it is `Full`. -/
+theorem Full_empty : (h : Nat) → Full h (Tree.empty h : Tree L h)
+  | 0 => trivial
+  | _ + 1 => by intro c hc; simp [Tree.empty, Node.empty] at hc
+
+/-- A singleton tree is non-empty at every height. -/
+private theorem isEmpty_singleton : (h : Nat) → (k : Nat) → (v : V) →
+    Tree.isEmpty h (Tree.singleton k v h : Tree L h) = false
+  | 0, _, _ => by simp only [Tree.isEmpty, Tree.singleton]; exact LeafOps.insert_ne_empty _ _ _
+  | _ + 1, _, _ => by simp only [Tree.isEmpty, Tree.singleton]; exact Node.isEmpty_singleton _ _
+
+/-- A singleton tree has no empty subtree. -/
+theorem Full_singleton : (h : Nat) → (k : Nat) → (v : V) → Full h (Tree.singleton k v h : Tree L h)
+  | 0, _, _ => trivial
+  | h + 1, k, v => by
+      intro c hc
+      simp only [Tree.singleton, Node.singleton, Array.mem_singleton] at hc
+      subst hc
+      exact ⟨isEmpty_singleton h k v, Full_singleton h k v⟩
+
+/-- An `insert` result is never empty (it adds a key). -/
+private theorem isEmpty_insert : (h : Nat) → (k : Nat) → (v : V) → (t : Tree L h) →
+    Tree.isEmpty h (Tree.insert k v h t) = false
+  | 0, _, _, _ => by simp only [Tree.isEmpty, Tree.insert]; exact LeafOps.insert_ne_empty _ _ _
+  | h + 1, k, v, n => by
+      simp only [Tree.isEmpty, Tree.insert, Node.isEmpty]
+      rw [Node.positionsMask_alter_of_isSome n (chunk k (h + 1)) _
+            (by cases Node.get? n (chunk k (h + 1)) <;> rfl)]
+      exact beq_eq_false_iff_ne.mpr (setBit_ne_zero _ _)
+
+/-- `insert` preserves "no empty subtree". -/
+theorem Full_insert : (h : Nat) → (k : Nat) → (v : V) → (t : Tree L h) →
+    Full h t → Full h (Tree.insert k v h t)
+  | 0, _, _, _, _ => trivial
+  | h + 1, k, v, n, hn => by
+      intro c hc
+      simp only [Tree.insert] at hc
+      rcases Node.mem_alter n (chunk k (h + 1)) _ c hc with hmem | ⟨a, hfa, hca⟩
+      · exact hn c hmem
+      · subst hca
+        cases hget : Node.get? n (chunk k (h + 1)) with
+        | some child =>
+          rw [hget] at hfa; simp only [Option.some.injEq] at hfa; subst hfa
+          have hchild : Full h child := (hn child (Node.mem_of_get? n _ child hget)).2
+          exact ⟨isEmpty_insert h k v child, Full_insert h k v child hchild⟩
+        | none =>
+          rw [hget] at hfa; simp only [Option.some.injEq] at hfa; subst hfa
+          exact ⟨isEmpty_singleton h k v, Full_singleton h k v⟩
+
+/-- `erase` preserves "no empty subtree" (it prunes any child that becomes empty). -/
+theorem Full_erase : (h : Nat) → (k : Nat) → (t : Tree L h) →
+    Full h t → Full h (Tree.erase k h t)
+  | 0, _, _, _ => trivial
+  | h + 1, k, n, hn => by
+      intro c hc
+      simp only [Tree.erase] at hc
+      rcases Node.mem_alter n (chunk k (h + 1)) _ c hc with hmem | ⟨a, hfa, hca⟩
+      · exact hn c hmem
+      · subst hca
+        cases hget : Node.get? n (chunk k (h + 1)) with
+        | some child =>
+          rw [hget] at hfa; simp only at hfa
+          have hchild : Full h child := (hn child (Node.mem_of_get? n _ child hget)).2
+          split at hfa
+          · simp at hfa
+          · rename_i hne
+            simp only [Option.some.injEq] at hfa; subst hfa
+            exact ⟨by simpa using hne, Full_erase h k child hchild⟩
+        | none =>
+          rw [hget] at hfa; simp at hfa
+
+/-- `joinEq` preserves "no empty subtree": every merged child is guarded non-empty. -/
+theorem Full_joinEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
+    Full h a → Full h b → Full h (joinEq c h a b)
+  | 0, _, _, _, _, _ => trivial
+  | h + 1, c, a, b, ha, hb => by
+      simp only [joinEq]
+      refine Node.join_forall (fun x hx => ha x hx) (fun y hy => hb y hy) ?_
+      intro x hx y hy v hv
+      simp only at hv
+      split at hv
+      · simp at hv
+      · rename_i hne
+        simp only [Option.some.injEq] at hv; subst hv
+        exact ⟨by simpa using hne, Full_joinEq h c x y (ha x hx).2 (hb y hy).2⟩
+
+/-- `meetEq` preserves "no empty subtree": every surviving child is guarded non-empty. -/
+theorem Full_meetEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
+    Full h a → Full h b → Full h (meetEq c h a b)
+  | 0, _, _, _, _, _ => trivial
+  | h + 1, c, a, b, ha, hb => by
+      simp only [meetEq]
+      refine Node.meet_forall ?_
+      intro x hx y hy v hv
+      simp only at hv
+      split at hv
+      · simp at hv
+      · rename_i hne
+        simp only [Option.some.injEq] at hv; subst hv
+        exact ⟨by simpa using hne, Full_meetEq h c x y (ha x hx).2 (hb y hy).2⟩
+
+/-- Lifting a non-empty tree keeps it non-empty. -/
+private theorem isEmpty_liftBy : (d : Nat) → {h : Nat} → (t : Tree L h) →
+    Tree.isEmpty h t = false → Tree.isEmpty (h + d) (liftBy d t) = false
+  | 0, _, _, ht => ht
+  | d + 1, _, t, _ => Node.isEmpty_singleton 0 (liftBy d t)
+
+/-- Lifting a non-empty `Full` tree keeps it `Full` (the new slot-0 children are non-empty
+copies of the original). -/
+theorem Full_liftBy : (d : Nat) → {h : Nat} → (t : Tree L h) →
+    Full h t → Tree.isEmpty h t = false → Full (h + d) (liftBy d t)
+  | 0, _, _, hf, _ => hf
+  | d + 1, _, t, hf, hne => by
+      intro c hc
+      simp only [liftBy, Node.singleton, Array.mem_singleton] at hc
+      subst hc
+      exact ⟨isEmpty_liftBy d t hne, Full_liftBy d t hf hne⟩
+
+/-- Transporting a tree along an equality of heights preserves `Full`. -/
+theorem Full_cast {ha hb : Nat} (heq : ha = hb) (t : Tree L ha) (hf : Full ha t) :
+    Full hb (Tree.cast heq t) := by subst heq; exact hf
+
+/-- `modify` never empties a leaf, so it preserves emptiness at every height. -/
+private theorem isEmpty_modify : (h : Nat) → (k : Nat) → (f : V → V) → (t : Tree L h) →
+    Tree.isEmpty h (Tree.modify k f h t) = Tree.isEmpty h t
+  | 0, _, _, _ => by simp only [Tree.isEmpty, Tree.modify]; exact LeafOps.isEmpty_modify _ _ _
+  | h + 1, k, f, n => by
+      simp only [Tree.isEmpty, Tree.modify]
+      exact Node.isEmpty_alter_invariant n (chunk k (h + 1)) _ (by intro o; cases o <;> rfl)
+
+/-- `modify` preserves "no empty subtree" (it changes values, not structure). -/
+theorem Full_modify : (h : Nat) → (k : Nat) → (f : V → V) → (t : Tree L h) →
+    Full h t → Full h (Tree.modify k f h t)
+  | 0, _, _, _, _ => trivial
+  | h + 1, k, f, n, hn => by
+      intro c hc
+      simp only [Tree.modify] at hc
+      rcases Node.mem_alter n (chunk k (h + 1)) _ c hc with hmem | ⟨a, hfa, hca⟩
+      · exact hn c hmem
+      · subst hca
+        cases hget : Node.get? n (chunk k (h + 1)) with
+        | some child =>
+          rw [hget] at hfa; simp only [Option.some.injEq] at hfa; subst hfa
+          have hchild := hn child (Node.mem_of_get? n _ child hget)
+          refine ⟨?_, Full_modify h k f child hchild.2⟩
+          rw [isEmpty_modify h k f child]; exact hchild.1
+        | none =>
+          rw [hget] at hfa; simp at hfa
 
 end Tree
 

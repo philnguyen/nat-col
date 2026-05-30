@@ -151,4 +151,21 @@ decreasing_by omega
 #guard requiredHeight 1048575 == 3   -- 32^4 - 1
 #guard requiredHeight 1048576 == 4   -- 32^4
 
+/-! ### Mask lemmas backing the `NatCollection` canonical-shape invariant
+
+The collection layer keeps each trie *canonical*, in particular height-minimal: the top
+node has a slot ≥ 1 set, encoded as `2 ≤ positionsMask`. These `bv_decide`-discharged facts
+about `setBit` and that bound feed the `Node`/`Tree`/`Collection` proofs. -/
+
+/-- A `UInt32` that is neither `0` nor `1` is at least `2`. -/
+theorem two_le_of_ne (m : UInt32) (h0 : m ≠ 0) (h1 : m ≠ 1) : 2 ≤ m := by bv_decide
+
+/-- Setting a bit never zeroes a mask. -/
+theorem setBit_ne_zero (m i : UInt32) : setBit m i ≠ 0 := by unfold setBit; bv_decide
+
+/-- Setting an already-set bit is a no-op (so `insert` leaves the mask unchanged when the
+slot is already present). -/
+theorem setBit_eq_of_testBit (m i : UInt32) (h : testBit m i = true) : setBit m i = m := by
+  unfold setBit testBit at *; bv_decide
+
 end NatCol

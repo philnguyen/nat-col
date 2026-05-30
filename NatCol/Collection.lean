@@ -23,17 +23,21 @@ Two facts drive the implementation:
 
 namespace NatCol
 
-/-- A trie together with its height. -/
-structure NatCollection (L : Type u) where
+/-- A trie together with its height, carrying a proof that it is in *canonical shape* —
+no excessive height and no empty subtree (`Tree.Canonical`). Every operation below returns a
+`NatCollection`, so the invariant holds throughout; that is what makes structural equality
+(`beq`) coincide with logical equality. -/
+structure NatCollection (L : Type u) {V : Type u} [LeafOps L V] where
   height : Nat
   tree : Tree L height
+  wf : Tree.Canonical height tree
 
 namespace NatCollection
 
 variable {L : Type u} {V : Type u} [LeafOps L V]
 
 /-- The empty collection. -/
-def empty : NatCollection L := ⟨0, Tree.empty 0⟩
+def empty : NatCollection L := ⟨0, Tree.empty 0, ⟨Tree.Full_empty 0, trivial⟩⟩
 
 def isEmpty (c : NatCollection L) : Bool := Tree.isEmpty c.height c.tree
 
@@ -43,20 +47,33 @@ def size (c : NatCollection L) : Nat := Tree.size c.height c.tree
 def liftTo (c : NatCollection L) (H : Nat) (le : c.height ≤ H) : Tree L H :=
   Tree.cast (by omega) (Tree.liftBy (H - c.height) c.tree)
 
-/-- Lower the height while the top node is empty or contains only slot 0, restoring
-canonical height (needed after `erase`/`meet`). -/
-def normalizeAux : (h : Nat) → Tree L h → NatCollection L
-  | 0, t => ⟨0, t⟩
-  | h + 1, n =>
-    if n.positionsMask == 0 then normalizeAux h (Tree.empty h)
-    else if n.positionsMask == 1 then
-      match n.elements[0]? with
-      | some child => normalizeAux h child
-      | none => ⟨h + 1, n⟩
-    else ⟨h + 1, n⟩
-termination_by h => h
+/-- Lifting a non-empty canonical collection's tree keeps it `Full`. -/
+private theorem Full_liftTo (c : NatCollection L) (H : Nat) (le : c.height ≤ H) (hne : c.isEmpty = false) :
+    Tree.Full H (c.liftTo H le) :=
+  Tree.Full_cast _ _ (Tree.Full_liftBy (H - c.height) c.tree c.wf.1 hne)
 
-def normalize (c : NatCollection L) : NatCollection L := normalizeAux c.height c.tree
+/-- Smart constructor: from any `Full` tree, build a *canonical* collection by lowering the
+height while the top node is empty or holds only slot 0 (this is what restores minimal height
+after `erase`/`meet`; for `insert`/`modify`/`join` results the top is already proper, so it is
+the identity). The `Full` precondition is preserved as we descend, and the final top — being
+neither `0` nor only-slot-`0` — is height-minimal (`TopProper`). -/
+def normalizeAux : (h : Nat) → (t : Tree L h) → Tree.Full h t → NatCollection L
+  | 0, t, hf => ⟨0, t, ⟨hf, trivial⟩⟩
+  | h + 1, n, hf =>
+    match hm0 : n.positionsMask == 0 with
+    | true => normalizeAux h (Tree.empty h) (Tree.Full_empty h)
+    | false =>
+      match hm1 : n.positionsMask == 1 with
+      | true =>
+        match hget : n.elements[0]? with
+        | some child => normalizeAux h child (hf child (Array.mem_of_getElem? hget)).2
+        | none => absurd hget (by
+            have hsize : 0 < n.elements.size := by
+              rw [n.elements_compact, eq_of_beq hm1]; decide
+            rw [Array.getElem?_eq_getElem hsize]; simp)
+      | false =>
+        ⟨h + 1, n, ⟨hf, two_le_of_ne n.positionsMask (by simpa using hm0) (by simpa using hm1)⟩⟩
+termination_by h => h
 
 /-- Look up the value at key `k`. -/
 def get? (c : NatCollection L) (k : Nat) : Option V :=
@@ -67,36 +84,48 @@ def contains (c : NatCollection L) (k : Nat) : Bool := (c.get? k).isSome
 
 /-- Insert / overwrite key `k` ↦ `v`, growing the height if `k` needs more chunks. -/
 def insert (c : NatCollection L) (k : Nat) (v : V) : NatCollection L :=
-  if c.isEmpty then
-    ⟨requiredHeight k, Tree.singleton k v (requiredHeight k)⟩
-  else
+  match hemp : c.isEmpty with
+  | true =>
+    normalizeAux (requiredHeight k) (Tree.singleton k v (requiredHeight k))
+      (Tree.Full_singleton (requiredHeight k) k v)
+  | false =>
     let H := max c.height (requiredHeight k)
-    ⟨H, Tree.insert k v H (c.liftTo H (Nat.le_max_left _ _))⟩
+    normalizeAux H (Tree.insert k v H (c.liftTo H (Nat.le_max_left _ _)))
+      (Tree.Full_insert H k v _ (Full_liftTo c H (Nat.le_max_left _ _) hemp))
 
 /-- Erase key `k`. -/
 def erase (c : NatCollection L) (k : Nat) : NatCollection L :=
   if requiredHeight k > c.height then c
-  else normalize ⟨c.height, Tree.erase k c.height c.tree⟩
+  else normalizeAux c.height (Tree.erase k c.height c.tree) (Tree.Full_erase c.height k c.tree c.wf.1)
 
 /-- Apply `f` to the value at key `k`, if present. -/
 def modify (c : NatCollection L) (k : Nat) (f : V → V) : NatCollection L :=
   if requiredHeight k > c.height then c
-  else ⟨c.height, Tree.modify k f c.height c.tree⟩
+  else normalizeAux c.height (Tree.modify k f c.height c.tree) (Tree.Full_modify c.height k f c.tree c.wf.1)
 
 /-- Union. Leaf values at coinciding keys are combined with `combine`. -/
 def join (combine : V → V → V) (a b : NatCollection L) : NatCollection L :=
-  if a.isEmpty then b
-  else if b.isEmpty then a
-  else
-    let H := max a.height b.height
-    normalize ⟨H, Tree.joinEq combine H (a.liftTo H (Nat.le_max_left _ _)) (b.liftTo H (Nat.le_max_right _ _))⟩
+  match hae : a.isEmpty with
+  | true => b
+  | false =>
+    match hbe : b.isEmpty with
+    | true => a
+    | false =>
+      let H := max a.height b.height
+      normalizeAux H
+        (Tree.joinEq combine H (a.liftTo H (Nat.le_max_left _ _)) (b.liftTo H (Nat.le_max_right _ _)))
+        (Tree.Full_joinEq H combine _ _ (Full_liftTo a H _ hae) (Full_liftTo b H _ hbe))
 
 /-- Intersection. Leaf values at coinciding keys are combined with `combine`. -/
 def meet (combine : V → V → V) (a b : NatCollection L) : NatCollection L :=
-  if a.isEmpty || b.isEmpty then empty
-  else
+  match hae : a.isEmpty, hbe : b.isEmpty with
+  | true, _ => empty
+  | _, true => empty
+  | false, false =>
     let H := max a.height b.height
-    normalize ⟨H, Tree.meetEq combine H (a.liftTo H (Nat.le_max_left _ _)) (b.liftTo H (Nat.le_max_right _ _))⟩
+    normalizeAux H
+      (Tree.meetEq combine H (a.liftTo H (Nat.le_max_left _ _)) (b.liftTo H (Nat.le_max_right _ _)))
+      (Tree.Full_meetEq H combine _ _ (Full_liftTo a H _ hae) (Full_liftTo b H _ hbe))
 
 /-- `a` restricts `b`: `a`'s keys are a subset of `b`'s, and `rel` holds on every value at
 a coinciding key. -/
@@ -133,12 +162,13 @@ instance [BEq L] [LawfulBEq L] : LawfulBEq (NatCollection L) where
     unfold NatCollection.beq at hb'
     split at hb'
     · rename_i hh
-      obtain ⟨ha, ta⟩ := a
-      obtain ⟨hbh, tb⟩ := b
+      obtain ⟨ha, ta, wa⟩ := a
+      obtain ⟨hbh, tb, wb⟩ := b
       dsimp only at hh hb'
       subst hh
-      have : ta = tb := Tree.eq_of_beq _ hb'
-      rw [this]
+      have htt : ta = tb := Tree.eq_of_beq _ hb'
+      subst htt
+      rfl
     · exact absurd hb' (by simp)
   rfl {a} := by
     show NatCollection.beq a a = true
@@ -149,6 +179,20 @@ instance [BEq L] [LawfulBEq L] : LawfulBEq (NatCollection L) where
 /-- Decidable propositional equality, built from the lawful `BEq` (so it agrees with the
 `==` test and, via canonical form, with logical equality). -/
 instance [BEq L] [LawfulBEq L] : DecidableEq (NatCollection L) := _root_.instDecidableEqOfLawfulBEq
+
+/-! ## Tests -/
+
+section Tests
+
+-- The canonical-shape invariant is a field, so it is available on *every* collection — and
+-- on every operation result — by construction, no side condition: no excessive height
+-- (`TopProper`) and no empty subtree (`Full`).
+example (c : NatCollection L) : Tree.Full c.height c.tree := c.wf.1
+example (c : NatCollection L) : Tree.TopProper c.height c.tree := c.wf.2
+example (c : NatCollection L) (k : Nat) (v : V) :
+    Tree.Canonical (c.insert k v).height (c.insert k v).tree := (c.insert k v).wf
+
+end Tests
 
 end NatCollection
 

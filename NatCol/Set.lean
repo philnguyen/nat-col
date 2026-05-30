@@ -28,6 +28,8 @@ instance : LeafOps UInt32 Unit where
   toArray u := (List.range 32).foldl (fun acc i =>
     let iu := UInt32.ofNat i
     if testBit u iu then acc.push (iu, ()) else acc) #[]
+  insert_ne_empty u i _ := beq_eq_false_iff_ne.mpr (setBit_ne_zero u i)
+  isEmpty_modify _ _ _ := rfl
 
 /-- A set of natural numbers. -/
 def NatSet : Type := NatCollection UInt32

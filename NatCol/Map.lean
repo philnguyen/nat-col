@@ -28,6 +28,8 @@ instance {α : Type u} : LeafOps (Node α) α where
   meet c a b := Node.meet (fun x y => some (c x y)) a b
   restricts rel a b := Node.restricts rel a b
   toArray n := n.foldl (fun acc i a => acc.push (i, a)) #[]
+  insert_ne_empty n i v := Node.isEmpty_insert n i v
+  isEmpty_modify n i g := Node.isEmpty_alter_invariant n i (Option.map g) (fun o => by cases o <;> rfl)
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
