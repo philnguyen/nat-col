@@ -412,6 +412,38 @@ theorem eq_empty_of_isEmpty {α} (n : Node α) (h : n.isEmpty = true) : n = Node
   subst he
   rfl
 
+/-- A `Nat.fold` whose every step preserves `true` stays `true`. Backs `restricts_self`'s
+32-slot scan (each slot keeps the running "ok" flag `true`). -/
+private theorem fold_const_true (step : Bool → Nat → Bool)
+    (hstep : ∀ ok i, ok = true → step ok i = true) (m : Nat) :
+    Nat.fold m (fun i _ ok => step ok i) true = true := by
+  induction m with
+  | zero => rfl
+  | succ k ih => rw [Nat.fold_succ]; exact hstep _ k ih
+
+/-- `restricts` is reflexive when `rel` is reflexive on the stored children: every slot of a
+node is trivially present in itself, and `rel` holds on each coinciding child. -/
+theorem restricts_self {α} (rel : α → α → Bool) (n : Node α)
+    (hrel : ∀ x ∈ n.elements, rel x x = true) :
+    Node.restricts rel n n = true := by
+  unfold Node.restricts
+  split
+  · -- the mask-subset guard can't fire: `m &&& m = m`
+    rename_i hc
+    have : n.positionsMask &&& n.positionsMask = n.positionsMask := by bv_decide
+    simp_all
+  · -- every slot keeps the running flag true: only a present slot is checked, and `rel`
+    -- holds there on the (single) coinciding child
+    apply fold_const_true
+    intro ok i hok
+    subst hok
+    -- expose the per-slot `match` (hidden under the `let iu`), then scan its arms: the only
+    -- non-trivial one is "present in both", closed by `rel`-reflexivity on the shared child
+    extract_lets iu
+    split <;> first
+      | (rename_i ha _; rw [Bool.true_and]; exact hrel _ (n.get_mem _ ha))
+      | rfl
+
 end Node
 
 /-! ## Tests -/

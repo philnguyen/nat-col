@@ -32,6 +32,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   isEmpty_modify n i g := Node.isEmpty_alter_invariant n i (Option.map g) (fun o => by cases o <;> rfl)
   isEmpty_empty := rfl
   eq_empty_of_isEmpty n h := Node.eq_empty_of_isEmpty n h
+  restricts_refl rel hrefl n := Node.restricts_self rel n (fun x _ => hrefl x)
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -92,6 +93,12 @@ def ofList (l : List (Nat × α)) : NatMap α := NatCollection.ofList l
 /-- The empty map restricts every map (its domain is vacuously a subset). -/
 @[simp, grind =] theorem restricts_empty_left (rel : α → α → Bool) (m : NatMap α) :
     NatMap.empty.restricts rel m = true := NatCollection.restricts_empty_left rel m
+
+/-- `restricts` is reflexive: a map restricts itself whenever `rel` holds on equal values
+(`∀ x, rel x x = true`). Plain (not `@[simp]`): the `rel`-reflexivity hypothesis is a side goal
+`simp` can't discharge for an arbitrary `rel`. -/
+theorem restricts_refl (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    (m : NatMap α) : m.restricts rel m = true := NatCollection.restricts_refl rel hrefl m
 
 end NatMap
 

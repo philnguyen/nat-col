@@ -54,6 +54,11 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   collection layer recover `c = empty` from `c.isEmpty = true` at height 0, which the right
   identity of `join` (`join a empty = a`) bottoms out in. -/
   eq_empty_of_isEmpty : ∀ (l : L), isEmpty l = true → l = empty
+  /-- `restricts` is reflexive on a leaf when `rel` is reflexive on values: a leaf's keys are
+  trivially a subset of its own, and `rel` holds on every coinciding value. Lets the collection
+  layer prove reflexivity of `restricts`. -/
+  restricts_refl : ∀ (rel : V → V → Bool), (∀ x, rel x x = true) →
+    ∀ (l : L), restricts rel l l = true
 
 namespace Tree
 
@@ -197,6 +202,20 @@ theorem eq_of_beq [BEq L] [LawfulBEq L] :
     have hmeq : ma = mb := LawfulBEq.eq_of_beq hm
     have heeq : ea = eb := Array.ext hsize (fun i hi₁ _ => ih (hpt i hi₁))
     subst hmeq; subst heeq; rfl
+
+/-- `restrictsEq` is reflexive when `rel` is reflexive on values: a tree's keys are a subset of
+its own and `rel` holds on every coinciding value, at every height. Needs no canonical-shape
+hypothesis — both operands are the same tree. Bottoms out in `LeafOps.restricts_refl` at a leaf
+and `Node.restricts_self` at each node. -/
+theorem restrictsEq_self (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) :
+    (h : Nat) → (t : Tree L h) → restrictsEq rel h t t = true := by
+  intro h
+  induction h with
+  | zero => intro l; simp only [restrictsEq]; exact LeafOps.restricts_refl rel hrefl l
+  | succ h ih =>
+    intro n
+    simp only [restrictsEq]
+    exact Node.restricts_self _ n (fun c _ => ih c)
 
 /-- Collect `(key, value)` pairs into `acc`, ascending by key. `pfx` carries the key bits
 fixed by higher levels. -/

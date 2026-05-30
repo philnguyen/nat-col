@@ -32,6 +32,9 @@ instance : LeafOps UInt32 Unit where
   isEmpty_modify _ _ _ := rfl
   isEmpty_empty := by decide
   eq_empty_of_isEmpty _ h := eq_of_beq h
+  restricts_refl _ _ u := by
+    show ((u &&& u) == u) = true
+    simp [show u &&& u = u from by bv_decide]
 
 /-- A set of natural numbers. -/
 def NatSet : Type := NatCollection UInt32
@@ -93,6 +96,10 @@ def ofList (l : List Nat) : NatSet := l.foldl (fun s k => s.insert k) empty
 /-- The empty set is a subset of (restricts) every set. -/
 @[simp, grind =] theorem subset_empty_left (s : NatSet) : NatSet.empty.subset s = true :=
   NatCollection.restricts_empty_left (fun _ _ => true) s
+
+/-- Subset is reflexive: every set is a subset of itself. -/
+@[simp, grind =] theorem subset_refl (s : NatSet) : s.subset s = true :=
+  NatCollection.restricts_refl (fun _ _ => true) (fun _ => rfl) s
 
 end NatSet
 

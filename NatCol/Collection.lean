@@ -254,8 +254,17 @@ holds vacuously. No new leaf law required. -/
   unfold restricts
   rw [if_pos isEmpty_empty]
 
-/-! ## Tests -/
-
+/-- `restricts` is reflexive when `rel` is reflexive on values. If `a` is empty the first branch
+returns `true`; otherwise both `if` guards fail (`a` is not empty) and the two lifted operands are
+*the same* tree `a.liftTo H _`, so `Tree.restrictsEq_self` applies with no canonical-shape side
+condition and no need to reduce `max a.height a.height`. -/
+theorem restricts_refl (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (a : NatCollection L) :
+    restricts rel a a = true := by
+  unfold restricts
+  split
+  · rfl
+  · -- `a` non-empty ⇒ both `if` guards fail; the two operands are the same lifted tree
+    exact Tree.restrictsEq_self rel hrefl _ _
 section Tests
 
 -- The canonical-shape invariant is a field, so it is available on *every* collection — and
