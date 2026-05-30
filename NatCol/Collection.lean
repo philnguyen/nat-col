@@ -232,6 +232,19 @@ is empty (`isEmpty_empty`) and returns `empty` — no new leaf law required. -/
     | rfl
     | (rename_i h _; rw [isEmpty_empty] at h; exact absurd h (by decide))
 
+/-- The empty collection is a right annihilator of `meet`. Like the left annihilator (and unlike
+the right *identity* of `join`) this is verbatim: once the right operand is empty `meet` returns
+`empty` from whichever arm fires — `(_, true)` directly, or `(true, _)` when the left is empty too.
+The `(false, false)` arm can't fire, since its second discriminant `empty.isEmpty = false`
+contradicts `isEmpty_empty`; no new leaf law required. -/
+@[simp, grind =] theorem meet_empty_right (combine : V → V → V) (a : NatCollection L) :
+    meet combine a empty = empty := by
+  unfold meet
+  split <;>
+    first
+    | rfl
+    | (rename_i _ h; rw [isEmpty_empty] at h; exact absurd h (by decide))
+
 /-! ## Tests -/
 
 section Tests

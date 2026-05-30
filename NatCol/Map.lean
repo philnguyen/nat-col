@@ -85,6 +85,10 @@ def ofList (l : List (Nat × α)) : NatMap α := NatCollection.ofList l
 @[simp, grind =] theorem meet_empty_left (combine : α → α → α) (m : NatMap α) :
     NatMap.empty.meet combine m = NatMap.empty := NatCollection.meet_empty_left combine m
 
+/-- The empty map is a right annihilator of `meet`. -/
+@[simp, grind =] theorem meet_empty_right (combine : α → α → α) (m : NatMap α) :
+    m.meet combine NatMap.empty = NatMap.empty := NatCollection.meet_empty_right combine m
+
 end NatMap
 
 /-! ## Tests -/
