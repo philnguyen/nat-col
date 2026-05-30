@@ -30,6 +30,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   toArray n := n.foldl (fun acc i a => acc.push (i, a)) #[]
   insert_ne_empty n i v := Node.isEmpty_insert n i v
   isEmpty_modify n i g := Node.isEmpty_alter_invariant n i (Option.map g) (fun o => by cases o <;> rfl)
+  isEmpty_empty := rfl
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -70,6 +71,10 @@ def restricts (rel : α → α → Bool) (m₁ m₂ : NatMap α) : Bool := NatCo
 def toList (m : NatMap α) : List (Nat × α) := NatCollection.toList m
 /-- Build a map from `(key, value)` pairs (later pairs win on duplicate keys). -/
 def ofList (l : List (Nat × α)) : NatMap α := NatCollection.ofList l
+
+/-- The empty map is a left identity of `join`. -/
+@[simp] theorem join_empty_left (combine : α → α → α) (m : NatMap α) :
+    NatMap.empty.join combine m = m := NatCollection.join_empty_left combine m
 
 end NatMap
 

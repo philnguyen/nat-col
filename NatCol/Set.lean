@@ -30,6 +30,7 @@ instance : LeafOps UInt32 Unit where
     if testBit u iu then acc.push (iu, ()) else acc) #[]
   insert_ne_empty u i _ := beq_eq_false_iff_ne.mpr (setBit_ne_zero u i)
   isEmpty_modify _ _ _ := rfl
+  isEmpty_empty := by decide
 
 /-- A set of natural numbers. -/
 def NatSet : Type := NatCollection UInt32
@@ -71,6 +72,10 @@ instance (s t : NatSet) : Decidable (s ⊆ t) := inferInstanceAs (Decidable (s.s
 def toList (s : NatSet) : List Nat := (NatCollection.toList s).map Prod.fst
 /-- Build a set from a list of elements. -/
 def ofList (l : List Nat) : NatSet := l.foldl (fun s k => s.insert k) empty
+
+/-- The empty set is a left identity of `∪` (union). -/
+@[simp] theorem union_empty_left (s : NatSet) : NatSet.empty ∪ s = s :=
+  NatCollection.join_empty_left (fun _ _ => ()) s
 
 end NatSet
 

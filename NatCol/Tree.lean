@@ -47,6 +47,9 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   /-- Modifying a value never changes whether a leaf is empty (it touches values, not
   presence), so `modify` preserves canonical shape. -/
   isEmpty_modify : ∀ (l : L) (i : UInt32) (g : V → V), isEmpty (modify l i g) = isEmpty l
+  /-- The empty leaf reads as empty. Lets the collection layer prove `empty.isEmpty = true`,
+  which the lattice identities (e.g. left identity of `join`) bottom out in. -/
+  isEmpty_empty : isEmpty (empty : L) = true
 
 namespace Tree
 

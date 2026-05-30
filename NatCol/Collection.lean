@@ -177,6 +177,21 @@ instance [BEq L] [LawfulBEq L] : LawfulBEq (NatCollection L) where
 `==` test and, via canonical form, with logical equality). -/
 instance [BEq L] [LawfulBEq L] : DecidableEq (NatCollection L) := _root_.instDecidableEqOfLawfulBEq
 
+/-! ## Lattice laws -/
+
+/-- The empty collection is recognized as empty (lifts the leaf law `LeafOps.isEmpty_empty`
+through `Tree.isEmpty 0 (Tree.empty 0)`). -/
+@[simp] theorem isEmpty_empty : (empty : NatCollection L).isEmpty = true := LeafOps.isEmpty_empty
+
+/-- The empty collection is a left identity of `join`: `join` returns its right operand
+verbatim once the left is empty, and `empty` is empty by `isEmpty_empty`. -/
+@[simp] theorem join_empty_left (combine : V → V → V) (b : NatCollection L) :
+    join combine empty b = b := by
+  unfold join
+  split
+  · rfl
+  · rename_i h; rw [isEmpty_empty] at h; exact absurd h (by decide)
+
 /-! ## Tests -/
 
 section Tests
