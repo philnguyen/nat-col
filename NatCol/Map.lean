@@ -163,6 +163,37 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 #guard (NatMap.empty : NatMap Nat).restricts Nat.ble m1                                 -- empty restricts all
 #guard m1.restricts (· == ·) m1                                                         -- reflexive
 
+/-! ### Cross-height operands: descend the taller tree's spine, both directions
+
+Keys `1,2,3` need height 0, `5000` height 2, so these exercise `join`/`meet`/`restricts` where the
+operands differ in height by two levels, with the taller tree on either side. The non-commutative
+`fun x _ => x` combine checks that flipping the callback when the left operand is taller still
+applies it as `combine left-value right-value`. -/
+
+-- join: collisions combined, taller operand on either side; `+` is commutative so order is symmetric
+#guard ((NatMap.ofList [(1, 10), (2, 20)]).join (· + ·) (NatMap.ofList [(1, 1), (5000, 500)])).toList
+        == [(1, 11), (2, 20), (5000, 500)]                                              -- rhs taller
+#guard ((NatMap.ofList [(1, 1), (5000, 500)]).join (· + ·) (NatMap.ofList [(1, 10), (2, 20)])).toList
+        == [(1, 11), (2, 20), (5000, 500)]                                              -- lhs taller
+-- left-biased combine pins down argument order across heights (left value must win both ways)
+#guard ((NatMap.ofList [(1, 10)]).join (fun x _ => x) (NatMap.ofList [(1, 99), (5000, 500)])).toList
+        == [(1, 10), (5000, 500)]                                                       -- rhs taller
+#guard ((NatMap.ofList [(1, 10), (5000, 500)]).join (fun x _ => x) (NatMap.ofList [(1, 99)])).toList
+        == [(1, 10), (5000, 500)]                                                       -- lhs taller (flipped)
+
+-- meet: only shared keys survive at the smaller height, taller operand on either side
+#guard ((NatMap.ofList [(1, 10), (2, 20), (5000, 500)]).meet (· + ·) (NatMap.ofList [(1, 1), (3, 3)])).toList
+        == [(1, 11)]                                                                    -- lhs taller
+#guard ((NatMap.ofList [(1, 1), (3, 3)]).meet (· + ·) (NatMap.ofList [(1, 10), (2, 20), (5000, 500)])).toList
+        == [(1, 11)]                                                                    -- rhs taller
+#guard ((NatMap.ofList [(1, 10), (5000, 5)]).meet (fun x _ => x) (NatMap.ofList [(1, 99)])).toList
+        == [(1, 10)]                                                                    -- lhs taller (flipped)
+
+-- restricts: rhs taller can hold; lhs taller never does; absent key fails
+#guard (NatMap.ofList [(1, 10)]).restricts Nat.ble (NatMap.ofList [(1, 10), (5000, 500)])     -- rhs taller, holds
+#guard !(NatMap.ofList [(1, 10), (5000, 500)]).restricts Nat.ble (NatMap.ofList [(1, 10)])    -- lhs taller, fails
+#guard !(NatMap.ofList [(2, 10)]).restricts Nat.ble (NatMap.ofList [(1, 10), (5000, 500)])    -- rhs taller, key absent
+
 /-! ### Lattice laws with an associative/commutative combine, on concrete instances -/
 
 private def p : NatMap Nat := NatMap.ofList [(1, 1), (2, 2), (40, 40), (1000, 1000)]

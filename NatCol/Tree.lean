@@ -164,6 +164,50 @@ def restrictsEq (rel : V → V → Bool) : (h : Nat) → Tree L h → Tree L h �
   | h + 1, a, b => Node.restricts (fun x y => restrictsEq rel h x y) a b
 termination_by h => h
 
+/-! ### Operating a shorter tree against a taller one without lifting
+
+A canonical tree of height `h + d` holds the keys it shares with a height-`h` tree only on its
+**slot-0 spine** (`d` levels of slot-0 children); everything off that spine lies outside the
+shorter tree's key range. So a binary operation between a shorter tree `s : Tree L h` and a
+taller `t : Tree L (h + d)` only needs to touch `t`'s spine — no lift of `s` to the taller
+height. These are the spine analogues of the equal-height kernels above. -/
+
+/-- Union of a shorter `s` (height `h`) with a taller `t` (height `h + d`): descend `t`'s slot-0
+spine to height `h`, `joinEq` there, and plug the result back in; off-spine children of `t` are
+reused untouched. The `combine` order is `c (s-value) (t-value)`. The `if isEmpty` guard makes
+"no empty subtree" hold by construction, exactly as in `joinEq`. -/
+def joinSpine (c : V → V → V) (h : Nat) : (d : Nat) → Tree L h → Tree L (h + d) → Tree L (h + d)
+  | 0, s, t => joinEq c h s t
+  | d + 1, s, t => t.alter 0 fun
+      | some child =>
+          let r := joinSpine c h d s child
+          if isEmpty (h + d) r then none else some r
+      | none => some (liftBy d s)
+termination_by d => d
+
+/-- Intersection of a shorter `s` (height `h`) with a taller `t` (height `h + d`): only keys on
+`t`'s slot-0 spine can be shared, so descend to height `h` and `meetEq` there, discarding all
+off-spine structure of `t`. The result lives at the *smaller* height `h`. -/
+def meetSpine (c : V → V → V) (h : Nat) : (d : Nat) → Tree L h → Tree L (h + d) → Tree L h
+  | 0, s, t => meetEq c h s t
+  | d + 1, s, t =>
+      match Node.get? t 0 with
+      | some child => meetSpine c h d s child
+      | none => Tree.empty h
+termination_by d => d
+
+/-- `a` (height `h`) restricts a taller `b` (height `h + d`): `a`'s keys can only match on `b`'s
+slot-0 spine, so descend to height `h` and `restrictsEq` there; `b`'s off-spine children are
+irrelevant. If the spine runs out (`none`), `b` has no key in `a`'s range, so `a ⊆ b` iff `a` is
+empty. -/
+def restrictsSpine (rel : V → V → Bool) (h : Nat) : (d : Nat) → Tree L h → Tree L (h + d) → Bool
+  | 0, a, b => restrictsEq rel h a b
+  | d + 1, a, b =>
+      match Node.get? b 0 with
+      | some child => restrictsSpine rel h d a child
+      | none => Tree.isEmpty h a
+termination_by d => d
+
 /-- Structural equality at a fixed height. For canonical trees this coincides with
 logical equality. -/
 def beq [BEq L] : (h : Nat) → Tree L h → Tree L h → Bool
@@ -372,6 +416,46 @@ theorem Full_liftBy : (d : Nat) → {h : Nat} → (t : Tree L h) →
 /-- Transporting a tree along an equality of heights preserves `Full`. -/
 theorem Full_cast {ha hb : Nat} (heq : ha = hb) (t : Tree L ha) (hf : Full ha t) :
     Full hb (Tree.cast heq t) := by subst heq; exact hf
+
+/-- `joinSpine` preserves "no empty subtree": the spine's merged child is guarded non-empty
+(`some` branch) or is a lifted copy of the non-empty `s` (`none` branch); off-spine children
+come straight from the `Full` taller tree. Requires `s` non-empty (its lift must stay `Full`). -/
+theorem Full_joinSpine (c : V → V → V) (h : Nat) : (d : Nat) → (s : Tree L h) → (t : Tree L (h + d)) →
+    Tree.isEmpty h s = false → Full h s → Full (h + d) t → Full (h + d) (joinSpine c h d s t)
+  | 0, s, t, _, hs, ht => by simp only [joinSpine, Nat.add_zero]; exact Full_joinEq h c s t hs ht
+  | d + 1, s, t, hsne, hs, ht => by
+      simp only [joinSpine]
+      intro x hx
+      rcases Node.mem_alter t 0 _ x hx with hmem | ⟨a, hfa, hxa⟩
+      · exact ht x hmem
+      · subst hxa
+        cases hget : Node.get? t 0 with
+        | some child =>
+            rw [hget] at hfa
+            simp only at hfa
+            split at hfa
+            · simp at hfa
+            · rename_i hne
+              simp only [Option.some.injEq] at hfa; subst hfa
+              have hchild : Full (h + d) child := (ht child (Node.mem_of_get? t 0 child hget)).2
+              exact ⟨by simpa using hne, Full_joinSpine c h d s child hsne hs hchild⟩
+        | none =>
+            rw [hget] at hfa
+            simp only [Option.some.injEq] at hfa; subst hfa
+            exact ⟨isEmpty_liftBy d s hsne, Full_liftBy d s hs hsne⟩
+
+/-- `meetSpine` preserves "no empty subtree": each step recurses into a `Full` spine child or
+returns the empty tree (`Full_empty`); the base case is `meetEq`. -/
+theorem Full_meetSpine (c : V → V → V) (h : Nat) : (d : Nat) → (s : Tree L h) → (t : Tree L (h + d)) →
+    Full h s → Full (h + d) t → Full h (meetSpine c h d s t)
+  | 0, s, t, hs, ht => by simp only [meetSpine]; exact Full_meetEq h c s t hs ht
+  | d + 1, s, t, hs, ht => by
+      simp only [meetSpine]
+      split
+      · rename_i child hget
+        have hchild : Full (h + d) child := (ht child (Node.mem_of_get? t 0 child hget)).2
+        exact Full_meetSpine c h d s child hs hchild
+      · exact Full_empty h
 
 /-- `modify` never empties a leaf, so it preserves emptiness at every height. -/
 private theorem isEmpty_modify : (h : Nat) → (k : Nat) → (f : V → V) → (t : Tree L h) →

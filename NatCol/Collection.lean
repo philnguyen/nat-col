@@ -100,38 +100,58 @@ def modify (c : NatCollection L) (k : Nat) (f : V → V) : NatCollection L :=
   if requiredHeight k > c.height then c
   else normalizeAux c.height (Tree.modify k f c.height c.tree) (Tree.Full_modify c.height k f c.tree c.wf.1)
 
-/-- Union. Leaf values at coinciding keys are combined with `combine`. -/
+/-- Union. Leaf values at coinciding keys are combined with `combine`. Rather than lift the
+shorter tree up to the taller's height, descend the taller tree's slot-0 spine to the shorter
+height, `joinSpine` there, and reuse all off-spine structure (see `Tree.joinSpine`). When the
+*left* operand is the taller one, `combine` is flipped so the original `combine a-value b-value`
+order is preserved. -/
 def join (combine : V → V → V) (a b : NatCollection L) : NatCollection L :=
-  match hae : a.isEmpty with
-  | true => b
-  | false =>
-    match hbe : b.isEmpty with
-    | true => a
-    | false =>
-      let H := max a.height b.height
-      normalizeAux H
-        (Tree.joinEq combine H (a.liftTo H (Nat.le_max_left _ _)) (b.liftTo H (Nat.le_max_right _ _)))
-        (Tree.Full_joinEq H combine _ _ (Full_liftTo a H _ hae) (Full_liftTo b H _ hbe))
+  if hae : a.isEmpty then b
+  else if hbe : b.isEmpty then a
+  else if hle : a.height ≤ b.height then
+    normalizeAux _
+      (Tree.joinSpine combine a.height (b.height - a.height) a.tree (Tree.cast (by omega) b.tree))
+      (Tree.Full_joinSpine combine a.height (b.height - a.height) a.tree (Tree.cast (by omega) b.tree)
+        (by simpa using hae) a.wf.1 (Tree.Full_cast (by omega) b.tree b.wf.1))
+  else
+    normalizeAux _
+      (Tree.joinSpine (fun x y => combine y x) b.height (a.height - b.height) b.tree
+        (Tree.cast (by omega) a.tree))
+      (Tree.Full_joinSpine (fun x y => combine y x) b.height (a.height - b.height) b.tree
+        (Tree.cast (by omega) a.tree) (by simpa using hbe) b.wf.1 (Tree.Full_cast (by omega) a.tree a.wf.1))
 
-/-- Intersection. Leaf values at coinciding keys are combined with `combine`. -/
+/-- Intersection. Leaf values at coinciding keys are combined with `combine`. Only keys on the
+taller tree's slot-0 spine can be shared, so descend to the *smaller* height and `meetSpine`
+there, discarding the taller tree's off-spine structure (see `Tree.meetSpine`). The result lives
+at the smaller height; `normalizeAux` lowers it further as needed. When the *left* operand is the
+taller one, `combine` is flipped so the original argument order is preserved. -/
 def meet (combine : V → V → V) (a b : NatCollection L) : NatCollection L :=
-  match hae : a.isEmpty, hbe : b.isEmpty with
-  | true, _ => empty
-  | _, true => empty
-  | false, false =>
-    let H := max a.height b.height
-    normalizeAux H
-      (Tree.meetEq combine H (a.liftTo H (Nat.le_max_left _ _)) (b.liftTo H (Nat.le_max_right _ _)))
-      (Tree.Full_meetEq H combine _ _ (Full_liftTo a H _ hae) (Full_liftTo b H _ hbe))
+  if a.isEmpty then empty
+  else if b.isEmpty then empty
+  else if hle : a.height ≤ b.height then
+    normalizeAux a.height
+      (Tree.meetSpine combine a.height (b.height - a.height) a.tree (Tree.cast (by omega) b.tree))
+      (Tree.Full_meetSpine combine a.height (b.height - a.height) a.tree (Tree.cast (by omega) b.tree)
+        a.wf.1 (Tree.Full_cast (by omega) b.tree b.wf.1))
+  else
+    normalizeAux b.height
+      (Tree.meetSpine (fun x y => combine y x) b.height (a.height - b.height) b.tree
+        (Tree.cast (by omega) a.tree))
+      (Tree.Full_meetSpine (fun x y => combine y x) b.height (a.height - b.height) b.tree
+        (Tree.cast (by omega) a.tree) b.wf.1 (Tree.Full_cast (by omega) a.tree a.wf.1))
 
 /-- `a` restricts `b`: `a`'s keys are a subset of `b`'s, and `rel` holds on every value at
-a coinciding key. -/
+a coinciding key. When `b` is the taller tree, `a`'s keys can only match on `b`'s slot-0 spine,
+so descend to `a`'s height and `restrictsSpine` there, ignoring `b`'s off-spine structure (see
+`Tree.restrictsSpine`). When `a` is the taller one it has a key above `b`'s key range (it is
+canonical, so `TopProper` forces an off-spine slot), hence cannot be a subset — answer `false`. -/
 def restricts (rel : V → V → Bool) (a b : NatCollection L) : Bool :=
   if a.isEmpty then true
   else if b.isEmpty then false
+  else if hle : a.height ≤ b.height then
+    Tree.restrictsSpine rel a.height (b.height - a.height) a.tree (Tree.cast (by omega) b.tree)
   else
-    let H := max a.height b.height
-    Tree.restrictsEq rel H (a.liftTo H (Nat.le_max_left _ _)) (b.liftTo H (Nat.le_max_right _ _))
+    false
 
 /-- All `(key, value)` pairs, ascending by key. -/
 def toList (c : NatCollection L) : List (Nat × V) := (Tree.toArray c.height c.tree).toList
@@ -210,7 +230,7 @@ theorem eq_empty_of_isEmpty (c : NatCollection L) (hc : c.isEmpty = true) : c = 
 
 /-- The empty collection is a right identity of `join`. Unlike the left identity this is not
 verbatim: when `a` is empty `join` returns `empty`, which equals `a` only because an empty
-collection *is* `empty` (`eq_empty_of_isEmpty`); otherwise the inner match returns `a` since
+collection *is* `empty` (`eq_empty_of_isEmpty`); otherwise the second branch returns `a` since
 `empty.isEmpty = true`. -/
 @[simp, grind =] theorem join_empty_right (combine : V → V → V) (a : NatCollection L) :
     join combine a empty = a := by
@@ -222,28 +242,21 @@ collection *is* `empty` (`eq_empty_of_isEmpty`); otherwise the inner match retur
     · rename_i h; rw [isEmpty_empty] at h; exact absurd h (by decide)
 
 /-- The empty collection is a left annihilator of `meet`. Like the left identity of `join` (and
-unlike its right identity) this is verbatim: `meet`'s first match arm fires once the left operand
-is empty (`isEmpty_empty`) and returns `empty` — no new leaf law required. -/
+unlike its right identity) this is verbatim: `meet`'s first branch fires once the left operand is
+empty (`isEmpty_empty`) and returns `empty` — no new leaf law required. -/
 @[simp, grind =] theorem meet_empty_left (combine : V → V → V) (b : NatCollection L) :
     meet combine empty b = empty := by
   unfold meet
-  split <;>
-    first
-    | rfl
-    | (rename_i h _; rw [isEmpty_empty] at h; exact absurd h (by decide))
+  rw [if_pos isEmpty_empty]
 
 /-- The empty collection is a right annihilator of `meet`. Like the left annihilator (and unlike
-the right *identity* of `join`) this is verbatim: once the right operand is empty `meet` returns
-`empty` from whichever arm fires — `(_, true)` directly, or `(true, _)` when the left is empty too.
-The `(false, false)` arm can't fire, since its second discriminant `empty.isEmpty = false`
-contradicts `isEmpty_empty`; no new leaf law required. -/
+the right *identity* of `join`) this is verbatim: when the left operand is empty the first branch
+returns `empty`; otherwise the second branch fires, since the right operand is empty
+(`isEmpty_empty`), and also returns `empty`. No new leaf law required. -/
 @[simp, grind =] theorem meet_empty_right (combine : V → V → V) (a : NatCollection L) :
     meet combine a empty = empty := by
   unfold meet
-  split <;>
-    first
-    | rfl
-    | (rename_i _ h; rw [isEmpty_empty] at h; exact absurd h (by decide))
+  split <;> first | rfl | rw [if_pos isEmpty_empty]
 
 /-- The empty collection restricts every collection. Like the left annihilator of `meet` this is
 verbatim: `restricts`'s first branch fires once the left operand is empty (`isEmpty_empty`) and
@@ -255,16 +268,24 @@ holds vacuously. No new leaf law required. -/
   rw [if_pos isEmpty_empty]
 
 /-- `restricts` is reflexive when `rel` is reflexive on values. If `a` is empty the first branch
-returns `true`; otherwise both `if` guards fail (`a` is not empty) and the two lifted operands are
-*the same* tree `a.liftTo H _`, so `Tree.restrictsEq_self` applies with no canonical-shape side
-condition and no need to reduce `max a.height a.height`. -/
+returns `true`; otherwise the two emptiness guards fail and the `a.height ≤ a.height` branch fires
+with height difference `a.height - a.height = 0`, so `restrictsSpine` reduces to `restrictsEq` on
+`a.tree` against itself (the `Tree.cast` along `a.height = a.height + 0` is the identity), where
+`Tree.restrictsEq_self` applies. -/
 theorem restricts_refl (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (a : NatCollection L) :
     restricts rel a a = true := by
   unfold restricts
-  split
-  · rfl
-  · -- `a` non-empty ⇒ both `if` guards fail; the two operands are the same lifted tree
-    exact Tree.restrictsEq_self rel hrefl _ _
+  by_cases hemp : a.isEmpty = true
+  · rw [if_pos hemp]
+  · rw [if_neg hemp, if_neg hemp, dif_pos (Nat.le_refl a.height)]
+    -- the height difference is `0`; generalize it to `subst` away the dependent `Tree.cast`
+    suffices h : ∀ (d : Nat) (pf : a.height = a.height + d), d = 0 →
+        Tree.restrictsSpine rel a.height d a.tree (Tree.cast pf a.tree) = true from
+      h (a.height - a.height) (by omega) (Nat.sub_self _)
+    intro d pf hd
+    subst hd
+    simp only [Tree.restrictsSpine]
+    exact Tree.restrictsEq_self rel hrefl a.height a.tree
 section Tests
 
 -- The canonical-shape invariant is a field, so it is available on *every* collection — and

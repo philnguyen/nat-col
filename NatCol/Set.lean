@@ -164,6 +164,28 @@ section Tests
 #guard ¬ ((NatSet.ofList [1, 2, 3]) ⊆ (NatSet.ofList [1, 2]))
 #guard ¬ ((NatSet.ofList [1, 1000]) ⊆ (NatSet.ofList [1, 2]))               -- taller -> not subset
 
+/-! ### Cross-height operands: descend the taller tree's spine, both directions
+
+`1,2,3` need height 0 (`< 32`), `40,50` height 1 (`< 1024`), `5000` height 2 (`< 32768`), so these
+exercise `join`/`meet`/`restricts` where the operands differ in height by one and two levels, with
+the taller tree on either side, plus the disjoint-spine case. -/
+
+-- union: result lives at the taller height; taller operand on either side
+#guard ((NatSet.ofList [1, 2]) ∪ (NatSet.ofList [1, 5000])).toList == [1, 2, 5000]   -- rhs taller (d=2)
+#guard ((NatSet.ofList [1, 5000]) ∪ (NatSet.ofList [1, 2])).toList == [1, 2, 5000]   -- lhs taller (d=2)
+#guard ((NatSet.ofList [40]) ∪ (NatSet.ofList [5000])).toList == [40, 5000]          -- disjoint spines
+#guard (NatSet.ofList [1, 2]) ∪ (NatSet.ofList [1, 5000]) = (NatSet.ofList [1, 5000]) ∪ (NatSet.ofList [1, 2])
+
+-- intersection: result lives at the smaller height; taller operand on either side
+#guard ((NatSet.ofList [1, 2, 5000]) ∩ (NatSet.ofList [1, 3])).toList == [1]         -- lhs taller (d=2)
+#guard ((NatSet.ofList [1, 3]) ∩ (NatSet.ofList [1, 2, 5000])).toList == [1]         -- rhs taller (d=2)
+#guard ((NatSet.ofList [40]) ∩ (NatSet.ofList [5000])) = (∅ : NatSet)                -- disjoint spines
+
+-- subset: rhs taller can still hold; lhs taller never does
+#guard (NatSet.ofList [1]) ⊆ (NatSet.ofList [1, 5000])                               -- rhs taller, holds
+#guard ¬ ((NatSet.ofList [1, 5000]) ⊆ (NatSet.ofList [1]))                           -- lhs taller, fails
+#guard ¬ ((NatSet.ofList [2]) ⊆ (NatSet.ofList [1, 5000]))                           -- rhs taller, key absent
+
 /-! ### Lattice laws across operations, on concrete (mixed-height) instances -/
 
 private def a : NatSet := NatSet.ofList [1, 2, 40, 1000]
