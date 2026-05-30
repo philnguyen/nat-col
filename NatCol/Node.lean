@@ -76,9 +76,21 @@ def isEmpty (n : Node α) : Bool := n.positionsMask == 0
 /-- Number of present slots. -/
 def size (n : Node α) : Nat := popCount n.positionsMask
 
-/-- The child at slot `i`, if present. -/
+/-- The child at a *present* slot. The bit-set proof makes the compact index in-bounds
+(`arrayIndex_lt` + the `elements_compact` field), so the read is total — no `Option`, no
+spurious `none` to discharge at the call site. -/
+def get (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) : α :=
+  n.elements[arrayIndex n.positionsMask i]'(by
+    rw [n.elements_compact]; exact arrayIndex_lt n.positionsMask i h)
+
+/-- A child read from a present slot is one of the stored children. -/
+theorem get_mem (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) :
+    n.get i h ∈ n.elements := Array.getElem_mem _
+
+/-- The child at slot `i`, if present. The dependent `if` hands the present-case proof to
+`get`, so there is no spurious `none`. -/
 def get? (n : Node α) (i : UInt32) : Option α :=
-  if testBit n.positionsMask i then n.elements[arrayIndex n.positionsMask i]? else none
+  if h : testBit n.positionsMask i = true then some (n.get i h) else none
 
 /-- General single-slot update: `f` sees the current value at slot `i` (if any) and
 returns the new value (`none` removes the slot).
@@ -91,7 +103,7 @@ the count by one). -/
 def alter (n : Node α) (i : UInt32) (f : Option α → Option α) : Node α :=
   match hpres : testBit n.positionsMask i with
   | true =>
-    match f n.elements[arrayIndex n.positionsMask i]? with
+    match f (some (n.get i hpres)) with
     | some a => ⟨n.positionsMask, n.elements.set! (arrayIndex n.positionsMask i) a, by
         simp only [Array.set!, Array.size_setIfInBounds]; exact n.elements_compact⟩
     | none => ⟨clearBit n.positionsMask i, n.elements.eraseIdx! (arrayIndex n.positionsMask i), by
@@ -124,13 +136,9 @@ def modify (n : Node α) (i : UInt32) (f : α → α) : Node α := n.alter i (Op
 
 /-- Fold over present slots in ascending slot order, exposing the slot index. -/
 def foldl {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node α) : β :=
-  Prod.fst <| Nat.fold 32 (fun i _ (st : β × Nat) =>
+  Nat.fold 32 (fun i _ (acc : β) =>
     let iu := UInt32.ofNat i
-    if testBit n.positionsMask iu then
-      match n.elements[st.2]? with
-      | some a => (f st.1 iu a, st.2 + 1)
-      | none   => st
-    else st) (init, 0)
+    if h : testBit n.positionsMask iu = true then f acc iu (n.get iu h) else acc) init
 
 /-- Union of two nodes. Slots in exactly one side are reused as-is; slots in both are
 merged with `combine` (a `none` result drops the slot).
@@ -143,28 +151,18 @@ The accumulator is pre-sized to `popCount (a.positionsMask ||| b.positionsMask)`
 slot count of the union mask (an upper bound on the result, since `combine` may prune), so
 those appends never reallocate. -/
 def join (combine : α → α → Option α) (a b : Node α) : Node α :=
-  let step := fun (st : Node α × Nat × Nat) i =>
-    let (acc, ja, jb) := st
+  let step := fun (acc : Node α) i =>
     let iu := UInt32.ofNat i
-    match testBit a.positionsMask iu, testBit b.positionsMask iu with
+    match ha : testBit a.positionsMask iu, hb : testBit b.positionsMask iu with
     | true, true =>
-      match a.elements[ja]?, b.elements[jb]? with
-      | some x, some y =>
-        match combine x y with
-        | some v => (acc.insert iu v, ja + 1, jb + 1)
-        | none   => (acc, ja + 1, jb + 1)
-      | _, _ => (acc, ja + 1, jb + 1)
-    | true, false =>
-      match a.elements[ja]? with
-      | some x => (acc.insert iu x, ja + 1, jb)
-      | none   => (acc, ja + 1, jb)
-    | false, true =>
-      match b.elements[jb]? with
-      | some y => (acc.insert iu y, ja, jb + 1)
-      | none   => (acc, ja, jb + 1)
-    | false, false => (acc, ja, jb)
-  (Nat.fold 32 (fun i _ st => step st i)
-    (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask)), 0, 0)).1
+      match combine (a.get iu ha) (b.get iu hb) with
+      | some v => acc.insert iu v
+      | none   => acc
+    | true, false => acc.insert iu (a.get iu ha)
+    | false, true => acc.insert iu (b.get iu hb)
+    | false, false => acc
+  Nat.fold 32 (fun i _ acc => step acc i)
+    (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask)))
 
 /-- Intersection of two nodes. Only slots present in both survive, merged with
 `combine`; a `none` result (empty intersection) drops the slot. As with `join`, the result is
@@ -172,40 +170,32 @@ built by ascending `insert` into an empty accumulator, so it is compact by const
 accumulator is pre-sized to `popCount (a.positionsMask &&& b.positionsMask)`, the slot count
 of the intersection mask (an upper bound on the result), so the inserts never reallocate. -/
 def meet (combine : α → α → Option α) (a b : Node α) : Node α :=
-  let step := fun (st : Node α × Nat × Nat) i =>
-    let (acc, ja, jb) := st
+  let step := fun (acc : Node α) i =>
     let iu := UInt32.ofNat i
-    match testBit a.positionsMask iu, testBit b.positionsMask iu with
+    match ha : testBit a.positionsMask iu, hb : testBit b.positionsMask iu with
     | true, true =>
-      match a.elements[ja]?, b.elements[jb]? with
-      | some x, some y =>
-        match combine x y with
-        | some v => (acc.insert iu v, ja + 1, jb + 1)
-        | none   => (acc, ja + 1, jb + 1)
-      | _, _ => (acc, ja + 1, jb + 1)
-    | true, false => (acc, ja + 1, jb)
-    | false, true => (acc, ja, jb + 1)
-    | false, false => (acc, ja, jb)
-  (Nat.fold 32 (fun i _ st => step st i)
-    (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)), 0, 0)).1
+      match combine (a.get iu ha) (b.get iu hb) with
+      | some v => acc.insert iu v
+      | none   => acc
+    | true, false => acc
+    | false, true => acc
+    | false, false => acc
+  Nat.fold 32 (fun i _ acc => step acc i)
+    (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)))
 
 /-- `a` restricts `b`: every slot of `a` is present in `b`, and `rel` holds on every
 shared child. -/
 def restricts (rel : α → α → Bool) (a b : Node α) : Bool :=
   if (a.positionsMask &&& b.positionsMask) != a.positionsMask then false
   else
-    let step := fun (st : Bool × Nat × Nat) i =>
-      let (ok, ja, jb) := st
+    let step := fun (ok : Bool) i =>
       let iu := UInt32.ofNat i
-      match testBit a.positionsMask iu, testBit b.positionsMask iu with
-      | true, true =>
-        match a.elements[ja]?, b.elements[jb]? with
-        | some x, some y => (ok && rel x y, ja + 1, jb + 1)
-        | _, _ => (ok, ja + 1, jb + 1)
-      | true, false => (ok, ja + 1, jb)
-      | false, true => (ok, ja, jb + 1)
-      | false, false => (ok, ja, jb)
-    (Nat.fold 32 (fun i _ st => step st i) (true, 0, 0)).1
+      match ha : testBit a.positionsMask iu, hb : testBit b.positionsMask iu with
+      | true, true => ok && rel (a.get iu ha) (b.get iu hb)
+      | true, false => ok
+      | false, true => ok
+      | false, false => ok
+    Nat.fold 32 (fun i _ ok => step ok i) true
 
 /-! ### Lemmas backing the `NatCollection` canonical-shape invariant
 
@@ -223,12 +213,10 @@ value `f` produced for slot `i`. -/
 theorem mem_alter {α} (n : Node α) (i : UInt32) (f : Option α → Option α) (x : α)
     (hx : x ∈ (n.alter i f).elements) :
     x ∈ n.elements ∨ (∃ a, f (n.get? i) = some a ∧ x = a) := by
-  have hget : n.get? i =
-      if testBit n.positionsMask i then n.elements[arrayIndex n.positionsMask i]? else none := rfl
   unfold Node.alter at hx
   split at hx
   · rename_i htb
-    rw [hget, if_pos htb]
+    rw [show n.get? i = some (n.get i htb) from by rw [Node.get?, dif_pos htb]]
     split at hx
     · rename_i a hfa
       simp only at hx
@@ -243,7 +231,7 @@ theorem mem_alter {α} (n : Node α) (i : UInt32) (f : Option α → Option α) 
             = n.elements.eraseIdx (arrayIndex n.positionsMask i) hlt from dif_pos hlt] at hx
       exact Or.inl (Array.mem_of_mem_eraseIdx hx)
   · rename_i htb
-    rw [hget, if_neg (by simp [htb])]
+    rw [show n.get? i = none from by rw [Node.get?, dif_neg (by simp [htb])]]
     split at hx
     · rename_i a hfa
       simp only at hx
@@ -267,10 +255,10 @@ private theorem mem_insert {α} (n : Node α) (i : UInt32) (v x : α)
 /-- Generic `Nat.fold` invariant: if every step keeps all accumulator elements satisfying
 `P`, the final accumulator does too. -/
 private theorem fold_elements_forall {α} {P : α → Prop}
-    (step : (Node α × Nat × Nat) → Nat → (Node α × Nat × Nat))
-    (hstep : ∀ st i, (∀ z ∈ st.1.elements, P z) → ∀ z ∈ (step st i).1.elements, P z)
-    (n : Nat) (st0 : Node α × Nat × Nat) (h0 : ∀ z ∈ st0.1.elements, P z) :
-    ∀ z ∈ (Nat.fold n (fun i _ st => step st i) st0).1.elements, P z := by
+    (step : Node α → Nat → Node α)
+    (hstep : ∀ acc i, (∀ z ∈ acc.elements, P z) → ∀ z ∈ (step acc i).elements, P z)
+    (n : Nat) (acc0 : Node α) (h0 : ∀ z ∈ acc0.elements, P z) :
+    ∀ z ∈ (Nat.fold n (fun i _ acc => step acc i) acc0).elements, P z := by
   induction n with
   | zero => exact h0
   | succ k ih => rw [Nat.fold_succ]; exact hstep _ k ih
@@ -283,30 +271,24 @@ theorem join_forall {α} {P : α → Prop} {combine : α → α → Option α} {
     ∀ z ∈ (Node.join combine a b).elements, P z := by
   unfold Node.join
   apply fold_elements_forall
-  · rintro ⟨acc, ja, jb⟩ i hacc z hz
+  · intro acc i hacc z hz
     dsimp only at hz ⊢
     split at hz
-    · split at hz
-      · rename_i x y hgx hgy
-        split at hz
-        · rename_i v hcv
-          rcases mem_insert _ _ _ _ hz with h | h
-          · subst h; exact hPc x (Array.mem_of_getElem? hgx) y (Array.mem_of_getElem? hgy) _ hcv
-          · exact hacc _ h
-        · exact hacc _ hz
-      · exact hacc _ hz
-    · split at hz
-      · rename_i x hgx
+    · rename_i ha hb
+      split at hz
+      · rename_i v hcv
         rcases mem_insert _ _ _ _ hz with h | h
-        · rw [h]; exact hPa x (Array.mem_of_getElem? hgx)
+        · subst h; exact hPc _ (a.get_mem _ ha) _ (b.get_mem _ hb) _ hcv
         · exact hacc _ h
       · exact hacc _ hz
-    · split at hz
-      · rename_i y hgy
-        rcases mem_insert _ _ _ _ hz with h | h
-        · rw [h]; exact hPb y (Array.mem_of_getElem? hgy)
-        · exact hacc _ h
-      · exact hacc _ hz
+    · rename_i ha hb
+      rcases mem_insert _ _ _ _ hz with h | h
+      · subst h; exact hPa _ (a.get_mem _ ha)
+      · exact hacc _ h
+    · rename_i ha hb
+      rcases mem_insert _ _ _ _ hz with h | h
+      · subst h; exact hPb _ (b.get_mem _ hb)
+      · exact hacc _ h
     · exact hacc _ hz
   · intro z hz; simp [Node.emptyWithCapacity] at hz
 
@@ -317,17 +299,15 @@ theorem meet_forall {α} {P : α → Prop} {combine : α → α → Option α} {
     ∀ z ∈ (Node.meet combine a b).elements, P z := by
   unfold Node.meet
   apply fold_elements_forall
-  · rintro ⟨acc, ja, jb⟩ i hacc z hz
+  · intro acc i hacc z hz
     dsimp only at hz ⊢
     split at hz
-    · split at hz
-      · rename_i x y hgx hgy
-        split at hz
-        · rename_i v hcv
-          rcases mem_insert _ _ _ _ hz with h | h
-          · subst h; exact hPc x (Array.mem_of_getElem? hgx) y (Array.mem_of_getElem? hgy) _ hcv
-          · exact hacc _ h
-        · exact hacc _ hz
+    · rename_i ha hb
+      split at hz
+      · rename_i v hcv
+        rcases mem_insert _ _ _ _ hz with h | h
+        · subst h; exact hPc _ (a.get_mem _ ha) _ (b.get_mem _ hb) _ hcv
+        · exact hacc _ h
       · exact hacc _ hz
     · exact hacc _ hz
     · exact hacc _ hz
@@ -370,7 +350,9 @@ theorem mem_of_get? {α} (n : Node α) (i : UInt32) (c : α) (h : n.get? i = som
     c ∈ n.elements := by
   unfold Node.get? at h
   split at h
-  · exact Array.mem_of_getElem? h
+  · rename_i htb
+    rw [Option.some.injEq] at h
+    exact h ▸ n.get_mem i htb
   · exact absurd h (by simp)
 
 /-- A single-slot update whose callback yields a value sets exactly slot `i` of the mask
@@ -379,17 +361,15 @@ slot is populated and the mask only grows — and hence height-minimality and no
 theorem positionsMask_alter_of_isSome {α} (n : Node α) (i : UInt32) (f : Option α → Option α)
     (hf : (f (n.get? i)).isSome = true) :
     (n.alter i f).positionsMask = setBit n.positionsMask i := by
-  have hget : n.get? i =
-      if testBit n.positionsMask i then n.elements[arrayIndex n.positionsMask i]? else none := rfl
   unfold Node.alter
   split
   · rename_i htb
-    rw [hget, if_pos htb] at hf
+    rw [show n.get? i = some (n.get i htb) from by rw [Node.get?, dif_pos htb]] at hf
     split
     · simp only; exact (setBit_eq_of_testBit n.positionsMask i htb).symm
     · rename_i hfn; rw [hfn] at hf; simp at hf
   · rename_i htb
-    rw [hget, if_neg (by simp [htb])] at hf
+    rw [show n.get? i = none from by rw [Node.get?, dif_neg (by simp [htb])]] at hf
     split
     · rfl
     · rename_i hfn; rw [hfn] at hf; simp at hf
@@ -405,20 +385,13 @@ private theorem positionsMask_alter_invariant {α} (n : Node α) (i : UInt32) (g
     split
     · rfl
     · rename_i hfn
-      exfalso
-      have hsome := hg n.elements[arrayIndex n.positionsMask i]?
-      rw [hfn] at hsome
-      have hlt : arrayIndex n.positionsMask i < n.elements.size := by
-        rw [n.elements_compact]; exact arrayIndex_lt n.positionsMask i htb
-      rw [Array.getElem?_eq_getElem hlt] at hsome
-      simp at hsome
+      have hsome := hg (some (n.get i htb))
+      rw [hfn] at hsome; simp at hsome
   · rename_i htb
     split
     · rename_i a hfa
-      exfalso
       have hsome := hg none
-      rw [hfa] at hsome
-      simp at hsome
+      rw [hfa] at hsome; simp at hsome
     · rfl
 
 /-- A presence-preserving single-slot update leaves emptiness unchanged. -/

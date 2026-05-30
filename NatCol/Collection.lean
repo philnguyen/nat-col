@@ -65,12 +65,9 @@ def normalizeAux : (h : Nat) → (t : Tree L h) → Tree.Full h t → NatCollect
     | false =>
       match hm1 : n.positionsMask == 1 with
       | true =>
-        match hget : n.elements[0]? with
-        | some child => normalizeAux h child (hf child (Array.mem_of_getElem? hget)).2
-        | none => absurd hget (by
-            have hsize : 0 < n.elements.size := by
-              rw [n.elements_compact, eq_of_beq hm1]; decide
-            rw [Array.getElem?_eq_getElem hsize]; simp)
+        -- mask is exactly `1`, so slot 0 is present; read its child totally via `Node.get`
+        have h0 : testBit n.positionsMask 0 = true := by rw [eq_of_beq hm1]; decide
+        normalizeAux h (n.get 0 h0) (hf _ (n.get_mem 0 h0)).2
       | false =>
         ⟨h + 1, n, ⟨hf, two_le_of_ne n.positionsMask (by simpa using hm0) (by simpa using hm1)⟩⟩
 termination_by h => h
