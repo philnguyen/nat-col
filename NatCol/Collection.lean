@@ -221,6 +221,17 @@ collection *is* `empty` (`eq_empty_of_isEmpty`); otherwise the inner match retur
     · rfl
     · rename_i h; rw [isEmpty_empty] at h; exact absurd h (by decide)
 
+/-- The empty collection is a left annihilator of `meet`. Like the left identity of `join` (and
+unlike its right identity) this is verbatim: `meet`'s first match arm fires once the left operand
+is empty (`isEmpty_empty`) and returns `empty` — no new leaf law required. -/
+@[simp, grind =] theorem meet_empty_left (combine : V → V → V) (b : NatCollection L) :
+    meet combine empty b = empty := by
+  unfold meet
+  split <;>
+    first
+    | rfl
+    | (rename_i h _; rw [isEmpty_empty] at h; exact absurd h (by decide))
+
 /-! ## Tests -/
 
 section Tests

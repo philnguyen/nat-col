@@ -82,6 +82,10 @@ def ofList (l : List Nat) : NatSet := l.foldl (fun s k => s.insert k) empty
 @[simp, grind =] theorem union_empty_right (s : NatSet) : s ∪ NatSet.empty = s :=
   NatCollection.join_empty_right (fun _ _ => ()) s
 
+/-- The empty set is a left annihilator of `∩` (intersection). -/
+@[simp, grind =] theorem inter_empty_left (s : NatSet) : NatSet.empty ∩ s = NatSet.empty :=
+  NatCollection.meet_empty_left (fun _ _ => ()) s
+
 end NatSet
 
 /-! ## Tests -/
