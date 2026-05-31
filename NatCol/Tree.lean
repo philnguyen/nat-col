@@ -340,6 +340,27 @@ theorem optVjoin_flip {V : Type u} (c : V → V → V) (ox oy : Option V) :
     optVjoin (fun x y => c y x) oy ox = optVjoin c ox oy := by
   cases ox <;> cases oy <;> rfl
 
+/-- `optVmeet` distributes over `optVjoin` from the left when the meet combine distributes over the
+join combine pointwise (`hdist : cm x (cj y z) = cj (cm x y) (cm x z)`). One-sided keys are dropped
+by `optVmeet` on both sides, so only the all-present case actually uses `hdist`. -/
+theorem optVmeet_optVjoin_distrib {V : Type u} (cm cj : V → V → V)
+    (hdist : ∀ x y z, cm x (cj y z) = cj (cm x y) (cm x z)) (oa ob oc : Option V) :
+    optVmeet cm oa (optVjoin cj ob oc) = optVjoin cj (optVmeet cm oa ob) (optVmeet cm oa oc) := by
+  cases oa <;> cases ob <;> cases oc <;> simp only [optVmeet, optVjoin] <;>
+    first | rfl | rw [hdist]
+
+/-- `optVjoin` distributes over `optVmeet` from the left, given the full lattice algebra on the
+combines: the meet combine is idempotent (`hidem`) and absorbs the join combine (`habs1`/`habs2`),
+and the join combine distributes over the meet combine (`hdist`). Unlike the dual law, *every*
+mixed-presence case is non-trivial here, because `optVjoin` copies (rather than drops) one-sided
+keys. -/
+theorem optVjoin_optVmeet_distrib {V : Type u} (cj cm : V → V → V)
+    (hidem : ∀ x, cm x x = x) (habs1 : ∀ x y, cm (cj x y) x = x) (habs2 : ∀ x y, cm x (cj x y) = x)
+    (hdist : ∀ x y z, cj x (cm y z) = cm (cj x y) (cj x z)) (oa ob oc : Option V) :
+    optVjoin cj oa (optVmeet cm ob oc) = optVmeet cm (optVjoin cj oa ob) (optVjoin cj oa oc) := by
+  cases oa <;> cases ob <;> cases oc <;> simp only [optVmeet, optVjoin] <;>
+    first | rfl | rw [hidem] | rw [habs1] | rw [habs2] | rw [hdist]
+
 namespace Tree
 
 variable {L : Type u} {V : Type u} [LeafOps L V]

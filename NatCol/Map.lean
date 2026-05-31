@@ -462,6 +462,31 @@ theorem meet_self_of_idem (combine : α → α → α) (hidem : ∀ v, combine v
   | none => rfl
   | some v => simp only [optVmeet, hidem]
 
+/-- **`meet` distributes over `join`** (`NatMap` wrapper of `meet_join_distrib`). Needs only that the
+meet combine distributes over the join combine pointwise. -/
+theorem meet_join_distrib (combineMeet combineJoin : α → α → α)
+    (hdist : ∀ x y z,
+      combineMeet x (combineJoin y z) = combineJoin (combineMeet x y) (combineMeet x z))
+    (a b e : NatMap α) :
+    a.meet combineMeet (b.join combineJoin e)
+      = (a.meet combineMeet b).join combineJoin (a.meet combineMeet e) :=
+  NatCollection.meet_join_distrib combineMeet combineJoin hdist a b e
+
+/-- **`join` distributes over `meet`** (`NatMap` wrapper of `join_meet_distrib`). Needs the meet
+combine to be idempotent (`hidem`) and to absorb the join combine (`habs1`/`habs2`), and the join
+combine to distribute over the meet combine (`hdist`) — i.e. the combines form a distributive
+lattice on values. -/
+theorem join_meet_distrib (combineJoin combineMeet : α → α → α)
+    (hidem : ∀ x, combineMeet x x = x)
+    (habs1 : ∀ x y, combineMeet (combineJoin x y) x = x)
+    (habs2 : ∀ x y, combineMeet x (combineJoin x y) = x)
+    (hdist : ∀ x y z,
+      combineJoin x (combineMeet y z) = combineMeet (combineJoin x y) (combineJoin x z))
+    (a b e : NatMap α) :
+    a.join combineJoin (b.meet combineMeet e)
+      = (a.join combineJoin b).meet combineMeet (a.join combineJoin e) :=
+  NatCollection.join_meet_distrib combineJoin combineMeet hidem habs1 habs2 hdist a b e
+
 end NatMap
 
 -- restricts transitivity as a theorem, for any preorder `rel` (here left abstract)
@@ -511,5 +536,15 @@ example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true) (combine : Nat
   ⟨NatMap.restricts_join_left rel hr combine hl a b,
    NatMap.restricts_join_right rel hr combine hrr a b,
    NatMap.join_restricts rel hr combine hu a b m ham hbm⟩
+-- the two distributive laws (abstract combines forming a distributive lattice on values)
+example (cm cj : Nat → Nat → Nat)
+    (hd : ∀ x y z, cm x (cj y z) = cj (cm x y) (cm x z)) (a b e : NatMap Nat) :
+    a.meet cm (b.join cj e) = (a.meet cm b).join cj (a.meet cm e) :=
+  NatMap.meet_join_distrib cm cj hd a b e
+example (cj cm : Nat → Nat → Nat)
+    (hi : ∀ x, cm x x = x) (h1 : ∀ x y, cm (cj x y) x = x) (h2 : ∀ x y, cm x (cj x y) = x)
+    (hd : ∀ x y z, cj x (cm y z) = cm (cj x y) (cj x z)) (a b e : NatMap Nat) :
+    a.join cj (b.meet cm e) = (a.join cj b).meet cm (a.join cj e) :=
+  NatMap.join_meet_distrib cj cm hi h1 h2 hd a b e
 
 end NatCol

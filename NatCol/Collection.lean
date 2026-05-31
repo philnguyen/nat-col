@@ -1071,6 +1071,45 @@ theorem join_lub (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (combi
         show rel (combine x y) w = true
         exact hlub x y w hak hbk
 
+/-- **`meet` distributes over `join`** (left distributivity): provided the meet combine distributes
+over the join combine pointwise (`hdist`), `meet`-ing `a` with `join b e` equals the `join` of the
+two `meet`s. Read off `get?` (`get?_meet`/`get?_join`) both sides are the same nested value merge,
+closed by `optVmeet_optVjoin_distrib`; collection extensionality (`ext_get?`) lifts it to trees. -/
+theorem meet_join_distrib (combineMeet combineJoin : V → V → V)
+    (hdist : ∀ x y z,
+      combineMeet x (combineJoin y z) = combineJoin (combineMeet x y) (combineMeet x z))
+    (a b e : NatCollection L) :
+    meet combineMeet a (join combineJoin b e)
+      = join combineJoin (meet combineMeet a b) (meet combineMeet a e) := by
+  apply ext_get?
+  intro k
+  rw [get?_meet combineMeet a (join combineJoin b e) k, get?_join combineJoin b e k,
+      get?_join combineJoin (meet combineMeet a b) (meet combineMeet a e) k,
+      get?_meet combineMeet a b k, get?_meet combineMeet a e k]
+  exact optVmeet_optVjoin_distrib combineMeet combineJoin hdist (a.get? k) (b.get? k) (e.get? k)
+
+/-- **`join` distributes over `meet`** (left distributivity): the dual of `meet_join_distrib`, but
+requiring the full lattice algebra on the combines — the meet combine idempotent (`hidem`) and
+absorbing the join combine (`habs1`/`habs2`), and the join combine distributing over the meet combine
+(`hdist`). The extra hypotheses are genuinely needed: `join` copies one-sided keys, so every
+mixed-presence key must be reconciled (the dual's `meet` drops them). -/
+theorem join_meet_distrib (combineJoin combineMeet : V → V → V)
+    (hidem : ∀ x, combineMeet x x = x)
+    (habs1 : ∀ x y, combineMeet (combineJoin x y) x = x)
+    (habs2 : ∀ x y, combineMeet x (combineJoin x y) = x)
+    (hdist : ∀ x y z,
+      combineJoin x (combineMeet y z) = combineMeet (combineJoin x y) (combineJoin x z))
+    (a b e : NatCollection L) :
+    join combineJoin a (meet combineMeet b e)
+      = meet combineMeet (join combineJoin a b) (join combineJoin a e) := by
+  apply ext_get?
+  intro k
+  rw [get?_join combineJoin a (meet combineMeet b e) k, get?_meet combineMeet b e k,
+      get?_meet combineMeet (join combineJoin a b) (join combineJoin a e) k,
+      get?_join combineJoin a b k, get?_join combineJoin a e k]
+  exact optVjoin_optVmeet_distrib combineJoin combineMeet hidem habs1 habs2 hdist
+    (a.get? k) (b.get? k) (e.get? k)
+
 end NatCollection
 
 end NatCol

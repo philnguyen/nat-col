@@ -452,6 +452,18 @@ theorem inter_self (s : NatSet) : s ∩ s = s := by
   | none => rfl
   | some u => cases u; rfl
 
+/-- Intersection distributes over union: `s ∩ (t ∪ u) = (s ∩ t) ∪ (s ∩ u)`. The set `combine` is
+constantly `()`, so the distributivity side-condition is trivially `rfl`. -/
+theorem inter_union_distrib (s t u : NatSet) : s ∩ (t ∪ u) = (s ∩ t) ∪ (s ∩ u) :=
+  NatCollection.meet_join_distrib (fun _ _ => ()) (fun _ _ => ()) (fun _ _ _ => rfl) s t u
+
+/-- Union distributes over intersection: `s ∪ (t ∩ u) = (s ∪ t) ∩ (s ∪ u)`. The set `combine` is
+constantly `()`, so every lattice side-condition (idempotence, absorption, distributivity) is
+trivially `rfl`. -/
+theorem union_inter_distrib (s t u : NatSet) : s ∪ (t ∩ u) = (s ∪ t) ∩ (s ∪ u) :=
+  NatCollection.join_meet_distrib (fun _ _ => ()) (fun _ _ => ())
+    (fun _ => rfl) (fun _ _ => rfl) (fun _ _ => rfl) (fun _ _ _ => rfl) s t u
+
 end NatSet
 
 -- subset transitivity and anti-symmetry as universally-quantified theorems (no side conditions)
@@ -471,5 +483,8 @@ example {s t u : NatSet} : u ⊆ s → u ⊆ t → u ⊆ s ∩ t := NatSet.subse
 example (s t : NatSet) : s ⊆ s ∪ t := NatSet.subset_union_left s t
 example (s t : NatSet) : t ⊆ s ∪ t := NatSet.subset_union_right s t
 example {s t u : NatSet} : s ⊆ u → t ⊆ u → s ∪ t ⊆ u := NatSet.union_subset
+-- the two distributive laws: `∩`/`∪` distribute over each other
+example (s t u : NatSet) : s ∩ (t ∪ u) = (s ∩ t) ∪ (s ∩ u) := NatSet.inter_union_distrib s t u
+example (s t u : NatSet) : s ∪ (t ∩ u) = (s ∪ t) ∩ (s ∪ u) := NatSet.union_inter_distrib s t u
 
 end NatCol
