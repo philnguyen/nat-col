@@ -35,6 +35,9 @@ instance {α : Type u} : LeafOps (Node α) α where
   restricts_refl rel hrefl n := Node.restricts_self rel n (fun x _ => hrefl x)
   join_comm f g hfg a b := Node.join_comm a b (fun x y => by rw [hfg])
   meet_comm f g hfg a b := Node.meet_comm a b (fun x y => by rw [hfg])
+  join_assoc c hc a b d :=
+    Node.join_assoc _ a b d (fun s _ => Node.optJoin_someC_assoc c hc (a.get? s) (b.get? s) (d.get? s))
+  isEmpty_join c a b hne := Node.isEmpty_join_left c a b hne
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -104,6 +107,14 @@ theorem join_comm_of_comm (combine : α → α → α) (hcomm : ∀ x y, combine
     (m₁ m₂ : NatMap α) : m₁.join combine m₂ = m₂.join combine m₁ := by
   have h : (fun x y => combine y x) = combine := funext fun x => funext fun y => hcomm y x
   rw [join_comm, h]
+
+/-- `join` is associative when its combine is associative. (Values at coinciding keys are resolved
+`combine left right`, so associativity of the result needs associativity of `combine`.) -/
+theorem join_assoc (combine : α → α → α)
+    (hassoc : ∀ x y z, combine (combine x y) z = combine x (combine y z))
+    (m₁ m₂ m₃ : NatMap α) :
+    (m₁.join combine m₂).join combine m₃ = m₁.join combine (m₂.join combine m₃) :=
+  NatCollection.join_assoc combine hassoc m₁ m₂ m₃
 
 /-- The empty map is a left annihilator of `meet`. -/
 @[simp, grind =]

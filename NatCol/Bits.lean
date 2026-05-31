@@ -96,6 +96,26 @@ theorem popCount_setBit (m i : UInt32) (h : testBit m i = false) :
   rw [key, UInt32.toNat_add, show ((1 : UInt32).toNat) = 1 from rfl,
       show (2 : Nat) ^ 32 = 4294967296 from rfl, Nat.mod_eq_of_lt (by omega)]
 
+/-- Split a population count at the top bit (slot 31): the count below 31 plus the top bit.
+Lets `Node.ext`'s forward element-extraction reach the full size at the `m = 32` boundary (where
+`UInt32`'s `lowerMask` would wrap). -/
+theorem popCount_split31 (m : UInt32) :
+    popCount m = popCount (m &&& lowerMask 31) + (if testBit m 31 = true then 1 else 0) := by
+  by_cases h31 : testBit m 31 = true
+  · rw [if_pos h31]
+    have key : popCountAux m = popCountAux (m &&& lowerMask 31) + 1 := by
+      unfold popCountAux lowerMask testBit at *; bv_decide
+    have hb := popCountAux_toNat_le (m &&& lowerMask 31)
+    show (popCountAux m).toNat = (popCountAux (m &&& lowerMask 31)).toNat + 1
+    rw [key, UInt32.toNat_add, show ((1 : UInt32).toNat) = 1 from rfl,
+        show (2 : Nat) ^ 32 = 4294967296 from rfl, Nat.mod_eq_of_lt (by omega)]
+  · rw [if_neg h31]
+    simp only [Bool.not_eq_true] at h31
+    have key : popCountAux m = popCountAux (m &&& lowerMask 31) := by
+      unfold popCountAux lowerMask testBit at *; bv_decide
+    show (popCountAux m).toNat = (popCountAux (m &&& lowerMask 31)).toNat + 0
+    rw [key, Nat.add_zero]
+
 /-- Clearing a set bit lowers the population count by one. -/
 theorem popCount_clearBit (m i : UInt32) (h : testBit m i = true) :
     popCount (clearBit m i) + 1 = popCount m := by
@@ -167,5 +187,124 @@ theorem setBit_ne_zero (m i : UInt32) : setBit m i ≠ 0 := by unfold setBit; bv
 slot is already present). -/
 theorem setBit_eq_of_testBit (m i : UInt32) (h : testBit m i = true) : setBit m i = m := by
   unfold setBit testBit at *; bv_decide
+
+/-! ### Compact-index movement under `setBit`
+
+These feed `Node.get?_insert`: inserting at slot `i` either overwrites in place (slot present)
+or `insertIdx`s a fresh value, and these `bv_decide`-discharged popcount facts pin down how the
+compact index `arrayIndex` of each other slot moves. All require slots `< 32` because `UInt32`
+shifts are taken modulo the width (so `testBit`/`setBit`/`lowerMask` are periodic above bit 31). -/
+
+/-- `setBit m i` reads exactly slot `i` on top of `m` (for in-range slots). -/
+theorem testBit_setBit (m i j : UInt32) (hi : i < 32) (hj : j < 32) :
+    testBit (setBit m i) j = (testBit m j || (i == j)) := by
+  unfold testBit setBit; bv_decide
+
+/-- Setting bit `i` does not move the compact index of slot `i` (no bit *below* `i` changes). -/
+theorem arrayIndex_setBit_self (m i : UInt32) : arrayIndex (setBit m i) i = arrayIndex m i := by
+  unfold arrayIndex
+  rw [show (setBit m i) &&& lowerMask i = m &&& lowerMask i from by unfold setBit lowerMask; bv_decide]
+
+/-- Setting bit `i` does not move the compact index of any slot `j ≤ i`. -/
+theorem arrayIndex_setBit_of_le (m i j : UInt32) (hi : i < 32) (hj : j < 32) (hji : j ≤ i) :
+    arrayIndex (setBit m i) j = arrayIndex m j := by
+  have key : (setBit m i) &&& lowerMask j = m &&& lowerMask j := by unfold setBit lowerMask; bv_decide
+  unfold arrayIndex; rw [key]
+
+/-- Setting a previously-unset bit `i` raises the compact index of every slot `j > i` by one. -/
+theorem arrayIndex_setBit_of_gt (m i j : UInt32) (hi : i < 32) (hj : j < 32)
+    (hij : i < j) (habs : testBit m i = false) :
+    arrayIndex (setBit m i) j = arrayIndex m j + 1 := by
+  have key : popCountAux ((setBit m i) &&& lowerMask j) = popCountAux (m &&& lowerMask j) + 1 := by
+    unfold popCountAux setBit lowerMask testBit at *; bv_decide
+  have hb := popCountAux_toNat_le (m &&& lowerMask j)
+  show (popCountAux ((setBit m i) &&& lowerMask j)).toNat = (popCountAux (m &&& lowerMask j)).toNat + 1
+  rw [key, UInt32.toNat_add, show ((1 : UInt32).toNat) = 1 from rfl,
+      show (2 : Nat) ^ 32 = 4294967296 from rfl, Nat.mod_eq_of_lt (by omega)]
+
+/-- The compact index is strictly monotone on present slots. -/
+theorem arrayIndex_lt_of_lt (m a b : UInt32) (ha : a < 32) (hb : b < 32)
+    (h1 : testBit m a = true) (h2 : a < b) : arrayIndex m a < arrayIndex m b := by
+  have key : popCountAux (m &&& lowerMask a) < popCountAux (m &&& lowerMask b) := by
+    unfold popCountAux lowerMask testBit at *; bv_decide
+  show (popCountAux (m &&& lowerMask a)).toNat < (popCountAux (m &&& lowerMask b)).toNat
+  exact UInt32.lt_iff_toNat_lt.mp key
+
+/-- The compact index is (non-strictly) monotone in the slot. -/
+theorem arrayIndex_le_of_le (m a b : UInt32) (ha : a < 32) (hb : b < 32) (h : a ≤ b) :
+    arrayIndex m a ≤ arrayIndex m b := by
+  have key : popCountAux (m &&& lowerMask a) ≤ popCountAux (m &&& lowerMask b) := by
+    unfold popCountAux lowerMask; bv_decide
+  show (popCountAux (m &&& lowerMask a)).toNat ≤ (popCountAux (m &&& lowerMask b)).toNat
+  exact UInt32.le_iff_toNat_le.mp key
+
+/-- Strict `UInt32` order entails `≤`. -/
+theorem uint32_le_of_lt {a b : UInt32} (h : a < b) : a ≤ b :=
+  UInt32.le_iff_toNat_le.mpr (Nat.le_of_lt (UInt32.lt_iff_toNat_lt.mp h))
+
+/-- Distinct `UInt32`s are strictly comparable one way or the other. -/
+theorem lt_or_gt_uint32 {a b : UInt32} (h : a ≠ b) : a < b ∨ a > b := by
+  rcases Nat.lt_trichotomy a.toNat b.toNat with hlt | heq | hgt
+  · exact Or.inl (UInt32.lt_iff_toNat_lt.mpr hlt)
+  · exact absurd (UInt32.toNat_inj.mp heq) h
+  · exact Or.inr (UInt32.lt_iff_toNat_lt.mpr hgt)
+
+/-- Moving the slot up by one raises the compact index by the (just-passed) bit. Backs the
+forward element-extraction in `Node.ext`. -/
+theorem arrayIndex_succ (m i : UInt32) (hi : i < 31) :
+    arrayIndex m (i + 1) = arrayIndex m i + (if testBit m i = true then 1 else 0) := by
+  by_cases h : testBit m i = true
+  · rw [if_pos h]
+    have key : popCountAux (m &&& lowerMask (i + 1)) = popCountAux (m &&& lowerMask i) + 1 := by
+      unfold popCountAux lowerMask testBit at *; bv_decide
+    have hb := popCountAux_toNat_le (m &&& lowerMask i)
+    show (popCountAux (m &&& lowerMask (i + 1))).toNat = (popCountAux (m &&& lowerMask i)).toNat + 1
+    rw [key, UInt32.toNat_add, show ((1 : UInt32).toNat) = 1 from rfl,
+        show (2 : Nat) ^ 32 = 4294967296 from rfl, Nat.mod_eq_of_lt (by omega)]
+  · rw [if_neg h]; simp only [Bool.not_eq_true] at h
+    have key : popCountAux (m &&& lowerMask (i + 1)) = popCountAux (m &&& lowerMask i) := by
+      unfold popCountAux lowerMask testBit at *; bv_decide
+    show (popCountAux (m &&& lowerMask (i + 1))).toNat = (popCountAux (m &&& lowerMask i)).toNat + 0
+    rw [key, Nat.add_zero]
+
+/-- The compact index is injective on present slots. -/
+theorem arrayIndex_inj (m a b : UInt32) (ha : a < 32) (hb : b < 32)
+    (hpa : testBit m a = true) (hpb : testBit m b = true) (hab : a ≠ b) :
+    arrayIndex m a ≠ arrayIndex m b := by
+  rcases lt_or_gt_uint32 hab with h | h
+  · exact Nat.ne_of_lt (arrayIndex_lt_of_lt m a b ha hb hpa h)
+  · exact Nat.ne_of_gt (arrayIndex_lt_of_lt m b a hb ha hpb h)
+
+/-- Bit extensionality: two masks agreeing on every bit are equal. A `UInt32` has exactly 32
+bits, so it suffices to know they agree at slots `0..31`; `bv_decide` then closes `a = b` from
+those 32 concrete bit equalities. Backs `Node.ext` (a node's mask is recovered from which slots
+its `get?` reports present). -/
+theorem eq_of_testBit_eq {a b : UInt32} (h : ∀ i, i < 32 → testBit a i = testBit b i) : a = b := by
+  have h0 := h 0 (by decide); have h1 := h 1 (by decide); have h2 := h 2 (by decide)
+  have h3 := h 3 (by decide); have h4 := h 4 (by decide); have h5 := h 5 (by decide)
+  have h6 := h 6 (by decide); have h7 := h 7 (by decide); have h8 := h 8 (by decide)
+  have h9 := h 9 (by decide); have h10 := h 10 (by decide); have h11 := h 11 (by decide)
+  have h12 := h 12 (by decide); have h13 := h 13 (by decide); have h14 := h 14 (by decide)
+  have h15 := h 15 (by decide); have h16 := h 16 (by decide); have h17 := h 17 (by decide)
+  have h18 := h 18 (by decide); have h19 := h 19 (by decide); have h20 := h 20 (by decide)
+  have h21 := h 21 (by decide); have h22 := h 22 (by decide); have h23 := h 23 (by decide)
+  have h24 := h 24 (by decide); have h25 := h 25 (by decide); have h26 := h 26 (by decide)
+  have h27 := h 27 (by decide); have h28 := h 28 (by decide); have h29 := h 29 (by decide)
+  have h30 := h 30 (by decide); have h31 := h 31 (by decide)
+  clear h
+  unfold testBit at *
+  bv_decide
+
+/-- `testBit` distributes over bitwise-or. -/
+theorem testBit_or (a b i : UInt32) : testBit (a ||| b) i = (testBit a i || testBit b i) := by
+  unfold testBit; bv_decide
+
+/-- A 5-bit chunk is always a valid slot index (`< 32`). -/
+theorem chunk_lt (k level : Nat) : chunk k level < 32 := by
+  have hle : (k >>> (5 * level)) &&& 31 ≤ 31 := Nat.and_le_right
+  have hlt : (k >>> (5 * level)) &&& 31 < UInt32.size := Nat.lt_of_le_of_lt hle (by decide)
+  have e2 : (32 : UInt32).toNat = 32 := by decide
+  rw [chunk, UInt32.lt_iff_toNat_lt, UInt32.toNat_ofNat_of_lt' hlt, e2]
+  omega
 
 end NatCol

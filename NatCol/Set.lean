@@ -41,6 +41,13 @@ instance : LeafOps UInt32 Unit where
   meet_comm _ _ _ a b := by
     show (a &&& b) = (b &&& a)
     bv_decide
+  join_assoc _ _ a b d := by
+    show (a ||| b) ||| d = a ||| (b ||| d)
+    bv_decide
+  isEmpty_join _ a b hne := by
+    show ((a ||| b) == 0) = false
+    have : (a == 0) = false := hne
+    bv_decide
 
 /-- A set of natural numbers. -/
 def NatSet : Type := NatCollection UInt32
@@ -103,6 +110,11 @@ theorem union_empty_right (s : NatSet) : s ∪ NatSet.empty = s :=
 flip law `NatCollection.join_comm` gives unconditional commutativity.) -/
 theorem union_comm (s t : NatSet) : s ∪ t = t ∪ s :=
   NatCollection.join_comm (fun _ _ => ()) s t
+
+/-- Union is associative. (The set `combine` is constantly `()`, which is trivially associative, so
+`NatCollection.join_assoc` applies with no side condition.) -/
+theorem union_assoc (s t u : NatSet) : (s ∪ t) ∪ u = s ∪ (t ∪ u) :=
+  NatCollection.join_assoc (fun _ _ => ()) (fun _ _ _ => rfl) s t u
 
 /-- The empty set is a left annihilator of `∩` (intersection). -/
 @[simp, grind =]

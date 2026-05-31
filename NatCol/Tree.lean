@@ -68,6 +68,13 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   collection layer derive commutativity of `meet`; `meetEq_comm` lifts it through the tree. -/
   meet_comm : ∀ (f g : V → V → V), (∀ x y, f x y = g y x) →
     ∀ (a b : L), meet f a b = meet g b a
+  /-- `join` is associative when the combine is associative. Lets the collection layer derive
+  associativity of `join`; `joinEq_assoc` lifts it through the tree. -/
+  join_assoc : ∀ (c : V → V → V), (∀ x y z, c (c x y) z = c x (c y z)) →
+    ∀ (a b d : L), join c (join c a b) d = join c a (join c b d)
+  /-- Joining (with any combine) onto a non-empty leaf stays non-empty. Backs
+  `Tree.isEmpty_joinEq_eq_false`, which the canonical-shape side of `join` associativity needs. -/
+  isEmpty_join : ∀ (c : V → V → V) (a b : L), isEmpty a = false → isEmpty (join c a b) = false
 
 namespace Tree
 
@@ -420,6 +427,66 @@ theorem Full_joinEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
         simp only [Option.some.injEq] at hv; subst hv
         exact ⟨by simpa using hne, Full_joinEq h c x y (ha x hx).2 (hb y hy).2⟩
 
+/-- Joining onto a non-empty `Full` tree stays non-empty: a present key of `a` survives the merge.
+Bottoms out in `LeafOps.isEmpty_join`; at a node the surviving slot is exhibited via `get?_join`
+(the `if isEmpty` guard there never fires, by the induction hypothesis). -/
+theorem isEmpty_joinEq_eq_false (c : V → V → V) : (h : Nat) → (a b : Tree L h) →
+    Tree.isEmpty h a = false → Full h a → Full h b → Tree.isEmpty h (joinEq c h a b) = false
+  | 0, a, b, hne, _, _ => by simp only [Tree.isEmpty, joinEq]; exact LeafOps.isEmpty_join c a b hne
+  | h + 1, a, b, hne, ha, hb => by
+      obtain ⟨s, hs, hsome⟩ := Node.exists_get?_of_isEmpty_false a hne
+      obtain ⟨child, hchild⟩ := Option.isSome_iff_exists.mp hsome
+      have hcf := ha child (Node.mem_of_get? a s child hchild)
+      refine Node.isEmpty_eq_false_of_get? _ s ?_
+      simp only [joinEq]
+      rw [Node.get?_join _ _ _ _ hs, hchild]
+      cases hb2 : Node.get? b s with
+      | none => simp [Node.optJoin]
+      | some bchild =>
+          have hbf := hb bchild (Node.mem_of_get? b s bchild hb2)
+          simp only [Node.optJoin]
+          rw [if_neg (by simp [isEmpty_joinEq_eq_false c h child bchild hcf.1 hcf.2 hbf.2])]
+          simp
+
+/-- `joinEq` is associative at every height when the leaf combine is associative. Bottoms out in
+`LeafOps.join_assoc` at a leaf; the successor step is `Node.join_assoc` for the (pruning) per-slot
+combine, whose value-level associativity at each slot is discharged by the induction hypothesis —
+the `if isEmpty` guards never fire on the `Full` non-empty children (`isEmpty_joinEq_eq_false`). -/
+theorem joinEq_assoc (c : V → V → V) (hc : ∀ x y z, c (c x y) z = c x (c y z)) :
+    (h : Nat) → (a b d : Tree L h) → Full h a → Full h b → Full h d →
+      joinEq c h (joinEq c h a b) d = joinEq c h a (joinEq c h b d)
+  | 0, a, b, d, _, _, _ => by simp only [joinEq]; exact LeafOps.join_assoc c hc a b d
+  | h + 1, a, b, d, ha, hb, hd => by
+      simp only [joinEq]
+      apply Node.join_assoc
+      intro s hs
+      -- the per-slot combine `gC x y = if isEmpty (joinEq x y) then none else some (joinEq x y)`,
+      -- pinned to `some (joinEq x y)` on non-empty `Full` children
+      have key : ∀ (x y : Tree L h), Tree.isEmpty h x = false → Full h x → Full h y →
+          (if Tree.isEmpty h (joinEq c h x y) then none else some (joinEq c h x y))
+            = some (joinEq c h x y) :=
+        fun x y hxe hfx hfy => if_neg (by simp [isEmpty_joinEq_eq_false c h x y hxe hfx hfy])
+      rcases hga : Node.get? a s with _ | x
+      · rcases hgb : Node.get? b s with _ | y
+        · rcases hgd : Node.get? d s with _ | z <;> simp [Node.optJoin]
+        · have hyf := hb y (Node.mem_of_get? b s y hgb)
+          rcases hgd : Node.get? d s with _ | z
+          · simp [Node.optJoin]
+          · have hzf := hd z (Node.mem_of_get? d s z hgd)
+            simp only [Node.optJoin, key y z hyf.1 hyf.2 hzf.2, Node.optJoin]
+      · have hxf := ha x (Node.mem_of_get? a s x hga)
+        rcases hgb : Node.get? b s with _ | y
+        · rcases hgd : Node.get? d s with _ | z <;> simp [Node.optJoin]
+        · have hyf := hb y (Node.mem_of_get? b s y hgb)
+          rcases hgd : Node.get? d s with _ | z
+          · simp only [Node.optJoin, key x y hxf.1 hxf.2 hyf.2, Node.optJoin]
+          · have hzf := hd z (Node.mem_of_get? d s z hgd)
+            simp only [Node.optJoin, key x y hxf.1 hxf.2 hyf.2, key y z hyf.1 hyf.2 hzf.2]
+            rw [key (joinEq c h x y) z (isEmpty_joinEq_eq_false c h x y hxf.1 hxf.2 hyf.2)
+                  (Full_joinEq h c x y hxf.2 hyf.2) hzf.2,
+                key x (joinEq c h y z) hxf.1 hxf.2 (Full_joinEq h c y z hyf.2 hzf.2),
+                joinEq_assoc c hc h x y z hxf.2 hyf.2 hzf.2]
+
 /-- `meetEq` preserves "no empty subtree": every surviving child is guarded non-empty. -/
 theorem Full_meetEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
     Full h a → Full h b → Full h (meetEq c h a b)
@@ -436,7 +503,7 @@ theorem Full_meetEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
         exact ⟨by simpa using hne, Full_meetEq h c x y (ha x hx).2 (hb y hy).2⟩
 
 /-- Lifting a non-empty tree keeps it non-empty. -/
-private theorem isEmpty_liftBy : (d : Nat) → {h : Nat} → (t : Tree L h) →
+theorem isEmpty_liftBy : (d : Nat) → {h : Nat} → (t : Tree L h) →
     Tree.isEmpty h t = false → Tree.isEmpty (h + d) (liftBy d t) = false
   | 0, _, _, ht => ht
   | d + 1, _, t, _ => Node.isEmpty_singleton 0 (liftBy d t)
@@ -455,6 +522,14 @@ theorem Full_liftBy : (d : Nat) → {h : Nat} → (t : Tree L h) →
 /-- Transporting a tree along an equality of heights preserves `Full`. -/
 theorem Full_cast {ha hb : Nat} (heq : ha = hb) (t : Tree L ha) (hf : Full ha t) :
     Full hb (Tree.cast heq t) := by subst heq; exact hf
+
+/-- Transporting a tree along an equality of heights preserves `TopProper`. -/
+theorem TopProper_cast {ha hb : Nat} (heq : ha = hb) (t : Tree L ha) (htp : TopProper ha t) :
+    TopProper hb (Tree.cast heq t) := by subst heq; exact htp
+
+/-- Transporting a tree along an equality of heights preserves emptiness. -/
+theorem isEmpty_cast {ha hb : Nat} (heq : ha = hb) (t : Tree L ha) :
+    Tree.isEmpty hb (Tree.cast heq t) = Tree.isEmpty ha t := by subst heq; rfl
 
 /-- `joinSpine` preserves "no empty subtree": the spine's merged child is guarded non-empty
 (`some` branch) or is a lifted copy of the non-empty `s` (`none` branch); off-spine children
@@ -522,6 +597,207 @@ theorem Full_modify : (h : Nat) → (k : Nat) → (f : V → V) → (t : Tree L 
           rw [isEmpty_modify h k f child]; exact hchild.1
         | none =>
           rw [hget] at hfa; simp at hfa
+
+/-! ### Bridge lemmas relating `joinSpine`/`liftBy` to the equal-height `joinEq`
+
+These reduce `NatCollection.join` (spine-based, mixed heights) to a single `joinEq` at the common
+height, so that `joinEq_assoc` discharges associativity. `joinSpine_eq_joinEq_liftBy` rewrites the
+spine descent as `joinEq` against the lifted shorter tree; `liftBy_joinEq` pushes a further lift
+through a `joinEq`; `liftBy_liftBy` composes two lifts. All operate on canonical (`Full`,
+non-empty) trees, where the `if isEmpty` guards never fire (`isEmpty_joinEq_eq_false`). -/
+
+/-- `Tree.cast` along reflexivity is the identity. -/
+@[simp] theorem cast_rfl (t : Tree L h) : Tree.cast (rfl : h = h) t = t := rfl
+
+/-- Two successive casts compose. -/
+@[simp] theorem cast_cast {ha hb hc : Nat} (p : ha = hb) (q : hb = hc) (t : Tree L ha) :
+    Tree.cast q (Tree.cast p t) = Tree.cast (p.trans q) t := by subst p; subst q; rfl
+
+/-- Lifting commutes with a height cast. -/
+theorem liftBy_cast (d : Nat) {ha hb : Nat} (p : ha = hb) (t : Tree L ha) :
+    liftBy d (Tree.cast p t) = Tree.cast (congrArg (· + d) p) (liftBy d t) := by subst p; rfl
+
+/-- A slot-0 singleton commutes with a height cast on its child. -/
+private theorem singleton0_cast {ha hb : Nat} (p : ha = hb) (t : Tree L ha) :
+    (Node.singleton 0 (Tree.cast p t) : Tree L (hb + 1))
+      = Tree.cast (congrArg (· + 1) p) (Node.singleton 0 t) := by subst p; rfl
+
+/-- `joinEq` commutes with a height cast on both operands. -/
+theorem joinEq_cast (c : V → V → V) {hh H : Nat} (p : hh = H) (x y : Tree L hh) :
+    Tree.cast p (joinEq c hh x y) = joinEq c H (Tree.cast p x) (Tree.cast p y) := by subst p; rfl
+
+/-- Lifting by equal amounts gives the same tree (up to the induced height cast). -/
+theorem liftBy_congr_d {d d' : Nat} (hdd : d = d') {h : Nat} (t : Tree L h) :
+    liftBy d t = Tree.cast (by rw [hdd]) (liftBy d' t) := by subst hdd; rfl
+
+/-- `Tree.cast` is injective: it has the reverse cast as a two-sided inverse. -/
+theorem cast_inj {ha hb : Nat} (p : ha = hb) (x y : Tree L ha)
+    (h : Tree.cast p x = Tree.cast p y) : x = y := by
+  subst p; simpa using h
+
+/-- `liftBy d` is injective: each level wraps the tree under a slot-0 singleton, which the
+slot-0 lookup recovers. -/
+theorem liftBy_inj (d : Nat) {h : Nat} (x y : Tree L h)
+    (heq : liftBy d x = liftBy d y) : x = y := by
+  induction d with
+  | zero => exact heq
+  | succ d ih =>
+    apply ih
+    have heq' : Node.singleton (0 : UInt32) (liftBy d x) = Node.singleton 0 (liftBy d y) := heq
+    have hget : (Node.singleton (0 : UInt32) (liftBy d x)).get? 0
+        = (Node.singleton 0 (liftBy d y)).get? 0 := congrArg (fun n => Node.get? n 0) heq'
+    rw [Node.get?_singleton 0 (liftBy d x) 0 (by decide) (by decide),
+        Node.get?_singleton 0 (liftBy d y) 0 (by decide) (by decide), if_pos rfl] at hget
+    exact Option.some.inj hget
+
+/-- Two successive lifts compose into one (up to the height-associativity cast). -/
+private theorem liftBy_liftBy (d₁ d₂ : Nat) {h : Nat} (t : Tree L h) :
+    liftBy d₂ (liftBy d₁ t) = Tree.cast (Nat.add_assoc h d₁ d₂).symm (liftBy (d₁ + d₂) t) := by
+  induction d₂ with
+  | zero => rfl
+  | succ d₂ ih =>
+    have e1 : liftBy (d₂ + 1) (liftBy d₁ t) = Node.singleton 0 (liftBy d₂ (liftBy d₁ t)) := rfl
+    rw [e1, ih, singleton0_cast]
+    rfl
+
+/-- A lift distributes over `joinEq` on canonical non-empty operands: the slot-0 spine the lift
+introduces is merged slot-by-slot, and the guard never prunes. -/
+private theorem liftBy_joinEq (c : V → V → V) (h : Nat) (x y : Tree L h)
+    (hx : Tree.isEmpty h x = false) (hy : Tree.isEmpty h y = false)
+    (hfx : Full h x) (hfy : Full h y) (d : Nat) :
+    liftBy d (joinEq c h x y) = joinEq c (h + d) (liftBy d x) (liftBy d y) := by
+  induction d with
+  | zero => rfl
+  | succ d ih =>
+    have hXne : Tree.isEmpty (h + d) (liftBy d x) = false := isEmpty_liftBy d x hx
+    have hYne : Tree.isEmpty (h + d) (liftBy d y) = false := isEmpty_liftBy d y hy
+    have hXf : Full (h + d) (liftBy d x) := Full_liftBy d x hfx hx
+    have hYf : Full (h + d) (liftBy d y) := Full_liftBy d y hfy hy
+    have hWne : Tree.isEmpty (h + d) (joinEq c (h + d) (liftBy d x) (liftBy d y)) = false :=
+      isEmpty_joinEq_eq_false c (h + d) (liftBy d x) (liftBy d y) hXne hXf hYf
+    show Node.singleton 0 (liftBy d (joinEq c h x y))
+        = joinEq c (h + d + 1) (Node.singleton 0 (liftBy d x)) (Node.singleton 0 (liftBy d y))
+    rw [ih]
+    simp only [joinEq]
+    apply Node.ext
+    intro sl hsl
+    rw [Node.get?_join _ _ _ _ hsl,
+        Node.get?_singleton 0 (liftBy d x) sl (by decide) hsl,
+        Node.get?_singleton 0 (liftBy d y) sl (by decide) hsl,
+        Node.get?_singleton 0 (joinEq c (h + d) (liftBy d x) (liftBy d y)) sl (by decide) hsl]
+    by_cases hs0 : sl = 0
+    · subst hs0
+      simp [Node.optJoin, hWne]
+    · simp [hs0, Node.optJoin]
+
+/-- The spine descent equals an equal-height `joinEq` against the lifted shorter tree. By induction
+on the height gap `d`: each spine step alters slot 0, which (the guard never firing on canonical
+non-empty children) coincides with `joinEq` of the slot-0 singleton holding the lifted `s`. -/
+theorem joinSpine_eq_joinEq_liftBy (c : V → V → V) (h : Nat) (s : Tree L h)
+    (hs : Tree.isEmpty h s = false) (hfs : Full h s) :
+    (d : Nat) → (t : Tree L (h + d)) → Full (h + d) t →
+      joinSpine c h d s t = joinEq c (h + d) (liftBy d s) t
+  | 0, t, _ => by simp only [joinSpine, liftBy]; rfl
+  | d + 1, t, hft => by
+      have hSne : Tree.isEmpty (h + d) (liftBy d s) = false := isEmpty_liftBy d s hs
+      have hSf : Full (h + d) (liftBy d s) := Full_liftBy d s hfs hs
+      -- the slot-0 callback (in `have` form, matching `joinSpine`'s compiled definition) always
+      -- yields `some` here: the guard never fires on canonical non-empty children
+      have hF : (fun (o : Option (Tree L (h + d))) =>
+            match o with
+            | some child =>
+                have r := joinSpine c h d s child
+                if Tree.isEmpty (h + d) r then none else some r
+            | none => some (liftBy d s)) (Node.get? t 0)
+          = some (match Node.get? t 0 with
+              | some child => joinEq c (h + d) (liftBy d s) child
+              | none => liftBy d s) := by
+        cases ht0 : Node.get? t 0 with
+        | none => rfl
+        | some child =>
+            have hcf : Full (h + d) child := (hft child (Node.mem_of_get? t 0 child ht0)).2
+            have hr : joinSpine c h d s child = joinEq c (h + d) (liftBy d s) child :=
+              joinSpine_eq_joinEq_liftBy c h s hs hfs d child hcf
+            show (if Tree.isEmpty (h + d) (joinSpine c h d s child) then none
+                    else some (joinSpine c h d s child))
+                = some (joinEq c (h + d) (liftBy d s) child)
+            rw [hr, if_neg (by simp [isEmpty_joinEq_eq_false c (h + d) (liftBy d s) child hSne hSf hcf])]
+      rw [joinSpine, Node.alter_eq_insert t 0 _ _ hF]
+      show Node.insert t 0 _ = joinEq c (h + d + 1) (Node.singleton 0 (liftBy d s)) t
+      simp only [joinEq]
+      apply Node.ext
+      intro sl hsl
+      rw [Node.get?_insert _ _ _ _ (by decide) hsl, Node.get?_join _ _ _ _ hsl,
+          Node.get?_singleton 0 (liftBy d s) sl (by decide) hsl]
+      by_cases hs0 : sl = 0
+      · subst hs0
+        cases ht0 : Node.get? t 0 with
+        | none => simp [Node.optJoin]
+        | some child =>
+            have hcf : Full (h + d) child := (hft child (Node.mem_of_get? t 0 child ht0)).2
+            simp [Node.optJoin,
+              isEmpty_joinEq_eq_false c (h + d) (liftBy d s) child hSne hSf hcf]
+      · rw [if_neg hs0, if_neg hs0]
+        cases Node.get? t sl <;> rfl
+
+/-- The mask of a `joinEq` (at height `≥ 1`) on canonical operands is exactly the union of the
+operand masks: no slot is pruned, since merging two non-empty `Full` children is never empty. -/
+private theorem mask_joinEq (c : V → V → V) (h : Nat) (a b : Tree L (h + 1))
+    (hfa : Full (h + 1) a) (hfb : Full (h + 1) b) :
+    (joinEq c (h + 1) a b).positionsMask = a.positionsMask ||| b.positionsMask := by
+  simp only [joinEq]
+  apply eq_of_testBit_eq
+  intro j hj
+  rw [testBit_or, Node.testBit_eq_isSome_get? _ j, Node.get?_join _ _ _ _ hj,
+      Node.testBit_eq_isSome_get? a j, Node.testBit_eq_isSome_get? b j]
+  cases hga : Node.get? a j with
+  | none => cases Node.get? b j <;> simp [Node.optJoin]
+  | some ca =>
+      have hcaf := hfa ca (Node.mem_of_get? a j ca hga)
+      cases hgb : Node.get? b j with
+      | none => simp [Node.optJoin]
+      | some cb =>
+          have hcbf := hfb cb (Node.mem_of_get? b j cb hgb)
+          simp [Node.optJoin, isEmpty_joinEq_eq_false c h ca cb hcaf.1 hcaf.2 hcbf.2]
+
+/-- Lifting a spine-descent merge by `D` more levels: it becomes an equal-height `joinEq` of both
+operands lifted to the common top height. Combines the spine bridge with `liftBy_joinEq` and
+`liftBy_liftBy`, packaging the spine-side lift composition so the collection layer needn't. -/
+theorem liftBy_joinSpine (c : V → V → V) (h d : Nat) (s : Tree L h) (t : Tree L (h + d)) (D : Nat)
+    (hsne : Tree.isEmpty h s = false) (htne : Tree.isEmpty (h + d) t = false)
+    (hfs : Full h s) (hft : Full (h + d) t) :
+    liftBy D (joinSpine c h d s t)
+      = joinEq c (h + d + D) (Tree.cast (by omega) (liftBy (d + D) s)) (liftBy D t) := by
+  rw [joinSpine_eq_joinEq_liftBy c h s hsne hfs d t hft,
+      liftBy_joinEq c (h + d) (liftBy d s) t (isEmpty_liftBy d s hsne) htne
+        (Full_liftBy d s hfs hsne) hft D,
+      liftBy_liftBy d D s]
+
+/-- `joinEq` preserves height-minimality (`TopProper`) given the left operand is minimal: a high
+bit of `a` survives into the union mask. -/
+private theorem TopProper_joinEq (c : V → V → V) : (h : Nat) → (a b : Tree L h) →
+    Full h a → Full h b → TopProper h a → TopProper h (joinEq c h a b)
+  | 0, _, _, _, _, _ => trivial
+  | h + 1, a, b, hfa, hfb, htpa => by
+      show 2 ≤ (joinEq c (h + 1) a b).positionsMask
+      rw [mask_joinEq c h a b hfa hfb]
+      have ha : (2 : UInt32) ≤ a.positionsMask := htpa
+      revert ha; bv_decide
+
+/-- `joinSpine` preserves height-minimality: for an equal-height merge (`d = 0`) the left operand's
+minimality carries through `joinEq`; for a genuine descent (`d ≥ 1`) the taller tree's minimality
+survives the slot-0 `alter`. -/
+theorem TopProper_joinSpine (c : V → V → V) (h : Nat) : (d : Nat) → (s : Tree L h) → (t : Tree L (h + d)) →
+    Tree.isEmpty h s = false → Full h s → Full (h + d) t → TopProper h s → TopProper (h + d) t →
+      TopProper (h + d) (joinSpine c h d s t)
+  | 0, s, t, _, hfs, hft, htps, _ => by
+      simp only [joinSpine]; exact TopProper_joinEq c h s t hfs hft htps
+  | d + 1, s, t, hsne, hfs, hft, _, htpt => by
+      rw [joinSpine_eq_joinEq_liftBy c h s hsne hfs (d + 1) t hft]
+      show 2 ≤ (joinEq c (h + d + 1) (liftBy (d + 1) s) t).positionsMask
+      rw [mask_joinEq c (h + d) (liftBy (d + 1) s) t (Full_liftBy (d + 1) s hfs hsne) hft]
+      have key : ∀ (x y : UInt32), 2 ≤ y → 2 ≤ x ||| y := by intro x y hy; bv_decide
+      exact key _ _ htpt
 
 end Tree
 

@@ -387,6 +387,208 @@ theorem meet_comm (combine : V → V → V) (a b : NatCollection L) :
       · -- `a` taller: both descend `a`'s spine to height `b.height` with the same flipped combine
         rw [dif_neg (Nat.not_le.mpr hgt), dif_pos (Nat.le_of_lt hgt)]
 
+/-! ### Associativity of `join`
+
+The collection-level `join` mixes heights via `joinSpine`/`normalizeAux`; the strategy is to lift
+both operands to a common height `H` and show `join` there is `Tree.joinEq`, then invoke the
+equal-height kernel `Tree.joinEq_assoc`. The `Tree` bridge lemmas
+(`joinSpine_eq_joinEq_liftBy`, `liftBy_joinEq`, `liftBy_liftBy`) do the structural work; the
+collection lemmas below handle the `normalizeAux` smart constructor and the height bookkeeping. -/
+
+/-- `normalizeAux` is the identity on an already-canonical tree (its top mask is `≥ 2`, so neither
+height-lowering arm fires). -/
+private theorem normalizeAux_eq_of_TopProper : (h : Nat) → (t : Tree L h) → (hf : Tree.Full h t) →
+    (htp : Tree.TopProper h t) → normalizeAux h t hf = ⟨h, t, ⟨hf, htp⟩⟩
+  | 0, _, _, _ => by simp only [normalizeAux]
+  | h + 1, n, hf, htp => by
+      have htp' : 2 ≤ n.positionsMask := htp
+      unfold normalizeAux
+      split
+      · rename_i hm0; rw [eq_of_beq hm0] at htp'; exact absurd htp' (by decide)
+      · split
+        · rename_i hm1; rw [eq_of_beq hm1] at htp'; exact absurd htp' (by decide)
+        · rfl
+
+/-- The `TopProper` argument shared by the join lemmas (left operand the shorter). -/
+private theorem topProper_joinSpine_left (combine : V → V → V) (a b : NatCollection L)
+    (ha : a.isEmpty = false) (hle : a.height ≤ b.height) :
+    Tree.TopProper _ (Tree.joinSpine combine a.height (b.height - a.height) a.tree
+      (Tree.cast (by omega) b.tree)) :=
+  Tree.TopProper_joinSpine combine a.height (b.height - a.height) a.tree (Tree.cast (by omega) b.tree)
+    (by simpa using ha) a.wf.1 (Tree.Full_cast (by omega) b.tree b.wf.1) a.wf.2
+    (Tree.TopProper_cast (by omega) b.tree b.wf.2)
+
+/-- A `join` of two non-empty collections is non-empty. -/
+private theorem isEmpty_join (combine : V → V → V) (a b : NatCollection L)
+    (ha : a.isEmpty = false) (hb : b.isEmpty = false) :
+    (join combine a b).isEmpty = false := by
+  have hane : Tree.isEmpty a.height a.tree = false := by simpa using ha
+  have hbne : Tree.isEmpty b.height b.tree = false := by simpa using hb
+  unfold join
+  rw [dif_neg (by simpa using ha), dif_neg (by simpa using hb)]
+  by_cases hle : a.height ≤ b.height
+  · rw [dif_pos hle, normalizeAux_eq_of_TopProper _ _ _ (topProper_joinSpine_left combine a b ha hle)]
+    show Tree.isEmpty _ (Tree.joinSpine combine a.height (b.height - a.height) a.tree
+        (Tree.cast (by omega) b.tree)) = false
+    rw [Tree.joinSpine_eq_joinEq_liftBy combine a.height a.tree hane a.wf.1 (b.height - a.height)
+          (Tree.cast (by omega) b.tree) (Tree.Full_cast (by omega) b.tree b.wf.1)]
+    exact Tree.isEmpty_joinEq_eq_false combine _ _ _
+      (Tree.isEmpty_liftBy (b.height - a.height) a.tree hane)
+      (Tree.Full_liftBy (b.height - a.height) a.tree a.wf.1 hane)
+      (Tree.Full_cast (by omega) b.tree b.wf.1)
+  · rw [dif_neg hle, normalizeAux_eq_of_TopProper _ _ _
+        (topProper_joinSpine_left (fun x y => combine y x) b a hb (Nat.le_of_lt (Nat.not_le.mp hle)))]
+    show Tree.isEmpty _ (Tree.joinSpine (fun x y => combine y x) b.height (a.height - b.height) b.tree
+        (Tree.cast (by omega) a.tree)) = false
+    rw [Tree.joinSpine_eq_joinEq_liftBy (fun x y => combine y x) b.height b.tree hbne b.wf.1
+          (a.height - b.height) (Tree.cast (by omega) a.tree) (Tree.Full_cast (by omega) a.tree a.wf.1)]
+    exact Tree.isEmpty_joinEq_eq_false _ _ _ _
+      (Tree.isEmpty_liftBy (a.height - b.height) b.tree hbne)
+      (Tree.Full_liftBy (a.height - b.height) b.tree b.wf.1 hbne)
+      (Tree.Full_cast (by omega) a.tree a.wf.1)
+
+/-- A `join` of two non-empty collections sits at the maximum of the operand heights. -/
+private theorem join_height (combine : V → V → V) (a b : NatCollection L)
+    (ha : a.isEmpty = false) (hb : b.isEmpty = false) :
+    (join combine a b).height = max a.height b.height := by
+  unfold join
+  rw [dif_neg (by simpa using ha), dif_neg (by simpa using hb)]
+  by_cases hle : a.height ≤ b.height
+  · rw [dif_pos hle, normalizeAux_eq_of_TopProper _ _ _ (topProper_joinSpine_left combine a b ha hle)]
+    show a.height + (b.height - a.height) = max a.height b.height
+    omega
+  · rw [dif_neg hle, normalizeAux_eq_of_TopProper _ _ _
+        (topProper_joinSpine_left (fun x y => combine y x) b a hb (Nat.le_of_lt (Nat.not_le.mp hle)))]
+    show b.height + (a.height - b.height) = max a.height b.height
+    omega
+
+/-- Explicit structure of a `join` when the left operand is the shorter (`normalizeAux` is the
+identity on the canonical spine result). -/
+private theorem join_eq_le (combine : V → V → V) (a b : NatCollection L)
+    (ha : a.isEmpty = false) (hb : b.isEmpty = false) (hle : a.height ≤ b.height) :
+    join combine a b = ⟨a.height + (b.height - a.height),
+      Tree.joinSpine combine a.height (b.height - a.height) a.tree (Tree.cast (by omega) b.tree),
+      ⟨Tree.Full_joinSpine combine a.height (b.height - a.height) a.tree (Tree.cast (by omega) b.tree)
+          (by simpa using ha) a.wf.1 (Tree.Full_cast (by omega) b.tree b.wf.1),
+        topProper_joinSpine_left combine a b ha hle⟩⟩ := by
+  unfold join
+  rw [dif_neg (by simpa using ha), dif_neg (by simpa using hb), dif_pos hle]
+  exact normalizeAux_eq_of_TopProper _ _ _ (topProper_joinSpine_left combine a b ha hle)
+
+/-- Explicit structure of a `join` when the *right* operand is the shorter (the left taller).
+The combine is flipped, matching `join`'s definition. -/
+private theorem join_eq_gt (combine : V → V → V) (a b : NatCollection L)
+    (ha : a.isEmpty = false) (hb : b.isEmpty = false) (hgt : ¬ a.height ≤ b.height) :
+    join combine a b = ⟨b.height + (a.height - b.height),
+      Tree.joinSpine (fun x y => combine y x) b.height (a.height - b.height) b.tree
+        (Tree.cast (by omega) a.tree),
+      ⟨Tree.Full_joinSpine (fun x y => combine y x) b.height (a.height - b.height) b.tree
+          (Tree.cast (by omega) a.tree) (by simpa using hb) b.wf.1 (Tree.Full_cast (by omega) a.tree a.wf.1),
+        topProper_joinSpine_left (fun x y => combine y x) b a hb
+          (Nat.le_of_lt (Nat.not_le.mp hgt))⟩⟩ := by
+  unfold join
+  rw [dif_neg (by simpa using ha), dif_neg (by simpa using hb), dif_neg hgt]
+  exact normalizeAux_eq_of_TopProper _ _ _
+    (topProper_joinSpine_left (fun x y => combine y x) b a hb (Nat.le_of_lt (Nat.not_le.mp hgt)))
+
+/-- Lifting a `join` to a common height `H` equals the equal-height `joinEq` of both operands
+lifted to `H`. The structural heart of `join_assoc`. -/
+private theorem join_liftTo (combine : V → V → V) (a b : NatCollection L)
+    (ha : a.isEmpty = false) (hb : b.isEmpty = false) (H : Nat)
+    (hAH : a.height ≤ H) (hBH : b.height ≤ H) (hjH : (join combine a b).height ≤ H) :
+    (join combine a b).liftTo H hjH = Tree.joinEq combine H (a.liftTo H hAH) (b.liftTo H hBH) := by
+  by_cases hle : a.height ≤ b.height
+  · -- left operand shorter: descend `b`'s spine
+    simp only [join_eq_le combine a b ha hb hle]
+    simp only [NatCollection.liftTo]
+    rw [Tree.liftBy_joinSpine combine a.height (b.height - a.height) a.tree
+          (Tree.cast (by omega) b.tree) (H - (a.height + (b.height - a.height)))
+          (by simpa using ha)
+          ((Tree.isEmpty_cast (by omega) b.tree).trans (by simpa using hb))
+          a.wf.1 (Tree.Full_cast (by omega) b.tree b.wf.1),
+        Tree.joinEq_cast]
+    rw [Tree.cast_cast,
+        Tree.liftBy_congr_d (show (b.height - a.height) + (H - (a.height + (b.height - a.height)))
+          = H - a.height by omega) a.tree,
+        Tree.cast_cast,
+        Tree.liftBy_cast, Tree.cast_cast,
+        Tree.liftBy_congr_d (show H - (a.height + (b.height - a.height)) = H - b.height by omega)
+          b.tree,
+        Tree.cast_cast]
+  · -- left operand taller: descend `a`'s spine with flipped combine, then `joinEq_comm`
+    simp only [join_eq_gt combine a b ha hb hle]
+    simp only [NatCollection.liftTo]
+    rw [Tree.liftBy_joinSpine (fun x y => combine y x) b.height (a.height - b.height) b.tree
+          (Tree.cast (by omega) a.tree) (H - (b.height + (a.height - b.height)))
+          (by simpa using hb)
+          ((Tree.isEmpty_cast (by omega) a.tree).trans (by simpa using ha))
+          b.wf.1 (Tree.Full_cast (by omega) a.tree a.wf.1),
+        Tree.joinEq_cast,
+        Tree.joinEq_comm (fun x y => combine y x) combine (fun _ _ => rfl) H]
+    rw [Tree.cast_cast, Tree.liftBy_cast, Tree.cast_cast,
+        Tree.liftBy_congr_d (show H - (b.height + (a.height - b.height)) = H - a.height by omega)
+          a.tree,
+        Tree.cast_cast,
+        Tree.liftBy_congr_d (show (a.height - b.height) + (H - (b.height + (a.height - b.height)))
+          = H - b.height by omega) b.tree,
+        Tree.cast_cast]
+
+/-- Two collections of equal height that lift to the same tree at a common height `H` are equal.
+`liftTo` is injective (lifting wraps the tree under slot-0 singletons, which `liftBy_inj` undoes,
+and `cast` is invertible), so equal lifts force equal trees, hence equal collections. -/
+private theorem eq_of_liftTo_eq (a b : NatCollection L) (H : Nat)
+    (hAH : a.height ≤ H) (hBH : b.height ≤ H) (hh : a.height = b.height)
+    (hlift : a.liftTo H hAH = b.liftTo H hBH) : a = b := by
+  obtain ⟨ha, ta, wa⟩ := a
+  obtain ⟨hb, tb, wb⟩ := b
+  subst hh
+  simp only [NatCollection.liftTo] at hlift
+  have hcast : Tree.liftBy (H - ha) ta = Tree.liftBy (H - ha) tb := Tree.cast_inj _ _ _ hlift
+  have htt : ta = tb := Tree.liftBy_inj (H - ha) ta tb hcast
+  subst htt
+  rfl
+
+/-- **Associativity of `join`** for an associative `combine`. Both sides are lifted to the common
+height `H = max (max a.height b.height) e.height` and reduced — via `join_liftTo` — to nested
+equal-height `joinEq`s, where `Tree.joinEq_assoc` discharges the reassociation; injectivity of
+`liftTo` (`eq_of_liftTo_eq`) then transfers the equality back to the collections. -/
+theorem join_assoc (combine : V → V → V)
+    (hassoc : ∀ x y z, combine (combine x y) z = combine x (combine y z))
+    (a b e : NatCollection L) :
+    join combine (join combine a b) e = join combine a (join combine b e) := by
+  by_cases hae : a.isEmpty = true
+  · rw [eq_empty_of_isEmpty a hae, join_empty_left, join_empty_left]
+  · by_cases hbe : b.isEmpty = true
+    · rw [eq_empty_of_isEmpty b hbe, join_empty_right, join_empty_left]
+    · by_cases hee : e.isEmpty = true
+      · rw [eq_empty_of_isEmpty e hee, join_empty_right, join_empty_right]
+      · -- all three non-empty
+        simp only [Bool.not_eq_true] at hae hbe hee
+        have hab_ne : (join combine a b).isEmpty = false := isEmpty_join combine a b hae hbe
+        have hbe_ne : (join combine b e).isEmpty = false := isEmpty_join combine b e hbe hee
+        have hab_h : (join combine a b).height = max a.height b.height := join_height combine a b hae hbe
+        have hbe_h : (join combine b e).height = max b.height e.height := join_height combine b e hbe hee
+        have hL_h : (join combine (join combine a b) e).height = max (join combine a b).height e.height :=
+          join_height combine (join combine a b) e hab_ne hee
+        have hR_h : (join combine a (join combine b e)).height = max a.height (join combine b e).height :=
+          join_height combine a (join combine b e) hae hbe_ne
+        generalize hH : max (max a.height b.height) e.height = H
+        have h_a_H : a.height ≤ H := by omega
+        have h_b_H : b.height ≤ H := by omega
+        have h_e_H : e.height ≤ H := by omega
+        have h_ab_H : (join combine a b).height ≤ H := by omega
+        have h_be_H : (join combine b e).height ≤ H := by omega
+        have hLH : (join combine (join combine a b) e).height ≤ H := by omega
+        have hRH : (join combine a (join combine b e)).height ≤ H := by omega
+        refine eq_of_liftTo_eq _ _ H hLH hRH (by omega) ?_
+        rw [join_liftTo combine (join combine a b) e hab_ne hee H h_ab_H h_e_H hLH,
+            join_liftTo combine a b hae hbe H h_a_H h_b_H h_ab_H,
+            join_liftTo combine a (join combine b e) hae hbe_ne H h_a_H h_be_H hRH,
+            join_liftTo combine b e hbe hee H h_b_H h_e_H h_be_H,
+            Tree.joinEq_assoc combine hassoc H (a.liftTo H h_a_H) (b.liftTo H h_b_H)
+              (e.liftTo H h_e_H) (Full_liftTo a H h_a_H hae) (Full_liftTo b H h_b_H hbe)
+              (Full_liftTo e H h_e_H hee)]
+
 section Tests
 
 -- The canonical-shape invariant is a field, so it is available on *every* collection — and
