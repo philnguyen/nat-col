@@ -478,4 +478,53 @@ theorem requiredHeight_probe_le (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) 
     _ = 32^(h+1) * (1 + s.toNat) := by rw [Nat.mul_comm]
     _ ≤ 32^(h+1) * 32 := Nat.mul_le_mul (Nat.le_refl _) (by omega)
 
+/-- A `chunk` equality is equality of the underlying base-32 digit. -/
+private theorem digit_eq_of_chunk_eq {j k i : Nat} (h : chunk j i = chunk k i) :
+    j / 32^i % 32 = k / 32^i % 32 := by
+  rw [chunk_eq_div_mod, chunk_eq_div_mod] at h
+  have hj : j / 32^i % 32 < 32 := Nat.mod_lt _ (by decide)
+  have hk : k / 32^i % 32 < 32 := Nat.mod_lt _ (by decide)
+  have h' := congrArg UInt32.toNat h
+  rwa [UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hj (by decide)),
+       UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hk (by decide))] at h'
+
+/-- Two keys whose chunks agree on every level `0..h`, both small enough for a height-`h` tree,
+are equal. The bridge from a `get?`-after-`insert` lookup matching at the inserted key (where the
+lookup paths coincide chunk-by-chunk) back to key equality. -/
+theorem eq_of_chunk_eq : (h : Nat) → (j k : Nat) → requiredHeight j ≤ h → requiredHeight k ≤ h →
+    (∀ i, i ≤ h → chunk j i = chunk k i) → j = k
+  | 0, j, k, hj, hk, hc => by
+      have hjlt : j < 32 := by
+        rcases Nat.lt_or_ge j 32 with h' | h'
+        · exact h'
+        · rw [requiredHeight, if_neg (show ¬ j < 32 by omega)] at hj; omega
+      have hklt : k < 32 := by
+        rcases Nat.lt_or_ge k 32 with h' | h'
+        · exact h'
+        · rw [requiredHeight, if_neg (show ¬ k < 32 by omega)] at hk; omega
+      have hd := digit_eq_of_chunk_eq (hc 0 (Nat.le_refl 0))
+      rwa [Nat.pow_zero, Nat.div_one, Nat.div_one, Nat.mod_eq_of_lt hjlt, Nat.mod_eq_of_lt hklt] at hd
+  | h + 1, j, k, hj, hk, hc => by
+      have hmod : j % 32 = k % 32 := by
+        have hd := digit_eq_of_chunk_eq (hc 0 (Nat.zero_le _))
+        rwa [Nat.pow_zero, Nat.div_one, Nat.div_one] at hd
+      have hdiv : j / 32 = k / 32 := by
+        refine eq_of_chunk_eq h (j / 32) (k / 32) ?_ ?_ ?_
+        · apply requiredHeight_le_of_lt_pow
+          have hjp : j < 32^(h+1) * 32 := by
+            have h1 := lt_pow_of_requiredHeight_le hj; rwa [Nat.pow_succ] at h1
+          exact (Nat.div_lt_iff_lt_mul (by decide)).mpr hjp
+        · apply requiredHeight_le_of_lt_pow
+          have hkp : k < 32^(h+1) * 32 := by
+            have h1 := lt_pow_of_requiredHeight_le hk; rwa [Nat.pow_succ] at h1
+          exact (Nat.div_lt_iff_lt_mul (by decide)).mpr hkp
+        · intro i hi
+          have e : ∀ a : Nat, chunk (a / 32) i = chunk a (i + 1) := by
+            intro a
+            rw [chunk_eq_div_mod, chunk_eq_div_mod, Nat.div_div_eq_div_mul,
+                show (32 : Nat) * 32^i = 32^(i+1) from by rw [Nat.mul_comm, ← Nat.pow_succ]]
+          rw [e j, e k]
+          exact hc (i + 1) (by omega)
+      omega
+
 end NatCol

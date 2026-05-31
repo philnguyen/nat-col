@@ -58,6 +58,15 @@ instance : LeafOps UInt32 Unit where
         = optVmeet _ (if testBit a i then some () else none) (if testBit b i then some () else none)
     rw [htb]
     by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;> simp [ha, hb, optVmeet]
+  get?_insert l i j v hi hj := by
+    cases v
+    show (if testBit (setBit l i) j then some () else none)
+        = if j = i then some () else (if testBit l j then some () else none)
+    rw [testBit_setBit l i j hi hj]
+    by_cases hji : j = i
+    · subst hji
+      simp
+    · rw [if_neg hji, beq_eq_false_iff_ne.mpr (fun hc => hji hc.symm), Bool.or_false]
   get?_ext a b h := by
     apply eq_of_testBit_eq
     intro i hi
@@ -366,10 +375,34 @@ no side conditions are needed. -/
 theorem subset_antisymm {s t : NatSet} (hst : s ⊆ t) (hts : t ⊆ s) : s = t :=
   NatCollection.restricts_antisymm (fun _ _ => true) (fun _ => rfl) (fun _ _ _ _ => rfl) s t hst hts
 
+/-- A freshly-inserted element is a member: `k ∈ s.insert k`. -/
+@[simp]
+theorem mem_insert_self (s : NatSet) (k : Nat) : k ∈ s.insert k := by
+  show (NatCollection.get? (NatCollection.insert s k ()) k).isSome = true
+  rw [NatCollection.get?_insert s k () k]
+  simp
+
+/-- Inserting an element already in the set returns the same set. -/
+theorem insert_of_mem {s : NatSet} {k : Nat} (h : k ∈ s) : s.insert k = s := by
+  have hk : NatCollection.get? s k = some () := by
+    have hb : (NatCollection.get? s k).isSome = true := h
+    cases hg : NatCollection.get? s k with
+    | none => rw [hg] at hb; exact absurd hb (by decide)
+    | some u => exact congrArg some (Subsingleton.elim u ())
+  apply NatCollection.ext_get?
+  intro j
+  show NatCollection.get? (NatCollection.insert s k ()) j = NatCollection.get? s j
+  rw [NatCollection.get?_insert s k () j]
+  by_cases hj : j = k
+  · rw [if_pos hj, hj, hk]
+  · rw [if_neg hj]
+
 end NatSet
 
 -- subset transitivity and anti-symmetry as universally-quantified theorems (no side conditions)
 example {s t u : NatSet} : s ⊆ t → t ⊆ u → s ⊆ u := NatSet.subset_trans
 example {s t : NatSet} : s ⊆ t → t ⊆ s → s = t := NatSet.subset_antisymm
+-- inserting an element already present is a no-op
+example (s : NatSet) (k : Nat) (h : k ∈ s) : s.insert k = s := NatSet.insert_of_mem h
 
 end NatCol

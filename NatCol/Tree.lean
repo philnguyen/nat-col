@@ -94,6 +94,11 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   on in-range slots (`< 32`); leaf `get?` only ever reads `chunk`s, which are. -/
   get?_meet : ∀ (c : V → V → V) (a b : L) (i : UInt32), i < 32 →
     get? (meet c a b) i = optVmeet c (get? a i) (get? b i)
+  /-- `get?` reads an `insert` pointwise: the inserted slot reads the new value, every other slot
+  is unchanged. Stated on in-range slots (`< 32`); leaf `get?`/`insert` only ever touch `chunk`s,
+  which are. The leaf base case of `Tree.get?_insert`. -/
+  get?_insert : ∀ (l : L) (i j : UInt32) (v : V), i < 32 → j < 32 →
+    get? (insert l i v) j = if j = i then some v else get? l j
   /-- A leaf is determined by its `get?` at in-range slots. The leaf base case of `Tree.ext`. -/
   get?_ext : ∀ (a b : L), (∀ i, i < 32 → get? a i = get? b i) → a = b
   /-- A non-empty leaf has a present slot (`< 32`). The leaf base case of `Tree.exists_get?`. -/
@@ -727,6 +732,106 @@ theorem get?_meetEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b : Tree L 
           by_cases hemp : Tree.isEmpty h (meetEq c h ca cb) = true
           · rw [if_pos hemp, get?_eq_none_of_isEmpty k h _ hemp]
           · rw [if_neg hemp]
+
+/-- `get?` of a singleton tree: the queried key reads the stored value exactly when it agrees with
+the stored key on every chunk `0..h` (so their lookup paths coincide), otherwise `none`. -/
+theorem get?_singleton (k : Nat) (v : V) (j : Nat) : (h : Nat) →
+    Tree.get? j h (Tree.singleton k v h : Tree L h)
+      = if (∀ i, i ≤ h → chunk j i = chunk k i) then some v else none
+  | 0 => by
+      simp only [Tree.singleton, Tree.get?]
+      rw [LeafOps.get?_insert (LeafOps.empty : L) (chunk k 0) (chunk j 0) v (chunk_lt _ _) (chunk_lt _ _),
+          LeafOps.get?_empty]
+      by_cases hc : chunk j 0 = chunk k 0
+      · have hall : ∀ i, i ≤ 0 → chunk j i = chunk k i := fun i hi => by rw [Nat.le_zero.mp hi]; exact hc
+        rw [if_pos hc, if_pos hall]
+      · rw [if_neg hc, if_neg (fun hall => hc (hall 0 (Nat.le_refl 0)))]
+  | h + 1 => by
+      simp only [Tree.singleton]
+      rw [get?_succ,
+          Node.get?_singleton (chunk k (h+1)) (Tree.singleton k v h) (chunk j (h+1))
+            (chunk_lt _ _) (chunk_lt _ _)]
+      by_cases hcj : chunk j (h+1) = chunk k (h+1)
+      · rw [if_pos hcj]
+        show Tree.get? j h (Tree.singleton k v h) = _
+        rw [get?_singleton k v j h]
+        by_cases hall : ∀ i, i ≤ h → chunk j i = chunk k i
+        · have hbig : ∀ i, i ≤ h+1 → chunk j i = chunk k i := by
+            intro i hi
+            rcases Nat.lt_or_eq_of_le hi with h' | h'
+            · exact hall i (Nat.le_of_lt_succ h')
+            · subst h'; exact hcj
+          rw [if_pos hall, if_pos hbig]
+        · have hneg : ¬ (∀ i, i ≤ h+1 → chunk j i = chunk k i) :=
+            fun hbig => hall (fun i hi => hbig i (Nat.le_succ_of_le hi))
+          rw [if_neg hall, if_neg hneg]
+      · rw [if_neg hcj]
+        show (none : Option V) = if (∀ i, i ≤ h+1 → chunk j i = chunk k i) then some v else none
+        rw [if_neg (fun hbig => hcj (hbig (h+1) (Nat.le_refl _)))]
+
+/-- `get?` of an `insert`: the queried key reads the inserted value exactly when it agrees with the
+inserted key on every chunk `0..h` (its lookup path coincides), otherwise the tree is read
+unchanged. -/
+theorem get?_insert (k : Nat) (v : V) (j : Nat) : (h : Nat) → (t : Tree L h) →
+    Tree.get? j h (Tree.insert k v h t)
+      = if (∀ i, i ≤ h → chunk j i = chunk k i) then some v else Tree.get? j h t
+  | 0, l => by
+      simp only [Tree.insert, Tree.get?]
+      rw [LeafOps.get?_insert l (chunk k 0) (chunk j 0) v (chunk_lt _ _) (chunk_lt _ _)]
+      by_cases hc : chunk j 0 = chunk k 0
+      · have hall : ∀ i, i ≤ 0 → chunk j i = chunk k i := fun i hi => by rw [Nat.le_zero.mp hi]; exact hc
+        rw [if_pos hc, if_pos hall]
+      · rw [if_neg hc, if_neg (fun hall => hc (hall 0 (Nat.le_refl 0)))]
+  | h + 1, n => by
+      cases hck : Node.get? n (chunk k (h+1)) with
+      | some child =>
+          have halt : Tree.insert k v (h+1) n
+              = Node.insert n (chunk k (h+1)) (Tree.insert k v h child) := by
+            simp only [Tree.insert]
+            exact Node.alter_eq_insert n (chunk k (h+1)) _ (Tree.insert k v h child) (by rw [hck])
+          rw [get?_succ, halt,
+              Node.get?_insert n (chunk k (h+1)) (Tree.insert k v h child) (chunk j (h+1))
+                (chunk_lt _ _) (chunk_lt _ _)]
+          by_cases hcj : chunk j (h+1) = chunk k (h+1)
+          · rw [if_pos hcj, get?_succ_some j h n child (by rw [hcj]; exact hck)]
+            show Tree.get? j h (Tree.insert k v h child) = _
+            rw [get?_insert k v j h child]
+            by_cases hall : ∀ i, i ≤ h → chunk j i = chunk k i
+            · have hbig : ∀ i, i ≤ h+1 → chunk j i = chunk k i := by
+                intro i hi
+                rcases Nat.lt_or_eq_of_le hi with h' | h'
+                · exact hall i (Nat.le_of_lt_succ h')
+                · subst h'; exact hcj
+              rw [if_pos hall, if_pos hbig]
+            · have hneg : ¬ (∀ i, i ≤ h+1 → chunk j i = chunk k i) :=
+                fun hbig => hall (fun i hi => hbig i (Nat.le_succ_of_le hi))
+              rw [if_neg hall, if_neg hneg]
+          · rw [if_neg hcj, ← get?_succ j h n,
+                if_neg (fun hbig => hcj (hbig (h+1) (Nat.le_refl _)))]
+      | none =>
+          have halt : Tree.insert k v (h+1) n
+              = Node.insert n (chunk k (h+1)) (Tree.singleton k v h) := by
+            simp only [Tree.insert]
+            exact Node.alter_eq_insert n (chunk k (h+1)) _ (Tree.singleton k v h) (by rw [hck])
+          rw [get?_succ, halt,
+              Node.get?_insert n (chunk k (h+1)) (Tree.singleton k v h) (chunk j (h+1))
+                (chunk_lt _ _) (chunk_lt _ _)]
+          by_cases hcj : chunk j (h+1) = chunk k (h+1)
+          · rw [if_pos hcj, get?_succ_none j h n (by rw [hcj]; exact hck)]
+            show Tree.get? j h (Tree.singleton k v h) = _
+            rw [get?_singleton k v j h]
+            by_cases hall : ∀ i, i ≤ h → chunk j i = chunk k i
+            · have hbig : ∀ i, i ≤ h+1 → chunk j i = chunk k i := by
+                intro i hi
+                rcases Nat.lt_or_eq_of_le hi with h' | h'
+                · exact hall i (Nat.le_of_lt_succ h')
+                · subst h'; exact hcj
+              rw [if_pos hall, if_pos hbig]
+            · have hneg : ¬ (∀ i, i ≤ h+1 → chunk j i = chunk k i) :=
+                fun hbig => hall (fun i hi => hbig i (Nat.le_succ_of_le hi))
+              rw [if_neg hall, if_neg hneg]
+          · rw [if_neg hcj, ← get?_succ j h n,
+                if_neg (fun hbig => hcj (hbig (h+1) (Nat.le_refl _)))]
 
 /-- `get?` of a lift: a key in range reads the original tree; a key needing more height than the
 slot-0 spine provides reads `none`. -/

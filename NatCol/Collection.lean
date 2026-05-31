@@ -720,6 +720,48 @@ theorem get?_meet (combine : V → V → V) (a b : NatCollection L) (k : Nat) :
               get?_of_gt b k (by omega)]
           cases a.get? k <;> rfl
 
+/-- **`get?` of an `insert`**: the inserted key reads the new value; every other key is read
+unchanged. The denotational specification of `insert` — inserting an already-present entry, and
+looking up a freshly-inserted entry, both follow from it (via `ext_get?` for the former). -/
+theorem get?_insert (c : NatCollection L) (k : Nat) (v : V) (j : Nat) :
+    (c.insert k v).get? j = if j = k then some v else c.get? j := by
+  unfold insert
+  split
+  · rename_i hemp
+    rw [get?_normalizeAux, get?_eq_none_of_isEmpty c hemp j,
+        Tree.get?_singleton k v j (requiredHeight k)]
+    by_cases hjk : j = k
+    · rw [if_pos hjk,
+          if_neg (show ¬ requiredHeight j > requiredHeight k by rw [hjk]; omega),
+          if_pos (show (∀ i, i ≤ requiredHeight k → chunk j i = chunk k i) from fun i _ => by rw [hjk])]
+    · rw [if_neg hjk]
+      by_cases hjh : requiredHeight j > requiredHeight k
+      · rw [if_pos hjh]
+      · rw [if_neg hjh,
+            if_neg (show ¬ (∀ i, i ≤ requiredHeight k → chunk j i = chunk k i) from
+              fun hall => hjk (eq_of_chunk_eq (requiredHeight k) j k (by omega) (Nat.le_refl _) hall))]
+  · rename_i hemp
+    simp only []
+    rw [get?_normalizeAux]
+    by_cases hjk : j = k
+    · rw [if_pos hjk,
+          if_neg (show ¬ requiredHeight j > max c.height (requiredHeight k) by rw [hjk]; omega),
+          Tree.get?_insert k v j (max c.height (requiredHeight k)),
+          if_pos (show (∀ i, i ≤ max c.height (requiredHeight k) → chunk j i = chunk k i) from
+            fun i _ => by rw [hjk])]
+    · rw [if_neg hjk]
+      by_cases hjH : requiredHeight j > max c.height (requiredHeight k)
+      · rw [if_pos hjH, get?_of_gt c j (by omega)]
+      · rw [if_neg hjH,
+            Tree.get?_insert k v j (max c.height (requiredHeight k)),
+            if_neg (show ¬ (∀ i, i ≤ max c.height (requiredHeight k) → chunk j i = chunk k i) from
+              fun hall => hjk (eq_of_chunk_eq (max c.height (requiredHeight k)) j k (by omega) (by omega) hall))]
+        simp only [NatCollection.liftTo, Tree.get?_cast]
+        rw [Tree.get?_liftBy c.height c.tree j (max c.height (requiredHeight k) - c.height) (by omega)]
+        by_cases hjc : requiredHeight j ≤ c.height
+        · rw [if_pos hjc, ← get?_of_le c j hjc]
+        · rw [if_neg hjc, ← get?_of_gt c j (by omega)]
+
 /-- **Collection extensionality**: two canonical collections agreeing on every `get?` are equal.
 Emptiness is detected by `get?` (`exists_get?_of_ne_empty`); for non-empty collections the height
 is pinned by the deepest present key (`exists_get?_at_height`), and `Tree.ext` recovers the tree. -/

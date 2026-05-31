@@ -46,6 +46,7 @@ instance {α : Type u} : LeafOps (Node α) α where
     show Node.get? (Node.meet (fun x y => some (c x y)) a b) i = optVmeet c (Node.get? a i) (Node.get? b i)
     rw [Node.get?_meet (fun x y => some (c x y)) a b i hi]
     cases Node.get? a i <;> cases Node.get? b i <;> rfl
+  get?_insert l i j v hi hj := Node.get?_insert l i v j hi hj
   get?_ext a b h := Node.ext h
   exists_get?_of_ne_empty n h := Node.exists_get?_of_isEmpty_false n h
   get?_restricts rel _ a b := Node.restricts_iff rel a b
@@ -320,6 +321,29 @@ theorem restricts_antisymm (rel : α → α → Bool) (hrefl : ∀ x, rel x x = 
     m₁.restricts rel m₂ = true → m₂.restricts rel m₁ = true → m₁ = m₂ :=
   NatCollection.restricts_antisymm rel hrefl hantisymm m₁ m₂
 
+/-- Looking up a freshly-inserted entry returns the inserted value. -/
+@[simp]
+theorem get?_insert_self (m : NatMap α) (k : Nat) (v : α) : (m.insert k v).get? k = some v := by
+  show NatCollection.get? (NatCollection.insert m k v) k = some v
+  rw [NatCollection.get?_insert m k v k, if_pos rfl]
+
+/-- Looking up any key after an insert: the inserted key reads the new value, every other key is
+read unchanged. -/
+theorem get?_insert (m : NatMap α) (k : Nat) (v : α) (j : Nat) :
+    (m.insert k v).get? j = if j = k then some v else m.get? j :=
+  NatCollection.get?_insert m k v j
+
+/-- Inserting an entry already present (key `k` already mapped to `v`) returns the same map. -/
+theorem insert_of_get? {m : NatMap α} {k : Nat} {v : α} (h : m.get? k = some v) :
+    m.insert k v = m := by
+  apply NatCollection.ext_get?
+  intro j
+  show NatCollection.get? (NatCollection.insert m k v) j = NatCollection.get? m j
+  rw [NatCollection.get?_insert m k v j]
+  by_cases hj : j = k
+  · rw [if_pos hj, hj]; exact h.symm
+  · rw [if_neg hj]
+
 end NatMap
 
 -- restricts transitivity as a theorem, for any preorder `rel` (here left abstract)
@@ -332,5 +356,10 @@ example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true)
     (ha : ∀ x y, rel x y = true → rel y x = true → x = y) (m₁ m₂ : NatMap Nat) :
     m₁.restricts rel m₂ = true → m₂.restricts rel m₁ = true → m₁ = m₂ :=
   NatMap.restricts_antisymm rel hr ha m₁ m₂
+-- looking up a just-inserted key returns the inserted value
+example (m : NatMap Nat) (k v : Nat) : (m.insert k v).get? k = some v := NatMap.get?_insert_self m k v
+-- inserting an entry already present is a no-op
+example (m : NatMap Nat) (k v : Nat) (h : m.get? k = some v) : m.insert k v = m :=
+  NatMap.insert_of_get? h
 
 end NatCol
