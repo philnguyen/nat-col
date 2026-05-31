@@ -12,6 +12,9 @@ Lattice operations bottom out in plain bitwise `|||` / `&&&` at the leaf.
 -/
 
 namespace NatCol
+----------------------------------------------------------------------------------------------------
+-- Implementation
+----------------------------------------------------------------------------------------------------
 
 /-- Leaf operations for sets: a `UInt32` is a 32-element bitset; the value type is `Unit`. -/
 instance : LeafOps UInt32 Unit where
@@ -149,67 +152,6 @@ def toList (s : NatSet) : List Nat := (NatCollection.toList s).map Prod.fst
 /-- Build a set from a list of elements. -/
 def ofList (l : List Nat) : NatSet := l.foldl (fun s k => s.insert k) empty
 
-/-- The empty set is a left identity of `∪` (union). -/
-@[simp, grind =]
-theorem union_empty_left (s : NatSet) : NatSet.empty ∪ s = s :=
-  NatCollection.join_empty_left (fun _ _ => ()) s
-
-/-- The empty set is a right identity of `∪` (union). -/
-@[simp, grind =]
-theorem union_empty_right (s : NatSet) : s ∪ NatSet.empty = s :=
-  NatCollection.join_empty_right (fun _ _ => ()) s
-
-/-- Union is commutative. (The set `combine` is constantly `()`, so flipping it is a no-op and the
-flip law `NatCollection.join_comm` gives unconditional commutativity.) -/
-theorem union_comm (s t : NatSet) : s ∪ t = t ∪ s :=
-  NatCollection.join_comm (fun _ _ => ()) s t
-
-/-- Union is associative. (The set `combine` is constantly `()`, which is trivially associative, so
-`NatCollection.join_assoc` applies with no side condition.) -/
-theorem union_assoc (s t u : NatSet) : (s ∪ t) ∪ u = s ∪ (t ∪ u) :=
-  NatCollection.join_assoc (fun _ _ => ()) (fun _ _ _ => rfl) s t u
-
-/-- The empty set is a left annihilator of `∩` (intersection). -/
-@[simp, grind =]
-theorem inter_empty_left (s : NatSet) : NatSet.empty ∩ s = NatSet.empty :=
-  NatCollection.meet_empty_left (fun _ _ => ()) s
-
-/-- The empty set is a right annihilator of `∩` (intersection). -/
-@[simp, grind =]
-theorem inter_empty_right (s : NatSet) : s ∩ NatSet.empty = NatSet.empty :=
-  NatCollection.meet_empty_right (fun _ _ => ()) s
-
-/-- Intersection is commutative. (The set `combine` is constantly `()`, so flipping it is a no-op
-and the flip law `NatCollection.meet_comm` gives unconditional commutativity.) -/
-theorem inter_comm (s t : NatSet) : s ∩ t = t ∩ s :=
-  NatCollection.meet_comm (fun _ _ => ()) s t
-
-/-- Intersection is associative. (The set `combine` is constantly `()`, which is trivially
-associative, so `NatCollection.meet_assoc` applies with no side condition.) -/
-theorem inter_assoc (s t u : NatSet) : (s ∩ t) ∩ u = s ∩ (t ∩ u) :=
-  NatCollection.meet_assoc (fun _ _ => ()) (fun _ _ _ => rfl) s t u
-
-/-- The empty set is a subset of (restricts) every set. -/
-@[simp]
-theorem subset_empty_left (s : NatSet) : NatSet.empty ⊆ s :=
-  NatCollection.restricts_empty_left (fun _ _ => true) s
-
-/-- Subset is reflexive: every set is a subset of itself. -/
-@[simp]
-theorem subset_refl (s : NatSet) : s ⊆ s :=
-  NatCollection.restricts_refl (fun _ _ => true) (fun _ => rfl) s
-
-/-- Subset is transitive: `s ⊆ t` and `t ⊆ u` give `s ⊆ u`. The set predicate `fun _ _ => true`
-is trivially reflexive and transitive, so no side conditions are needed. -/
-theorem subset_trans {s t u : NatSet} (hst : s ⊆ t) (htu : t ⊆ u) : s ⊆ u :=
-  NatCollection.restricts_trans (fun _ _ => true) (fun _ => rfl) (fun _ _ _ _ _ => rfl) s t u hst htu
-
-/-- Subset is anti-symmetric: `s ⊆ t` and `t ⊆ s` force `s = t`. The set predicate
-`fun _ _ => true` is trivially reflexive and (since `Unit` is a subsingleton) anti-symmetric, so
-no side conditions are needed. -/
-theorem subset_antisymm {s t : NatSet} (hst : s ⊆ t) (hts : t ⊆ s) : s = t :=
-  NatCollection.restricts_antisymm (fun _ _ => true) (fun _ => rfl) (fun _ _ _ _ => rfl) s t hst hts
-
 end NatSet
 
 /-! ## Tests -/
@@ -317,9 +259,6 @@ private def c : NatSet := NatSet.ofList [3, 40, 2000]
 -- subset is transitive and antisymmetric (concretely)
 #guard (NatSet.ofList [40]) ⊆ a ∧ a ⊆ (a ∪ b) ∧ (NatSet.ofList [40]) ⊆ (a ∪ b)
 #guard a ⊆ b → b ⊆ a → a = b  -- antisymmetry
--- subset transitivity and anti-symmetry as universally-quantified theorems (no side conditions)
-example {s t u : NatSet} : s ⊆ t → t ⊆ u → s ⊆ u := NatSet.subset_trans
-example {s t : NatSet} : s ⊆ t → t ⊆ s → s = t := NatSet.subset_antisymm
 
 /-! ### Height growth then shrink round-trips back to a canonical value -/
 
@@ -359,5 +298,78 @@ example : DecidableEq NatSet := inferInstance
 #guard hash (NatSet.ofList [1, 1000] |>.erase 1000) == hash (NatSet.ofList [1])
 
 end Tests
+
+----------------------------------------------------------------------------------------------------
+-- Theorems
+----------------------------------------------------------------------------------------------------
+
+namespace NatSet
+
+/-- The empty set is a left identity of `∪` (union). -/
+@[simp, grind =]
+theorem union_empty_left (s : NatSet) : NatSet.empty ∪ s = s :=
+  NatCollection.join_empty_left (fun _ _ => ()) s
+
+/-- The empty set is a right identity of `∪` (union). -/
+@[simp, grind =]
+theorem union_empty_right (s : NatSet) : s ∪ NatSet.empty = s :=
+  NatCollection.join_empty_right (fun _ _ => ()) s
+
+/-- Union is commutative. (The set `combine` is constantly `()`, so flipping it is a no-op and the
+flip law `NatCollection.join_comm` gives unconditional commutativity.) -/
+theorem union_comm (s t : NatSet) : s ∪ t = t ∪ s :=
+  NatCollection.join_comm (fun _ _ => ()) s t
+
+/-- Union is associative. (The set `combine` is constantly `()`, which is trivially associative, so
+`NatCollection.join_assoc` applies with no side condition.) -/
+theorem union_assoc (s t u : NatSet) : (s ∪ t) ∪ u = s ∪ (t ∪ u) :=
+  NatCollection.join_assoc (fun _ _ => ()) (fun _ _ _ => rfl) s t u
+
+/-- The empty set is a left annihilator of `∩` (intersection). -/
+@[simp, grind =]
+theorem inter_empty_left (s : NatSet) : NatSet.empty ∩ s = NatSet.empty :=
+  NatCollection.meet_empty_left (fun _ _ => ()) s
+
+/-- The empty set is a right annihilator of `∩` (intersection). -/
+@[simp, grind =]
+theorem inter_empty_right (s : NatSet) : s ∩ NatSet.empty = NatSet.empty :=
+  NatCollection.meet_empty_right (fun _ _ => ()) s
+
+/-- Intersection is commutative. (The set `combine` is constantly `()`, so flipping it is a no-op
+and the flip law `NatCollection.meet_comm` gives unconditional commutativity.) -/
+theorem inter_comm (s t : NatSet) : s ∩ t = t ∩ s :=
+  NatCollection.meet_comm (fun _ _ => ()) s t
+
+/-- Intersection is associative. (The set `combine` is constantly `()`, which is trivially
+associative, so `NatCollection.meet_assoc` applies with no side condition.) -/
+theorem inter_assoc (s t u : NatSet) : (s ∩ t) ∩ u = s ∩ (t ∩ u) :=
+  NatCollection.meet_assoc (fun _ _ => ()) (fun _ _ _ => rfl) s t u
+
+/-- The empty set is a subset of (restricts) every set. -/
+@[simp]
+theorem subset_empty_left (s : NatSet) : NatSet.empty ⊆ s :=
+  NatCollection.restricts_empty_left (fun _ _ => true) s
+
+/-- Subset is reflexive: every set is a subset of itself. -/
+@[simp]
+theorem subset_refl (s : NatSet) : s ⊆ s :=
+  NatCollection.restricts_refl (fun _ _ => true) (fun _ => rfl) s
+
+/-- Subset is transitive: `s ⊆ t` and `t ⊆ u` give `s ⊆ u`. The set predicate `fun _ _ => true`
+is trivially reflexive and transitive, so no side conditions are needed. -/
+theorem subset_trans {s t u : NatSet} (hst : s ⊆ t) (htu : t ⊆ u) : s ⊆ u :=
+  NatCollection.restricts_trans (fun _ _ => true) (fun _ => rfl) (fun _ _ _ _ _ => rfl) s t u hst htu
+
+/-- Subset is anti-symmetric: `s ⊆ t` and `t ⊆ s` force `s = t`. The set predicate
+`fun _ _ => true` is trivially reflexive and (since `Unit` is a subsingleton) anti-symmetric, so
+no side conditions are needed. -/
+theorem subset_antisymm {s t : NatSet} (hst : s ⊆ t) (hts : t ⊆ s) : s = t :=
+  NatCollection.restricts_antisymm (fun _ _ => true) (fun _ => rfl) (fun _ _ _ _ => rfl) s t hst hts
+
+end NatSet
+
+-- subset transitivity and anti-symmetry as universally-quantified theorems (no side conditions)
+example {s t u : NatSet} : s ⊆ t → t ⊆ u → s ⊆ u := NatSet.subset_trans
+example {s t : NatSet} : s ⊆ t → t ⊆ s → s = t := NatSet.subset_antisymm
 
 end NatCol

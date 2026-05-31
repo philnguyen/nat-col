@@ -16,6 +16,10 @@ every operation. They are discharged by `bv_decide` on the `UInt32`-valued core
 
 namespace NatCol
 
+----------------------------------------------------------------------------------------------------
+-- Implementation
+----------------------------------------------------------------------------------------------------
+
 /-- Population-count core: the classic SWAR bit-twiddling algorithm — counts bits within
 each pair, folds the partial sums up through 4-bit and 8-bit groups, then sums the four
 byte counts with one multiply, all in a fixed handful of shifts/masks rather than a
@@ -69,6 +73,34 @@ def arrayIndex (mask i : UInt32) : Nat := popCount (mask &&& lowerMask i)
 #guard arrayIndex 0b10110 1 == 0
 #guard arrayIndex 0b10110 2 == 1
 #guard arrayIndex 0b10110 4 == 2
+
+/-- The 5-bit chunk of `k` at the given `level` (0 = least significant chunk). -/
+def chunk (k : Nat) (level : Nat) : UInt32 := UInt32.ofNat ((k >>> (5 * level)) &&& 31)
+
+#guard chunk 42 0 == 10   -- 42 = 0b101010 -> low 5 bits 01010 = 10
+#guard chunk 42 1 == 1    -- next chunk = 1
+#guard chunk 31 0 == 31
+#guard chunk 32 0 == 0
+#guard chunk 32 1 == 1
+
+/-- Minimal trie height able to hold key `k`: the index of `k`'s highest non-zero
+chunk. A tree of `height h` holds exactly keys `< 32^(h+1)`. -/
+def requiredHeight (k : Nat) : Nat :=
+  if k < 32 then 0 else 1 + requiredHeight (k / 32)
+termination_by k
+decreasing_by omega
+
+#guard requiredHeight 0 == 0
+#guard requiredHeight 31 == 0
+#guard requiredHeight 32 == 1
+#guard requiredHeight 1023 == 1
+#guard requiredHeight 1024 == 2
+#guard requiredHeight 1048575 == 3   -- 32^4 - 1
+#guard requiredHeight 1048576 == 4   -- 32^4
+
+----------------------------------------------------------------------------------------------------
+-- Theorems
+----------------------------------------------------------------------------------------------------
 
 /-! ### Lemmas backing the `Node` compactness invariant
 
@@ -146,30 +178,6 @@ theorem arrayIndex_lt (m i : UInt32) (h : testBit m i = true) :
 
 /-- No bit of `0` is set. -/
 theorem testBit_zero (i : UInt32) : testBit 0 i = false := by unfold testBit; bv_decide
-
-/-- The 5-bit chunk of `k` at the given `level` (0 = least significant chunk). -/
-def chunk (k : Nat) (level : Nat) : UInt32 := UInt32.ofNat ((k >>> (5 * level)) &&& 31)
-
-#guard chunk 42 0 == 10   -- 42 = 0b101010 -> low 5 bits 01010 = 10
-#guard chunk 42 1 == 1    -- next chunk = 1
-#guard chunk 31 0 == 31
-#guard chunk 32 0 == 0
-#guard chunk 32 1 == 1
-
-/-- Minimal trie height able to hold key `k`: the index of `k`'s highest non-zero
-chunk. A tree of `height h` holds exactly keys `< 32^(h+1)`. -/
-def requiredHeight (k : Nat) : Nat :=
-  if k < 32 then 0 else 1 + requiredHeight (k / 32)
-termination_by k
-decreasing_by omega
-
-#guard requiredHeight 0 == 0
-#guard requiredHeight 31 == 0
-#guard requiredHeight 32 == 1
-#guard requiredHeight 1023 == 1
-#guard requiredHeight 1024 == 2
-#guard requiredHeight 1048575 == 3   -- 32^4 - 1
-#guard requiredHeight 1048576 == 4   -- 32^4
 
 /-! ### Mask lemmas backing the `NatCollection` canonical-shape invariant
 

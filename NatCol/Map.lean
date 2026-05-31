@@ -12,6 +12,9 @@ Like `NatSet`, `NatMap` is a `def` so dot-notation resolves to these wrappers.
 -/
 
 namespace NatCol
+----------------------------------------------------------------------------------------------------
+-- Implementation
+----------------------------------------------------------------------------------------------------
 
 /-- Leaf operations for maps: a `Node α` is a sparse 32-slot map; the value type is `α`.
 The lattice callbacks always return `some` — values never prune; empty *subtrees* are
@@ -92,98 +95,6 @@ def ofList (l : List (Nat × α)) : NatMap α := NatCollection.ofList l
 instance : Membership Nat (NatMap α) := ⟨fun m k => m.contains k = true⟩
 instance (k : Nat) (m : NatMap α) : Decidable (k ∈ m) :=
   inferInstanceAs (Decidable (m.contains k = true))
-
-/-- The empty map is a left identity of `join`. -/
-@[simp, grind =]
-theorem join_empty_left (combine : α → α → α) (m : NatMap α) :
-    NatMap.empty.join combine m = m := NatCollection.join_empty_left combine m
-
-/-- The empty map is a right identity of `join`. -/
-@[simp, grind =]
-theorem join_empty_right (combine : α → α → α) (m : NatMap α) :
-    m.join combine NatMap.empty = m := NatCollection.join_empty_right combine m
-
-/-- `join` commutes when the combine is flipped: swapping the operands swaps the `combine`
-arguments. (Values at coinciding keys are resolved `combine left right`, so the order matters
-unless `combine` is symmetric — see `join_comm_of_comm`.) -/
-theorem join_comm (combine : α → α → α) (m₁ m₂ : NatMap α) :
-    m₁.join combine m₂ = m₂.join (fun x y => combine y x) m₁ :=
-  NatCollection.join_comm combine m₁ m₂
-
-/-- `join` is commutative when its combine is symmetric. -/
-theorem join_comm_of_comm (combine : α → α → α) (hcomm : ∀ x y, combine x y = combine y x)
-    (m₁ m₂ : NatMap α) : m₁.join combine m₂ = m₂.join combine m₁ := by
-  have h : (fun x y => combine y x) = combine := funext fun x => funext fun y => hcomm y x
-  rw [join_comm, h]
-
-/-- `join` is associative when its combine is associative. (Values at coinciding keys are resolved
-`combine left right`, so associativity of the result needs associativity of `combine`.) -/
-theorem join_assoc (combine : α → α → α)
-    (hassoc : ∀ x y z, combine (combine x y) z = combine x (combine y z))
-    (m₁ m₂ m₃ : NatMap α) :
-    (m₁.join combine m₂).join combine m₃ = m₁.join combine (m₂.join combine m₃) :=
-  NatCollection.join_assoc combine hassoc m₁ m₂ m₃
-
-/-- The empty map is a left annihilator of `meet`. -/
-@[simp, grind =]
-theorem meet_empty_left (combine : α → α → α) (m : NatMap α) :
-    NatMap.empty.meet combine m = NatMap.empty := NatCollection.meet_empty_left combine m
-
-/-- The empty map is a right annihilator of `meet`. -/
-@[simp, grind =]
-theorem meet_empty_right (combine : α → α → α) (m : NatMap α) :
-    m.meet combine NatMap.empty = NatMap.empty := NatCollection.meet_empty_right combine m
-
-/-- `meet` commutes when the combine is flipped: swapping the operands swaps the `combine`
-arguments. (Values at coinciding keys are resolved `combine left right`, so the order matters
-unless `combine` is symmetric — see `meet_comm_of_comm`.) -/
-theorem meet_comm (combine : α → α → α) (m₁ m₂ : NatMap α) :
-    m₁.meet combine m₂ = m₂.meet (fun x y => combine y x) m₁ :=
-  NatCollection.meet_comm combine m₁ m₂
-
-/-- `meet` is commutative when its combine is symmetric. -/
-theorem meet_comm_of_comm (combine : α → α → α) (hcomm : ∀ x y, combine x y = combine y x)
-    (m₁ m₂ : NatMap α) : m₁.meet combine m₂ = m₂.meet combine m₁ := by
-  have h : (fun x y => combine y x) = combine := funext fun x => funext fun y => hcomm y x
-  rw [meet_comm, h]
-
-/-- `meet` is associative when its combine is associative. (Values at coinciding keys are resolved
-`combine left right`, so associativity of the result needs associativity of `combine`.) -/
-theorem meet_assoc (combine : α → α → α)
-    (hassoc : ∀ x y z, combine (combine x y) z = combine x (combine y z))
-    (m₁ m₂ m₃ : NatMap α) :
-    (m₁.meet combine m₂).meet combine m₃ = m₁.meet combine (m₂.meet combine m₃) :=
-  NatCollection.meet_assoc combine hassoc m₁ m₂ m₃
-
-/-- The empty map restricts every map (its domain is vacuously a subset). -/
-@[simp, grind =]
-theorem restricts_empty_left (rel : α → α → Bool) (m : NatMap α) :
-    NatMap.empty.restricts rel m = true := NatCollection.restricts_empty_left rel m
-
-/-- `restricts` is reflexive: a map restricts itself whenever `rel` holds on equal values
-(`∀ x, rel x x = true`). Plain (not `@[simp]`): the `rel`-reflexivity hypothesis is a side goal
-`simp` can't discharge for an arbitrary `rel`. -/
-theorem restricts_refl (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
-    (m : NatMap α) : m.restricts rel m = true := NatCollection.restricts_refl rel hrefl m
-
-/-- `restricts` is transitive when `rel` is a preorder (reflexive and transitive): a domain
-inclusion with `rel`-related values composes, the values via `rel`-transitivity. Reflexivity is
-inherited from the generic theorem (it is only needed there for the *set* leaf). -/
-theorem restricts_trans (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
-    (htrans : ∀ x y z, rel x y = true → rel y z = true → rel x z = true)
-    (m₁ m₂ m₃ : NatMap α) :
-    m₁.restricts rel m₂ = true → m₂.restricts rel m₃ = true → m₁.restricts rel m₃ = true :=
-  NatCollection.restricts_trans rel hrefl htrans m₁ m₂ m₃
-
-/-- `restricts` is anti-symmetric when `rel` is reflexive and anti-symmetric: mutual restriction
-means equal domains whose values are `rel`-related both ways, which `rel`-antisymmetry collapses
-to value equality at every key — so the maps are equal. Reflexivity is inherited from the generic
-theorem (only needed there for the *set* leaf). -/
-theorem restricts_antisymm (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
-    (hantisymm : ∀ x y, rel x y = true → rel y x = true → x = y)
-    (m₁ m₂ : NatMap α) :
-    m₁.restricts rel m₂ = true → m₂.restricts rel m₁ = true → m₁ = m₂ :=
-  NatCollection.restricts_antisymm rel hrefl hantisymm m₁ m₂
 
 end NatMap
 
@@ -296,16 +207,6 @@ private def q : NatMap Nat := NatMap.ofList [(2, 20), (3, 30), (40, 400)]
 #guard (NatMap.ofList [(40, 40)]).restricts (· == ·) p
 #guard p.restricts (· == ·) p
 #guard (NatMap.ofList [(40, 40)]).restricts (· == ·) (p.join (fun x _ => x) q)
--- restricts transitivity as a theorem, for any preorder `rel` (here left abstract)
-example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true)
-    (ht : ∀ x y z, rel x y = true → rel y z = true → rel x z = true) (m₁ m₂ m₃ : NatMap Nat) :
-    m₁.restricts rel m₂ = true → m₂.restricts rel m₃ = true → m₁.restricts rel m₃ = true :=
-  NatMap.restricts_trans rel hr ht m₁ m₂ m₃
--- restricts anti-symmetry as a theorem, for any reflexive + anti-symmetric `rel` (here abstract)
-example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true)
-    (ha : ∀ x y, rel x y = true → rel y x = true → x = y) (m₁ m₂ : NatMap Nat) :
-    m₁.restricts rel m₂ = true → m₂.restricts rel m₁ = true → m₁ = m₂ :=
-  NatMap.restricts_antisymm rel hr ha m₁ m₂
 
 -- lawful/decidable equality and a compatible hash (requires the value type to be lawful/hashable)
 example : LawfulBEq (NatMap Nat) := inferInstance
@@ -318,5 +219,118 @@ example : DecidableEq (NatMap Nat) := inferInstance
 #guard hash (NatMap.ofList [(1, 10), (2, 20)]) == hash (NatMap.ofList [(2, 20), (1, 10)])
 
 end Tests
+
+----------------------------------------------------------------------------------------------------
+-- Theorems
+----------------------------------------------------------------------------------------------------
+
+namespace NatMap
+
+variable {α : Type u}
+
+/-- The empty map is a left identity of `join`. -/
+@[simp, grind =]
+theorem join_empty_left (combine : α → α → α) (m : NatMap α) :
+    NatMap.empty.join combine m = m := NatCollection.join_empty_left combine m
+
+/-- The empty map is a right identity of `join`. -/
+@[simp, grind =]
+theorem join_empty_right (combine : α → α → α) (m : NatMap α) :
+    m.join combine NatMap.empty = m := NatCollection.join_empty_right combine m
+
+/-- `join` commutes when the combine is flipped: swapping the operands swaps the `combine`
+arguments. (Values at coinciding keys are resolved `combine left right`, so the order matters
+unless `combine` is symmetric — see `join_comm_of_comm`.) -/
+theorem join_comm (combine : α → α → α) (m₁ m₂ : NatMap α) :
+    m₁.join combine m₂ = m₂.join (fun x y => combine y x) m₁ :=
+  NatCollection.join_comm combine m₁ m₂
+
+/-- `join` is commutative when its combine is symmetric. -/
+theorem join_comm_of_comm (combine : α → α → α) (hcomm : ∀ x y, combine x y = combine y x)
+    (m₁ m₂ : NatMap α) : m₁.join combine m₂ = m₂.join combine m₁ := by
+  have h : (fun x y => combine y x) = combine := funext fun x => funext fun y => hcomm y x
+  rw [join_comm, h]
+
+/-- `join` is associative when its combine is associative. (Values at coinciding keys are resolved
+`combine left right`, so associativity of the result needs associativity of `combine`.) -/
+theorem join_assoc (combine : α → α → α)
+    (hassoc : ∀ x y z, combine (combine x y) z = combine x (combine y z))
+    (m₁ m₂ m₃ : NatMap α) :
+    (m₁.join combine m₂).join combine m₃ = m₁.join combine (m₂.join combine m₃) :=
+  NatCollection.join_assoc combine hassoc m₁ m₂ m₃
+
+/-- The empty map is a left annihilator of `meet`. -/
+@[simp, grind =]
+theorem meet_empty_left (combine : α → α → α) (m : NatMap α) :
+    NatMap.empty.meet combine m = NatMap.empty := NatCollection.meet_empty_left combine m
+
+/-- The empty map is a right annihilator of `meet`. -/
+@[simp, grind =]
+theorem meet_empty_right (combine : α → α → α) (m : NatMap α) :
+    m.meet combine NatMap.empty = NatMap.empty := NatCollection.meet_empty_right combine m
+
+/-- `meet` commutes when the combine is flipped: swapping the operands swaps the `combine`
+arguments. (Values at coinciding keys are resolved `combine left right`, so the order matters
+unless `combine` is symmetric — see `meet_comm_of_comm`.) -/
+theorem meet_comm (combine : α → α → α) (m₁ m₂ : NatMap α) :
+    m₁.meet combine m₂ = m₂.meet (fun x y => combine y x) m₁ :=
+  NatCollection.meet_comm combine m₁ m₂
+
+/-- `meet` is commutative when its combine is symmetric. -/
+theorem meet_comm_of_comm (combine : α → α → α) (hcomm : ∀ x y, combine x y = combine y x)
+    (m₁ m₂ : NatMap α) : m₁.meet combine m₂ = m₂.meet combine m₁ := by
+  have h : (fun x y => combine y x) = combine := funext fun x => funext fun y => hcomm y x
+  rw [meet_comm, h]
+
+/-- `meet` is associative when its combine is associative. (Values at coinciding keys are resolved
+`combine left right`, so associativity of the result needs associativity of `combine`.) -/
+theorem meet_assoc (combine : α → α → α)
+    (hassoc : ∀ x y z, combine (combine x y) z = combine x (combine y z))
+    (m₁ m₂ m₃ : NatMap α) :
+    (m₁.meet combine m₂).meet combine m₃ = m₁.meet combine (m₂.meet combine m₃) :=
+  NatCollection.meet_assoc combine hassoc m₁ m₂ m₃
+
+/-- The empty map restricts every map (its domain is vacuously a subset). -/
+@[simp, grind =]
+theorem restricts_empty_left (rel : α → α → Bool) (m : NatMap α) :
+    NatMap.empty.restricts rel m = true := NatCollection.restricts_empty_left rel m
+
+/-- `restricts` is reflexive: a map restricts itself whenever `rel` holds on equal values
+(`∀ x, rel x x = true`). Plain (not `@[simp]`): the `rel`-reflexivity hypothesis is a side goal
+`simp` can't discharge for an arbitrary `rel`. -/
+theorem restricts_refl (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    (m : NatMap α) : m.restricts rel m = true := NatCollection.restricts_refl rel hrefl m
+
+/-- `restricts` is transitive when `rel` is a preorder (reflexive and transitive): a domain
+inclusion with `rel`-related values composes, the values via `rel`-transitivity. Reflexivity is
+inherited from the generic theorem (it is only needed there for the *set* leaf). -/
+theorem restricts_trans (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    (htrans : ∀ x y z, rel x y = true → rel y z = true → rel x z = true)
+    (m₁ m₂ m₃ : NatMap α) :
+    m₁.restricts rel m₂ = true → m₂.restricts rel m₃ = true → m₁.restricts rel m₃ = true :=
+  NatCollection.restricts_trans rel hrefl htrans m₁ m₂ m₃
+
+/-- `restricts` is anti-symmetric when `rel` is reflexive and anti-symmetric: mutual restriction
+means equal domains whose values are `rel`-related both ways, which `rel`-antisymmetry collapses
+to value equality at every key — so the maps are equal. Reflexivity is inherited from the generic
+theorem (only needed there for the *set* leaf). -/
+theorem restricts_antisymm (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    (hantisymm : ∀ x y, rel x y = true → rel y x = true → x = y)
+    (m₁ m₂ : NatMap α) :
+    m₁.restricts rel m₂ = true → m₂.restricts rel m₁ = true → m₁ = m₂ :=
+  NatCollection.restricts_antisymm rel hrefl hantisymm m₁ m₂
+
+end NatMap
+
+-- restricts transitivity as a theorem, for any preorder `rel` (here left abstract)
+example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true)
+    (ht : ∀ x y z, rel x y = true → rel y z = true → rel x z = true) (m₁ m₂ m₃ : NatMap Nat) :
+    m₁.restricts rel m₂ = true → m₂.restricts rel m₃ = true → m₁.restricts rel m₃ = true :=
+  NatMap.restricts_trans rel hr ht m₁ m₂ m₃
+-- restricts anti-symmetry as a theorem, for any reflexive + anti-symmetric `rel` (here abstract)
+example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true)
+    (ha : ∀ x y, rel x y = true → rel y x = true → x = y) (m₁ m₂ : NatMap Nat) :
+    m₁.restricts rel m₂ = true → m₂.restricts rel m₁ = true → m₁ = m₂ :=
+  NatMap.restricts_antisymm rel hr ha m₁ m₂
 
 end NatCol

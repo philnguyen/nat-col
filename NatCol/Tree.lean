@@ -20,6 +20,10 @@ of different heights are handled at the `NatCollection` level by lifting the sho
 
 namespace NatCol
 
+----------------------------------------------------------------------------------------------------
+-- Implementation
+----------------------------------------------------------------------------------------------------
+
 /-- A uniform 32-ary trie of the given height. -/
 abbrev Tree (leaf : Type u) : Nat → Type u
   | 0 => leaf
@@ -31,18 +35,6 @@ the merge never prunes a present-on-both key. -/
 def optVmeet {V : Type u} (c : V → V → V) : Option V → Option V → Option V
   | some x, some y => some (c x y)
   | _,      _      => none
-
-/-- `optVmeet` is associative when the value combine is. -/
-theorem optVmeet_assoc {V : Type u} (c : V → V → V) (hc : ∀ x y z, c (c x y) z = c x (c y z))
-    (oa ob od : Option V) :
-    optVmeet c (optVmeet c oa ob) od = optVmeet c oa (optVmeet c ob od) := by
-  cases oa <;> cases ob <;> cases od <;> simp only [optVmeet]
-  rw [hc]
-
-/-- `optVmeet` with the combine's arguments flipped swaps the operands. -/
-theorem optVmeet_flip {V : Type u} (c : V → V → V) (ox oy : Option V) :
-    optVmeet (fun x y => c y x) oy ox = optVmeet c ox oy := by
-  cases ox <;> cases oy <;> rfl
 
 /-- A leaf collection: maps 5-bit slot indices to values of type `V`. This is the single
 seam that distinguishes sets (`UInt32` leaves, `V = Unit`) from maps (`Node α` leaves,
@@ -269,6 +261,62 @@ def beq [BEq L] : (h : Nat) → Tree L h → Tree L h → Bool
   | h + 1, a, b => a.positionsMask == b.positionsMask && a.elements.isEqv b.elements (beq h)
 termination_by h => h
 
+/-- Collect `(key, value)` pairs into `acc`, ascending by key. `pfx` carries the key bits
+fixed by higher levels. -/
+def toArrayAux (pfx : Nat) : (h : Nat) → Tree L h → Array (Nat × V) → Array (Nat × V)
+  | 0, l, acc => (LeafOps.toArray l).foldl (fun acc (i, v) => acc.push (pfx ||| i.toNat, v)) acc
+  | h + 1, n, acc =>
+    n.foldl (fun acc i child => toArrayAux (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child acc) acc
+termination_by h => h
+
+/-- All `(key, value)` pairs, ascending by key. -/
+def toArray (h : Nat) (t : Tree L h) : Array (Nat × V) := toArrayAux 0 h t #[]
+
+/-! ### Canonical shape
+
+`Full` is "no empty subtree": every present child, at every level, is non-empty. `TopProper`
+is "no excessive height": the top node has a slot above slot 0 set (`2 ≤ positionsMask`), so
+the height is minimal. Their conjunction `Canonical` is the invariant the `NatCollection`
+layer carries as a proof field. Each lemma below shows one operation preserves or establishes
+the relevant piece; the collection layer assembles them. -/
+
+/-- No empty subtree: every present child, recursively, is non-empty. (Vacuous at a leaf —
+a leaf's own emptiness is governed at the collection's top, not here.) -/
+def Full : (h : Nat) → Tree L h → Prop
+  | 0, _ => True
+  | h + 1, n => ∀ c ∈ n.elements, Tree.isEmpty h c = false ∧ Full h c
+
+/-- Height-minimal at the top: the top node has a slot ≥ 1 set, so the height cannot be
+lowered. (Vacuous at a leaf.) -/
+def TopProper : (h : Nat) → Tree L h → Prop
+  | 0, _ => True
+  | _ + 1, n => 2 ≤ n.positionsMask
+
+/-- A canonical tree: no empty subtree and minimal height. -/
+def Canonical (h : Nat) (t : Tree L h) : Prop := Full h t ∧ TopProper h t
+
+end Tree
+
+----------------------------------------------------------------------------------------------------
+-- Theorems
+----------------------------------------------------------------------------------------------------
+
+/-- `optVmeet` is associative when the value combine is. -/
+theorem optVmeet_assoc {V : Type u} (c : V → V → V) (hc : ∀ x y z, c (c x y) z = c x (c y z))
+    (oa ob od : Option V) :
+    optVmeet c (optVmeet c oa ob) od = optVmeet c oa (optVmeet c ob od) := by
+  cases oa <;> cases ob <;> cases od <;> simp only [optVmeet]
+  rw [hc]
+
+/-- `optVmeet` with the combine's arguments flipped swaps the operands. -/
+theorem optVmeet_flip {V : Type u} (c : V → V → V) (ox oy : Option V) :
+    optVmeet (fun x y => c y x) oy ox = optVmeet c ox oy := by
+  cases ox <;> cases oy <;> rfl
+
+namespace Tree
+
+variable {L : Type u} {V : Type u} [LeafOps L V]
+
 /-- `beq` is reflexive at every height (given a reflexive leaf `BEq`). -/
 theorem beq_refl [BEq L] [LawfulBEq L] : (h : Nat) → (t : Tree L h) → beq h t t = true := by
   intro h
@@ -344,40 +392,6 @@ theorem meetEq_comm (f g : V → V → V) (hfg : ∀ x y, f x y = g y x) :
     simp only [meetEq]
     refine Node.meet_comm a b fun x y => ?_
     simp only [ih]
-
-/-- Collect `(key, value)` pairs into `acc`, ascending by key. `pfx` carries the key bits
-fixed by higher levels. -/
-def toArrayAux (pfx : Nat) : (h : Nat) → Tree L h → Array (Nat × V) → Array (Nat × V)
-  | 0, l, acc => (LeafOps.toArray l).foldl (fun acc (i, v) => acc.push (pfx ||| i.toNat, v)) acc
-  | h + 1, n, acc =>
-    n.foldl (fun acc i child => toArrayAux (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child acc) acc
-termination_by h => h
-
-/-- All `(key, value)` pairs, ascending by key. -/
-def toArray (h : Nat) (t : Tree L h) : Array (Nat × V) := toArrayAux 0 h t #[]
-
-/-! ### Canonical shape
-
-`Full` is "no empty subtree": every present child, at every level, is non-empty. `TopProper`
-is "no excessive height": the top node has a slot above slot 0 set (`2 ≤ positionsMask`), so
-the height is minimal. Their conjunction `Canonical` is the invariant the `NatCollection`
-layer carries as a proof field. Each lemma below shows one operation preserves or establishes
-the relevant piece; the collection layer assembles them. -/
-
-/-- No empty subtree: every present child, recursively, is non-empty. (Vacuous at a leaf —
-a leaf's own emptiness is governed at the collection's top, not here.) -/
-def Full : (h : Nat) → Tree L h → Prop
-  | 0, _ => True
-  | h + 1, n => ∀ c ∈ n.elements, Tree.isEmpty h c = false ∧ Full h c
-
-/-- Height-minimal at the top: the top node has a slot ≥ 1 set, so the height cannot be
-lowered. (Vacuous at a leaf.) -/
-def TopProper : (h : Nat) → Tree L h → Prop
-  | 0, _ => True
-  | _ + 1, n => 2 ≤ n.positionsMask
-
-/-- A canonical tree: no empty subtree and minimal height. -/
-def Canonical (h : Nat) (t : Tree L h) : Prop := Full h t ∧ TopProper h t
 
 /-- The empty tree has no subtrees, so it is `Full`. -/
 theorem Full_empty : (h : Nat) → Full h (Tree.empty h : Tree L h)

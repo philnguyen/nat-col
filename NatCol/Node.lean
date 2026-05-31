@@ -20,6 +20,10 @@ No `Inhabited α` is required: reads go through `xs[i]?`, and `set!`/`insertIdx!
 
 namespace NatCol
 
+----------------------------------------------------------------------------------------------------
+-- Implementation
+----------------------------------------------------------------------------------------------------
+
 /-- A sparse array of up to 32 children, addressed by a 5-bit slot index.
 
 The `elements_compact` field is the structural invariant from `docs/DESIGN.md`: the
@@ -62,30 +66,6 @@ def optRel {V : Type u} (rel : V → V → Bool) : Option V → Option V → Boo
   | some _, none   => false
   | none,   _      => true
 
-/-- `optRel` is transitive when `rel` is: composing two restrictions composes the values via
-`rel`-transitivity, and an absent left side stays vacuous. The engine of `restricts`
-transitivity at every layer. -/
-theorem optRel_trans {V : Type u} (rel : V → V → Bool)
-    (htrans : ∀ x y z, rel x y = true → rel y z = true → rel x z = true) :
-    ∀ (ox oy oz : Option V),
-      optRel rel ox oy = true → optRel rel oy oz = true → optRel rel ox oz = true
-  | none, _, _, _, _ => rfl
-  | some _, none, _, h, _ => absurd h (by simp [optRel])
-  | some _, some _, none, _, h => absurd h (by simp [optRel])
-  | some x, some y, some z, hxy, hyz => htrans x y z hxy hyz
-
-/-- `optRel` is anti-symmetric when `rel` is: mutual restriction forces both sides present (an
-absent side fails the other direction) and pins their values equal via `rel`-antisymmetry. The
-engine of `restricts` anti-symmetry at every layer. -/
-theorem optRel_antisymm {V : Type u} (rel : V → V → Bool)
-    (hantisymm : ∀ x y, rel x y = true → rel y x = true → x = y) :
-    ∀ (ox oy : Option V),
-      optRel rel ox oy = true → optRel rel oy ox = true → ox = oy
-  | none, none, _, _ => rfl
-  | none, some _, _, h => absurd h (by simp [optRel])
-  | some _, none, h, _ => absurd h (by simp [optRel])
-  | some x, some y, hxy, hyx => by rw [hantisymm x y hxy hyx]
-
 namespace Node
 
 /-- The empty node (no slots present), backed by a zero-capacity array. -/
@@ -115,10 +95,6 @@ spurious `none` to discharge at the call site. -/
 def get (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) : α :=
   n.elements[arrayIndex n.positionsMask i]'(by
     rw [n.elements_compact]; exact arrayIndex_lt n.positionsMask i h)
-
-/-- A child read from a present slot is one of the stored children. -/
-theorem get_mem (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) :
-    n.get i h ∈ n.elements := Array.getElem_mem _
 
 /-- The child at slot `i`, if present. The dependent `if` hands the present-case proof to
 `get`, so there is no spurious `none`. -/
@@ -229,6 +205,140 @@ def restricts (rel : α → α → Bool) (a b : Node α) : Bool :=
       | false, true => ok
       | false, false => ok
     Nat.fold 32 (fun i _ ok => step ok i) true
+
+/-- Value-level merge underlying `Node.join`: present on both sides ↦ `combine`; on one ↦ copy. -/
+def optJoin (combine : α → α → Option α) : Option α → Option α → Option α
+  | some x, some y => combine x y
+  | some x, none   => some x
+  | none,   some y => some y
+  | none,   none   => none
+
+/-- The per-slot accumulator step of `Node.join`, named so the `get?` fold invariant can refer
+to it. Definitionally equal to the body of `Node.join`. -/
+def joinStepCore (combine : α → α → Option α) (a b : Node α) (acc : Node α) (i : Nat) : Node α :=
+  match h1 : testBit a.positionsMask (UInt32.ofNat i), h2 : testBit b.positionsMask (UInt32.ofNat i) with
+  | true, true => match combine (a.get (UInt32.ofNat i) h1) (b.get (UInt32.ofNat i) h2) with
+                  | some v => acc.insert (UInt32.ofNat i) v
+                  | none => acc
+  | true, false => acc.insert (UInt32.ofNat i) (a.get (UInt32.ofNat i) h1)
+  | false, true => acc.insert (UInt32.ofNat i) (b.get (UInt32.ofNat i) h2)
+  | false, false => acc
+
+/-- Value-level merge underlying `Node.meet`: present on *both* sides ↦ `combine`; otherwise drop. -/
+def optMeet (combine : α → α → Option α) : Option α → Option α → Option α
+  | some x, some y => combine x y
+  | _,      _      => none
+
+/-- The per-slot accumulator step of `Node.meet`, named so the `get?` fold invariant can refer
+to it. Definitionally equal to the body of `Node.meet`. -/
+def meetStepCore (combine : α → α → Option α) (a b : Node α) (acc : Node α) (i : Nat) : Node α :=
+  match h1 : testBit a.positionsMask (UInt32.ofNat i), h2 : testBit b.positionsMask (UInt32.ofNat i) with
+  | true, true => match combine (a.get (UInt32.ofNat i) h1) (b.get (UInt32.ofNat i) h2) with
+                  | some v => acc.insert (UInt32.ofNat i) v
+                  | none => acc
+  | true, false => acc
+  | false, true => acc
+  | false, false => acc
+
+end Node
+
+/-! ## Tests -/
+
+section Tests
+open Node
+
+private def n0 : Node Nat := Node.empty
+private def nA : Node Nat := (Node.singleton 1 10).insert 4 40 |>.insert 31 310
+private def nB : Node Nat := (Node.singleton 4 99).insert 7 70
+
+#guard n0.isEmpty
+#guard !nA.isEmpty
+#guard nA.size == 3
+#guard nA.get? 1 == some 10
+#guard nA.get? 4 == some 40
+#guard nA.get? 31 == some 310
+#guard nA.get? 2 == none
+#guard nA.get? 0 == none
+
+-- insert at slot 0 (lowest) and check ordering is preserved structurally
+#guard (Node.singleton 5 50 |>.insert 0 0 |>.get? 0) == some 0
+#guard (Node.singleton 5 50 |>.insert 0 0 |>.get? 5) == some 50
+
+-- overwrite keeps size and replaces value
+#guard (nA.insert 4 400 |>.get? 4) == some 400
+#guard (nA.insert 4 400).size == 3
+
+-- erase then re-query; erasing an absent slot is a no-op
+#guard (nA.erase 4 |>.get? 4) == none
+#guard (nA.erase 4).size == 2
+#guard nA.erase 2 == nA
+
+-- modify only touches present slots
+#guard (nA.modify 1 (· + 5) |>.get? 1) == some 15
+#guard nA.modify 2 (· + 5) == nA
+
+-- join: slot 4 collides (sum), others copied through
+#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 1) == some 10
+#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 4) == some 139
+#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 7) == some 70
+#guard (Node.join (fun x y => some (x + y)) nA nB).size == 4
+
+-- meet: only the shared slot 4 survives
+#guard (Node.meet (fun x y => some (x + y)) nA nB |>.get? 4) == some 139
+#guard (Node.meet (fun x y => some (x + y)) nA nB).size == 1
+#guard (Node.meet (fun _ _ => none) nA nB).isEmpty           -- pruned to empty
+
+-- restricts: subset of slots + predicate on shared values
+#guard Node.restricts (fun _ _ => true) (Node.singleton 4 40) nA
+#guard !Node.restricts (fun _ _ => true) nA (Node.singleton 4 40)   -- nA has more slots
+#guard Node.restricts (fun x y => x ≤ y) (Node.singleton 4 40) nA
+#guard !Node.restricts (fun x y => x < y) (Node.singleton 4 40) nA  -- 40 < 40 fails
+#guard Node.restricts (fun _ _ => true) Node.empty nA              -- empty restricts all
+
+-- foldl visits slots ascending
+#guard nA.foldl (fun acc i a => acc ++ [(i.toNat, a)]) [] == [(1, 10), (4, 40), (31, 310)]
+
+-- the `elements_compact` invariant is a field every node carries, so it is available on
+-- operation results too — here, on a `join` output — by construction, no side condition
+example : (Node.join (fun x y => some (x + y)) nA nB).elements.size
+        = popCount (Node.join (fun x y => some (x + y)) nA nB).positionsMask :=
+  (Node.join (fun x y => some (x + y)) nA nB).elements_compact
+
+end Tests
+
+----------------------------------------------------------------------------------------------------
+-- Theorems
+----------------------------------------------------------------------------------------------------
+
+/-- `optRel` is transitive when `rel` is: composing two restrictions composes the values via
+`rel`-transitivity, and an absent left side stays vacuous. The engine of `restricts`
+transitivity at every layer. -/
+theorem optRel_trans {V : Type u} (rel : V → V → Bool)
+    (htrans : ∀ x y z, rel x y = true → rel y z = true → rel x z = true) :
+    ∀ (ox oy oz : Option V),
+      optRel rel ox oy = true → optRel rel oy oz = true → optRel rel ox oz = true
+  | none, _, _, _, _ => rfl
+  | some _, none, _, h, _ => absurd h (by simp [optRel])
+  | some _, some _, none, _, h => absurd h (by simp [optRel])
+  | some x, some y, some z, hxy, hyz => htrans x y z hxy hyz
+
+/-- `optRel` is anti-symmetric when `rel` is: mutual restriction forces both sides present (an
+absent side fails the other direction) and pins their values equal via `rel`-antisymmetry. The
+engine of `restricts` anti-symmetry at every layer. -/
+theorem optRel_antisymm {V : Type u} (rel : V → V → Bool)
+    (hantisymm : ∀ x y, rel x y = true → rel y x = true → x = y) :
+    ∀ (ox oy : Option V),
+      optRel rel ox oy = true → optRel rel oy ox = true → ox = oy
+  | none, none, _, _ => rfl
+  | none, some _, _, h => absurd h (by simp [optRel])
+  | some _, none, h, _ => absurd h (by simp [optRel])
+  | some x, some y, hxy, hyx => by rw [hantisymm x y hxy hyx]
+
+namespace Node
+
+/-- A child read from a present slot is one of the stored children. -/
+theorem get_mem (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) :
+    n.get i h ∈ n.elements := Array.getElem_mem _
 
 /-! ### Lemmas backing the `NatCollection` canonical-shape invariant
 
@@ -543,13 +653,6 @@ These support the `get?`-based denotational semantics the `NatCollection` lattic
 (associativity, …) are proved against. `get?_join` reads off a `join` result slot-by-slot as a
 value-level merge `optJoin`; `Node.ext` recovers a node from its `get?`. Slot indices are always
 `< 32` here (they come from 5-bit `chunk`s), matching `UInt32`'s mod-32 shift semantics. -/
-
-/-- Value-level merge underlying `Node.join`: present on both sides ↦ `combine`; on one ↦ copy. -/
-def optJoin (combine : α → α → Option α) : Option α → Option α → Option α
-  | some x, some y => combine x y
-  | some x, none   => some x
-  | none,   some y => some y
-  | none,   none   => none
 
 /-- The empty node reads `none` everywhere. -/
 @[simp] theorem get?_empty (i : UInt32) : (Node.empty : Node α).get? i = none := by
@@ -897,17 +1000,6 @@ theorem get?_insert (n : Node α) (i : UInt32) (v : α) (j : UInt32) (hi : i < 3
               Array.getElem?_insertIdx_of_lt hsize (arrayIndex_lt_of_lt _ j i hj hi hbj hlt)]
       · rw [if_neg hbj, if_neg hbj]
 
-/-- The per-slot accumulator step of `Node.join`, named so the `get?` fold invariant can refer
-to it. Definitionally equal to the body of `Node.join`. -/
-def joinStepCore (combine : α → α → Option α) (a b : Node α) (acc : Node α) (i : Nat) : Node α :=
-  match h1 : testBit a.positionsMask (UInt32.ofNat i), h2 : testBit b.positionsMask (UInt32.ofNat i) with
-  | true, true => match combine (a.get (UInt32.ofNat i) h1) (b.get (UInt32.ofNat i) h2) with
-                  | some v => acc.insert (UInt32.ofNat i) v
-                  | none => acc
-  | true, false => acc.insert (UInt32.ofNat i) (a.get (UInt32.ofNat i) h1)
-  | false, true => acc.insert (UInt32.ofNat i) (b.get (UInt32.ofNat i) h2)
-  | false, false => acc
-
 theorem join_eq_fold (combine : α → α → Option α) (a b : Node α) :
     Node.join combine a b
       = Nat.fold 32 (fun i _ acc => joinStepCore combine a b acc i)
@@ -1083,21 +1175,6 @@ The `meet` analogue of the `join` `get?` block above. `optMeet` is the value-lev
 a slot survives only if present on *both* sides (and the `combine` does not prune it). `get?_meet`
 reads off a `meet` result slot-by-slot, backing the `meet`-associativity proof. -/
 
-/-- Value-level merge underlying `Node.meet`: present on *both* sides ↦ `combine`; otherwise drop. -/
-def optMeet (combine : α → α → Option α) : Option α → Option α → Option α
-  | some x, some y => combine x y
-  | _,      _      => none
-
-/-- The per-slot accumulator step of `Node.meet`, named so the `get?` fold invariant can refer
-to it. Definitionally equal to the body of `Node.meet`. -/
-def meetStepCore (combine : α → α → Option α) (a b : Node α) (acc : Node α) (i : Nat) : Node α :=
-  match h1 : testBit a.positionsMask (UInt32.ofNat i), h2 : testBit b.positionsMask (UInt32.ofNat i) with
-  | true, true => match combine (a.get (UInt32.ofNat i) h1) (b.get (UInt32.ofNat i) h2) with
-                  | some v => acc.insert (UInt32.ofNat i) v
-                  | none => acc
-  | true, false => acc
-  | false, true => acc
-  | false, false => acc
 
 theorem meet_eq_fold (combine : α → α → Option α) (a b : Node α) :
     Node.meet combine a b
@@ -1249,69 +1326,5 @@ theorem get?_alter_of_some (n : Node α) (i : UInt32) (f : Option α → Option 
   rw [alter_eq_insert n i f w hfw, get?_insert n i w j hi hj]
 
 end Node
-
-/-! ## Tests -/
-
-section Tests
-open Node
-
-private def n0 : Node Nat := Node.empty
-private def nA : Node Nat := (Node.singleton 1 10).insert 4 40 |>.insert 31 310
-private def nB : Node Nat := (Node.singleton 4 99).insert 7 70
-
-#guard n0.isEmpty
-#guard !nA.isEmpty
-#guard nA.size == 3
-#guard nA.get? 1 == some 10
-#guard nA.get? 4 == some 40
-#guard nA.get? 31 == some 310
-#guard nA.get? 2 == none
-#guard nA.get? 0 == none
-
--- insert at slot 0 (lowest) and check ordering is preserved structurally
-#guard (Node.singleton 5 50 |>.insert 0 0 |>.get? 0) == some 0
-#guard (Node.singleton 5 50 |>.insert 0 0 |>.get? 5) == some 50
-
--- overwrite keeps size and replaces value
-#guard (nA.insert 4 400 |>.get? 4) == some 400
-#guard (nA.insert 4 400).size == 3
-
--- erase then re-query; erasing an absent slot is a no-op
-#guard (nA.erase 4 |>.get? 4) == none
-#guard (nA.erase 4).size == 2
-#guard nA.erase 2 == nA
-
--- modify only touches present slots
-#guard (nA.modify 1 (· + 5) |>.get? 1) == some 15
-#guard nA.modify 2 (· + 5) == nA
-
--- join: slot 4 collides (sum), others copied through
-#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 1) == some 10
-#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 4) == some 139
-#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 7) == some 70
-#guard (Node.join (fun x y => some (x + y)) nA nB).size == 4
-
--- meet: only the shared slot 4 survives
-#guard (Node.meet (fun x y => some (x + y)) nA nB |>.get? 4) == some 139
-#guard (Node.meet (fun x y => some (x + y)) nA nB).size == 1
-#guard (Node.meet (fun _ _ => none) nA nB).isEmpty           -- pruned to empty
-
--- restricts: subset of slots + predicate on shared values
-#guard Node.restricts (fun _ _ => true) (Node.singleton 4 40) nA
-#guard !Node.restricts (fun _ _ => true) nA (Node.singleton 4 40)   -- nA has more slots
-#guard Node.restricts (fun x y => x ≤ y) (Node.singleton 4 40) nA
-#guard !Node.restricts (fun x y => x < y) (Node.singleton 4 40) nA  -- 40 < 40 fails
-#guard Node.restricts (fun _ _ => true) Node.empty nA              -- empty restricts all
-
--- foldl visits slots ascending
-#guard nA.foldl (fun acc i a => acc ++ [(i.toNat, a)]) [] == [(1, 10), (4, 40), (31, 310)]
-
--- the `elements_compact` invariant is a field every node carries, so it is available on
--- operation results too — here, on a `join` output — by construction, no side condition
-example : (Node.join (fun x y => some (x + y)) nA nB).elements.size
-        = popCount (Node.join (fun x y => some (x + y)) nA nB).positionsMask :=
-  (Node.join (fun x y => some (x + y)) nA nB).elements_compact
-
-end Tests
 
 end NatCol
