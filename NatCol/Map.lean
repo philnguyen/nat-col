@@ -325,6 +325,32 @@ theorem restricts_antisymm (rel : α → α → Bool) (hrefl : ∀ x, rel x x = 
     m₁.restricts rel m₂ = true → m₂.restricts rel m₁ = true → m₁ = m₂ :=
   NatCollection.restricts_antisymm rel hrefl hantisymm m₁ m₂
 
+/-- `meet` is a lower bound on the left: `m.meet combine n` restricts `m`, provided the combine
+yields a `rel`-smaller value than its left argument (`hle`). For sets-as-maps this is just domain
+shrinkage; for maps it additionally needs the combined value to refine the left value. -/
+theorem meet_restricts_left (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    (combine : α → α → α) (hle : ∀ x y, rel (combine x y) x = true) (m n : NatMap α) :
+    (m.meet combine n).restricts rel m = true :=
+  NatCollection.meet_restricts_left rel hrefl combine hle m n
+
+/-- `meet` is a lower bound on the right: `m.meet combine n` restricts `n`, provided the combine
+yields a `rel`-smaller value than its right argument (`hle`). -/
+theorem meet_restricts_right (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    (combine : α → α → α) (hle : ∀ x y, rel (combine x y) y = true) (m n : NatMap α) :
+    (m.meet combine n).restricts rel n = true :=
+  NatCollection.meet_restricts_right rel hrefl combine hle m n
+
+/-- `meet` is the greatest lower bound: any `m` restricting both `a` and `b` also restricts their
+`meet`, provided the combine is a greatest lower bound for `rel` (`hglb`: a value below both `x`
+and `y` is below `combine x y`). Together with `meet_restricts_left`/`_right`, this says `meet` is
+the infimum of `a` and `b` in the refinement order. -/
+theorem restricts_meet (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true) (combine : α → α → α)
+    (hglb : ∀ w x y, rel w x = true → rel w y = true → rel w (combine x y) = true)
+    (m a b : NatMap α)
+    (hma : m.restricts rel a = true) (hmb : m.restricts rel b = true) :
+    m.restricts rel (a.meet combine b) = true :=
+  NatCollection.meet_glb rel hrefl combine hglb m a b hma hmb
+
 /-- Looking up a freshly-inserted entry returns the inserted value. -/
 @[simp]
 theorem get?_insert_self (m : NatMap α) (k : Nat) (v : α) : (m.insert k v).get? k = some v := by
@@ -439,5 +465,16 @@ example (combine : Nat → Nat → Nat) (m : NatMap Nat) (k : Nat) : k ∈ m.mee
   NatMap.mem_meet_self combine m k
 -- and with an idempotent combine it returns the map unchanged
 example (m : NatMap Nat) : m.meet min m = m := NatMap.meet_self_of_idem min (fun v => Nat.min_self v) m
+-- `meet` is the greatest lower bound of two maps in the refinement order: it restricts both
+-- operands, and any common lower bound `m` restricts it (combine a meet for `rel`, here abstract)
+example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true) (combine : Nat → Nat → Nat)
+    (hl : ∀ x y, rel (combine x y) x = true) (hrr : ∀ x y, rel (combine x y) y = true)
+    (hg : ∀ w x y, rel w x = true → rel w y = true → rel w (combine x y) = true)
+    (m a b : NatMap Nat) (hma : m.restricts rel a = true) (hmb : m.restricts rel b = true) :
+    (a.meet combine b).restricts rel a = true ∧ (a.meet combine b).restricts rel b = true
+      ∧ m.restricts rel (a.meet combine b) = true :=
+  ⟨NatMap.meet_restricts_left rel hr combine hl a b,
+   NatMap.meet_restricts_right rel hr combine hrr a b,
+   NatMap.restricts_meet rel hr combine hg m a b hma hmb⟩
 
 end NatCol

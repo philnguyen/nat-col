@@ -370,6 +370,20 @@ theorem subset_empty_left (s : NatSet) : NatSet.empty ⊆ s :=
 theorem subset_refl (s : NatSet) : s ⊆ s :=
   NatCollection.restricts_refl (fun _ _ => true) (fun _ => rfl) s
 
+/-- Intersection is a lower bound: `s ∩ t ⊆ s`. -/
+theorem inter_subset_left (s t : NatSet) : s ∩ t ⊆ s :=
+  NatCollection.meet_restricts_left (fun _ _ => true) (fun _ => rfl) (fun _ _ => ()) (fun _ _ => rfl) s t
+
+/-- Intersection is a lower bound: `s ∩ t ⊆ t`. -/
+theorem inter_subset_right (s t : NatSet) : s ∩ t ⊆ t :=
+  NatCollection.meet_restricts_right (fun _ _ => true) (fun _ => rfl) (fun _ _ => ()) (fun _ _ => rfl) s t
+
+/-- Intersection is the greatest lower bound: any set below both `s` and `t` is below `s ∩ t`.
+Together with `inter_subset_left`/`inter_subset_right`, this makes `s ∩ t` the infimum of `s`, `t`
+for `⊆`. -/
+theorem subset_inter {s t u : NatSet} (h₁ : u ⊆ s) (h₂ : u ⊆ t) : u ⊆ s ∩ t :=
+  NatCollection.meet_glb (fun _ _ => true) (fun _ => rfl) (fun _ _ => ()) (fun _ _ _ _ _ => rfl) u s t h₁ h₂
+
 /-- Subset is transitive: `s ⊆ t` and `t ⊆ u` give `s ⊆ u`. The set predicate `fun _ _ => true`
 is trivially reflexive and transitive, so no side conditions are needed. -/
 theorem subset_trans {s t u : NatSet} (hst : s ⊆ t) (htu : t ⊆ u) : s ⊆ u :=
@@ -436,5 +450,9 @@ example (s : NatSet) (k : Nat) (h : k ∈ s) : s.insert k = s := NatSet.insert_o
 example (s : NatSet) : s ∪ s = s := NatSet.union_self s
 -- a set intersected with itself is unchanged
 example (s : NatSet) : s ∩ s = s := NatSet.inter_self s
+-- intersection is the greatest lower bound: below both operands, and above any common lower bound
+example (s t : NatSet) : s ∩ t ⊆ s := NatSet.inter_subset_left s t
+example (s t : NatSet) : s ∩ t ⊆ t := NatSet.inter_subset_right s t
+example {s t u : NatSet} : u ⊆ s → u ⊆ t → u ⊆ s ∩ t := NatSet.subset_inter
 
 end NatCol

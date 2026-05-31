@@ -938,6 +938,72 @@ theorem restricts_antisymm (rel : V → V → Bool) (hrefl : ∀ x, rel x x = tr
   intro k
   exact optRel_antisymm rel hantisymm (a.get? k) (b.get? k) (hab k) (hba k)
 
+/-- **`meet` is a lower bound on the left**: `meet combine a b` restricts `a`, provided the value
+combine yields a `rel`-smaller value than its left argument (`hle`). Read off `get?`: on a key
+shared by `a` and `b` the meet's value `combine x y` must restrict `x`; on any key absent from `a`
+the meet is also absent there, so `optRel` is vacuously satisfied. Reflexivity is only needed to
+read `restricts` off `get?` (it pins down the set leaf). -/
+theorem meet_restricts_left (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (combine : V → V → V) (hle : ∀ x y, rel (combine x y) x = true) (a b : NatCollection L) :
+    restricts rel (meet combine a b) a = true := by
+  rw [get?_restricts rel hrefl (meet combine a b) a]
+  intro k
+  rw [get?_meet combine a b k]
+  cases a.get? k with
+  | none => rfl
+  | some x =>
+    cases b.get? k with
+    | none => rfl
+    | some y => show rel (combine x y) x = true; exact hle x y
+
+/-- **`meet` is a lower bound on the right**: symmetric to `meet_restricts_left`, needing the value
+combine to be `rel`-below its right argument (`hle`). -/
+theorem meet_restricts_right (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (combine : V → V → V) (hle : ∀ x y, rel (combine x y) y = true) (a b : NatCollection L) :
+    restricts rel (meet combine a b) b = true := by
+  rw [get?_restricts rel hrefl (meet combine a b) b]
+  intro k
+  rw [get?_meet combine a b k]
+  cases a.get? k with
+  | none => rfl
+  | some x =>
+    cases b.get? k with
+    | none => rfl
+    | some y => show rel (combine x y) y = true; exact hle x y
+
+/-- **`meet` is the greatest lower bound**: any `m` that restricts both `a` and `b` also restricts
+their `meet`, provided the value combine is a greatest lower bound for `rel` (`hglb`: a value below
+both `x` and `y` is below `combine x y`). Reading all three restrictions off `get?`: on a key absent
+from `m` the conclusion is vacuous; where `m` is present, restricting `a` and `b` forces both present
+and `rel`-above `m`'s value, and `hglb` lifts that to the combined value. -/
+theorem meet_glb (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (combine : V → V → V)
+    (hglb : ∀ w x y, rel w x = true → rel w y = true → rel w (combine x y) = true)
+    (m a b : NatCollection L)
+    (hma : restricts rel m a = true) (hmb : restricts rel m b = true) :
+    restricts rel m (meet combine a b) = true := by
+  rw [get?_restricts rel hrefl m a] at hma
+  rw [get?_restricts rel hrefl m b] at hmb
+  rw [get?_restricts rel hrefl m (meet combine a b)]
+  intro k
+  have hak := hma k
+  have hbk := hmb k
+  rw [get?_meet combine a b k]
+  cases hm : m.get? k with
+  | none => rfl
+  | some w =>
+    rw [hm] at hak hbk
+    cases hga : a.get? k with
+    | none => rw [hga] at hak; simp [optRel] at hak
+    | some x =>
+      cases hgb : b.get? k with
+      | none => rw [hgb] at hbk; simp [optRel] at hbk
+      | some y =>
+        rw [hga] at hak
+        rw [hgb] at hbk
+        simp only [optRel] at hak hbk
+        show rel w (combine x y) = true
+        exact hglb w x y hak hbk
+
 end NatCollection
 
 end NatCol

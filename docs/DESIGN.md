@@ -54,13 +54,16 @@ These operations should be implemented once generically on `NatCollection` or `T
 
 # Theorems
 
-Prove the following theorems for both `NatMap` and `NatSet`:
+`NatMap` and `NatSet` behave like a distributive lattice:
 * The empty map/set is left and right identities of `join`
 * The empty map/set is left and right annihilator of `meet`
 * The empty map/set `restricts` everything
 * A set/map `join`/`meet` with itself is itself.
-* Set `join`/`meet` is associative and commutative
-* Map `join`/`meet` is relatively associative and commutative, depending on the passed in operation on colliding values
+* `join`/`meet` is associative and commutative (in the case of map, it's relative w.r.t. the passed in operation on colliding values)
 * `restricts` is reflexive, transitive, and anti-symmetric. (Again, the `NatMap`'s version is relatively so, depending on the passed in predicate on values.)
+* `join` of two maps/sets gives the tightest map/set that contains both
+* `meet` of two maps/sets gives the largest map/set that `restricts` both
+* `join` distributes over `meet`
+* `meet` distributes over `join`
 
 These theorems should be stated and proven once generically for `NatCollection` or `Tree`, then instantiated appropriately for `NatMap` and `NatSet`.
