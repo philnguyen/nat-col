@@ -589,6 +589,179 @@ theorem join_assoc (combine : V → V → V)
               (e.liftTo H h_e_H) (Full_liftTo a H h_a_H hae) (Full_liftTo b H h_b_H hbe)
               (Full_liftTo e H h_e_H hee)]
 
+/-! ### Associativity of `meet`
+
+`meet`'s result height is unpredictable (intersection prunes and `normalizeAux` lowers it), so the
+equal-height lift used for `join` does not apply. Instead `meet` associativity is proved
+*denotationally*: `get?_meet` reads `meet` off `get?` as the value-level intersection `optVmeet`,
+`ext_get?` shows two canonical collections agreeing on every `get?` are equal, and the result is
+`optVmeet`-associativity. -/
+
+/-- `get?` below the height is a plain tree lookup. -/
+private theorem get?_of_le (c : NatCollection L) (k : Nat) (hk : requiredHeight k ≤ c.height) :
+    c.get? k = Tree.get? k c.height c.tree := by
+  unfold NatCollection.get?; rw [if_neg (by omega)]
+
+/-- `get?` above the height is `none`. -/
+private theorem get?_of_gt (c : NatCollection L) (k : Nat) (hk : c.height < requiredHeight k) :
+    c.get? k = none := by
+  unfold NatCollection.get?; rw [if_pos (by omega)]
+
+/-- The empty collection reads `none` everywhere. -/
+@[simp] theorem get?_empty (k : Nat) : (empty : NatCollection L).get? k = none := by
+  by_cases hk : requiredHeight k > 0
+  · exact get?_of_gt empty k (by simpa using hk)
+  · rw [get?_of_le empty k (by omega)]; exact Tree.get?_empty k 0
+
+/-- An empty collection reads `none` everywhere. -/
+theorem get?_eq_none_of_isEmpty (c : NatCollection L) (hc : c.isEmpty = true) (k : Nat) :
+    c.get? k = none := by
+  unfold NatCollection.get?
+  split
+  · rfl
+  · exact Tree.get?_eq_none_of_isEmpty k c.height c.tree hc
+
+/-- A non-empty collection has a present key. -/
+theorem exists_get?_of_ne_empty (c : NatCollection L) (hc : c.isEmpty = false) :
+    ∃ k, (c.get? k).isSome := by
+  obtain ⟨k, hk, hsome⟩ := Tree.exists_get? c.height c.tree c.wf.1 hc
+  exact ⟨k, by rw [get?_of_le c k hk]; exact hsome⟩
+
+/-- A non-empty collection has a present key *at its own height* — the canonical-shape invariant
+makes the top level non-trivial, so some key reaches it. This pins the height to the contents. -/
+theorem exists_get?_at_height (c : NatCollection L) (hne : c.isEmpty = false) :
+    ∃ k, requiredHeight k = c.height ∧ (c.get? k).isSome := by
+  obtain ⟨k, hk, hs⟩ := Tree.exists_get?_topProper c.height c.tree c.wf.1 c.wf.2 hne
+  exact ⟨k, hk, by rw [get?_of_le c k (by omega)]; exact hs⟩
+
+/-- `get?` of a `normalizeAux` result: the smart constructor lowers the height but preserves the
+key→value reading (height-lowering only strips empty / slot-0-only top levels, which lie outside
+or on the slot-0 spine of every key). -/
+theorem get?_normalizeAux : (h : Nat) → (t : Tree L h) → (hf : Tree.Full h t) → (k : Nat) →
+    (normalizeAux h t hf).get? k = if requiredHeight k > h then none else Tree.get? k h t
+  | 0, t, hf, k => by
+      rw [show normalizeAux 0 t hf = ⟨0, t, ⟨hf, trivial⟩⟩ from by simp only [normalizeAux]]
+      rfl
+  | h + 1, n, hf, k => by
+      unfold normalizeAux
+      split
+      · rename_i hm0
+        rw [get?_normalizeAux h (Tree.empty h) (Tree.Full_empty h) k, Tree.get?_empty k h,
+            Tree.get?_eq_none_of_isEmpty k (h + 1) n hm0]
+        simp
+      · split
+        · rename_i hm1
+          have h0 : testBit n.positionsMask 0 = true := by rw [eq_of_beq hm1]; decide
+          have hns : Node.get? n (chunk k (h + 1))
+              = if chunk k (h + 1) = 0 then some (n.get 0 h0) else none := by
+            by_cases hs0 : chunk k (h + 1) = 0
+            · rw [if_pos hs0, hs0, Node.get?, dif_pos h0]
+            · rw [if_neg hs0, Node.get?, dif_neg (by
+                rw [eq_of_beq hm1]; have hlt := chunk_lt k (h + 1); revert hs0 hlt; unfold testBit; bv_decide)]
+          rw [get?_normalizeAux h (n.get 0 h0) (hf _ (n.get_mem 0 h0)).2 k, Tree.get?_succ, hns]
+          rcases Nat.lt_trichotomy (requiredHeight k) (h + 1) with hlt | heq | hgt
+          · have hc0 : chunk k (h + 1) = 0 :=
+              chunk_eq_zero_of_requiredHeight_lt (h := h) (by omega) (by omega)
+            rw [hc0, if_pos rfl, if_neg (show ¬ requiredHeight k > h by omega),
+                if_neg (show ¬ requiredHeight k > h + 1 by omega)]
+          · have hc0 : chunk k (h + 1) ≠ 0 := chunk_ne_zero_of_requiredHeight_eq (h := h) (by omega)
+            rw [if_neg (show ¬ requiredHeight k > h + 1 by omega), if_neg hc0,
+                if_pos (show requiredHeight k > h by omega)]
+          · rw [if_pos (show requiredHeight k > h + 1 by omega),
+                if_pos (show requiredHeight k > h by omega)]
+        · rfl
+
+/-- **`get?` of a `meet`**: the value-level intersection of the two lookups. The denotational
+specification `meet` associativity is proved against. -/
+theorem get?_meet (combine : V → V → V) (a b : NatCollection L) (k : Nat) :
+    (meet combine a b).get? k = optVmeet combine (a.get? k) (b.get? k) := by
+  unfold meet
+  by_cases hae : a.isEmpty = true
+  · rw [if_pos hae, get?_empty, get?_eq_none_of_isEmpty a hae k]; rfl
+  · rw [if_neg hae]
+    by_cases hbe : b.isEmpty = true
+    · rw [if_pos hbe, get?_empty, get?_eq_none_of_isEmpty b hbe k]
+      cases a.get? k <;> rfl
+    · rw [if_neg hbe]
+      by_cases hle : a.height ≤ b.height
+      · rw [dif_pos hle, get?_normalizeAux]
+        by_cases hkh : requiredHeight k ≤ a.height
+        · rw [if_neg (show ¬ requiredHeight k > a.height by omega),
+              Tree.get?_meetSpine combine a.height a.tree k hkh (b.height - a.height), Tree.get?_cast,
+              get?_of_le a k hkh, get?_of_le b k (by omega)]
+        · rw [if_pos (show requiredHeight k > a.height by omega),
+              get?_of_gt a k (by omega)]
+          rfl
+      · rw [dif_neg hle, get?_normalizeAux]
+        by_cases hkh : requiredHeight k ≤ b.height
+        · rw [if_neg (show ¬ requiredHeight k > b.height by omega),
+              Tree.get?_meetSpine (fun x y => combine y x) b.height b.tree k hkh (a.height - b.height),
+              Tree.get?_cast, optVmeet_flip combine, get?_of_le a k (by omega), get?_of_le b k hkh]
+        · rw [if_pos (show requiredHeight k > b.height by omega),
+              get?_of_gt b k (by omega)]
+          cases a.get? k <;> rfl
+
+/-- **Collection extensionality**: two canonical collections agreeing on every `get?` are equal.
+Emptiness is detected by `get?` (`exists_get?_of_ne_empty`); for non-empty collections the height
+is pinned by the deepest present key (`exists_get?_at_height`), and `Tree.ext` recovers the tree. -/
+theorem ext_get? (c₁ c₂ : NatCollection L) (h : ∀ k, c₁.get? k = c₂.get? k) : c₁ = c₂ := by
+  by_cases h1 : c₁.isEmpty = true
+  · have h2 : c₂.isEmpty = true := by
+      cases h2e : c₂.isEmpty with
+      | true => rfl
+      | false =>
+        exfalso
+        obtain ⟨k, hk⟩ := exists_get?_of_ne_empty c₂ h2e
+        rw [← h k, get?_eq_none_of_isEmpty c₁ h1 k] at hk
+        exact absurd hk (by simp)
+    rw [eq_empty_of_isEmpty c₁ h1, eq_empty_of_isEmpty c₂ h2]
+  · simp only [Bool.not_eq_true] at h1
+    have h2 : c₂.isEmpty = false := by
+      cases h2e : c₂.isEmpty with
+      | false => rfl
+      | true =>
+        exfalso
+        obtain ⟨k, hk⟩ := exists_get?_of_ne_empty c₁ h1
+        rw [h k, get?_eq_none_of_isEmpty c₂ h2e k] at hk
+        exact absurd hk (by simp)
+    have hheight : c₁.height = c₂.height := by
+      have hle1 : c₁.height ≤ c₂.height := by
+        obtain ⟨k, hk, hs⟩ := exists_get?_at_height c₁ h1
+        have hs2 : (c₂.get? k).isSome = true := by rw [← h k]; exact hs
+        rcases Nat.lt_or_ge c₂.height c₁.height with hgt | hge
+        · exfalso; rw [get?_of_gt c₂ k (by omega)] at hs2; exact absurd hs2 (by simp)
+        · exact hge
+      have hle2 : c₂.height ≤ c₁.height := by
+        obtain ⟨k, hk, hs⟩ := exists_get?_at_height c₂ h2
+        have hs1 : (c₁.get? k).isSome = true := by rw [h k]; exact hs
+        rcases Nat.lt_or_ge c₁.height c₂.height with hgt | hge
+        · exfalso; rw [get?_of_gt c₁ k (by omega)] at hs1; exact absurd hs1 (by simp)
+        · exact hge
+      omega
+    obtain ⟨h1', t1, wf1⟩ := c₁
+    obtain ⟨h2', t2, wf2⟩ := c₂
+    simp only at hheight
+    subst hheight
+    have htt : t1 = t2 := by
+      apply Tree.ext h1' wf1.1 wf2.1
+      intro k hk
+      have hk' := h k
+      rw [get?_of_le ⟨h1', t1, wf1⟩ k hk, get?_of_le ⟨h1', t2, wf2⟩ k hk] at hk'
+      exact hk'
+    subst htt; rfl
+
+/-- **Associativity of `meet`** for an associative `combine`. Read both sides off `get?`
+(`get?_meet`) — they are the same nested `optVmeet` — and conclude by collection extensionality. -/
+theorem meet_assoc (combine : V → V → V)
+    (hassoc : ∀ x y z, combine (combine x y) z = combine x (combine y z))
+    (a b e : NatCollection L) :
+    meet combine (meet combine a b) e = meet combine a (meet combine b e) := by
+  apply ext_get?
+  intro k
+  rw [get?_meet combine (meet combine a b) e k, get?_meet combine a b k,
+      get?_meet combine a (meet combine b e) k, get?_meet combine b e k]
+  exact optVmeet_assoc combine hassoc (a.get? k) (b.get? k) (e.get? k)
+
 section Tests
 
 -- The canonical-shape invariant is a field, so it is available on *every* collection — and

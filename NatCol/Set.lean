@@ -48,6 +48,30 @@ instance : LeafOps UInt32 Unit where
     show ((a ||| b) == 0) = false
     have : (a == 0) = false := hne
     bv_decide
+  get?_empty i := by simp [testBit_zero]
+  get?_meet _ a b i _ := by
+    have htb : testBit (a &&& b) i = (testBit a i && testBit b i) := by unfold testBit; bv_decide
+    show (if testBit (a &&& b) i then some () else none)
+        = optVmeet _ (if testBit a i then some () else none) (if testBit b i then some () else none)
+    rw [htb]
+    by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;> simp [ha, hb, optVmeet]
+  get?_ext a b h := by
+    apply eq_of_testBit_eq
+    intro i hi
+    have hi' := h i hi
+    by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;> simp_all
+  exists_get?_of_ne_empty u h := by
+    have hu : u ≠ 0 := beq_eq_false_iff_ne.mp h
+    rcases Classical.em (∃ i, i < 32 ∧ testBit u i = true) with ⟨i, hi, hb⟩ | hno
+    · exact ⟨i, hi, by simp [hb]⟩
+    · exfalso
+      apply hu
+      apply eq_of_testBit_eq
+      intro i hi
+      rw [testBit_zero]
+      cases hb : testBit u i with
+      | false => rfl
+      | true => exact absurd ⟨i, hi, hb⟩ hno
 
 /-- A set of natural numbers. -/
 def NatSet : Type := NatCollection UInt32
@@ -130,6 +154,11 @@ theorem inter_empty_right (s : NatSet) : s ∩ NatSet.empty = NatSet.empty :=
 and the flip law `NatCollection.meet_comm` gives unconditional commutativity.) -/
 theorem inter_comm (s t : NatSet) : s ∩ t = t ∩ s :=
   NatCollection.meet_comm (fun _ _ => ()) s t
+
+/-- Intersection is associative. (The set `combine` is constantly `()`, which is trivially
+associative, so `NatCollection.meet_assoc` applies with no side condition.) -/
+theorem inter_assoc (s t u : NatSet) : (s ∩ t) ∩ u = s ∩ (t ∩ u) :=
+  NatCollection.meet_assoc (fun _ _ => ()) (fun _ _ _ => rfl) s t u
 
 /-- The empty set is a subset of (restricts) every set. -/
 @[simp]

@@ -25,6 +25,25 @@ abbrev Tree (leaf : Type u) : Nat → Type u
   | 0 => leaf
   | n + 1 => Node (Tree leaf n)
 
+/-- Value-level intersection of two lookups: a key survives only if present on *both* sides.
+The total-`combine` companion of `Node.optMeet`, used at the leaf/tree/collection levels where
+the merge never prunes a present-on-both key. -/
+def optVmeet {V : Type u} (c : V → V → V) : Option V → Option V → Option V
+  | some x, some y => some (c x y)
+  | _,      _      => none
+
+/-- `optVmeet` is associative when the value combine is. -/
+theorem optVmeet_assoc {V : Type u} (c : V → V → V) (hc : ∀ x y z, c (c x y) z = c x (c y z))
+    (oa ob od : Option V) :
+    optVmeet c (optVmeet c oa ob) od = optVmeet c oa (optVmeet c ob od) := by
+  cases oa <;> cases ob <;> cases od <;> simp only [optVmeet]
+  rw [hc]
+
+/-- `optVmeet` with the combine's arguments flipped swaps the operands. -/
+theorem optVmeet_flip {V : Type u} (c : V → V → V) (ox oy : Option V) :
+    optVmeet (fun x y => c y x) oy ox = optVmeet c ox oy := by
+  cases ox <;> cases oy <;> rfl
+
 /-- A leaf collection: maps 5-bit slot indices to values of type `V`. This is the single
 seam that distinguishes sets (`UInt32` leaves, `V = Unit`) from maps (`Node α` leaves,
 `V = α`); everything else is shared. -/
@@ -75,6 +94,18 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   /-- Joining (with any combine) onto a non-empty leaf stays non-empty. Backs
   `Tree.isEmpty_joinEq_eq_false`, which the canonical-shape side of `join` associativity needs. -/
   isEmpty_join : ∀ (c : V → V → V) (a b : L), isEmpty a = false → isEmpty (join c a b) = false
+  /-- The empty leaf reads `none` everywhere. Backs the `get?`-based denotational semantics the
+  `meet`-associativity proof is built against. -/
+  get?_empty : ∀ (i : UInt32), get? (empty : L) i = none
+  /-- `get?` reads a `meet` as the value-level intersection (`optVmeet`) of the two lookups: a
+  slot survives only if present on both leaves. The leaf base case of `Tree.get?_meetEq`. Stated
+  on in-range slots (`< 32`); leaf `get?` only ever reads `chunk`s, which are. -/
+  get?_meet : ∀ (c : V → V → V) (a b : L) (i : UInt32), i < 32 →
+    get? (meet c a b) i = optVmeet c (get? a i) (get? b i)
+  /-- A leaf is determined by its `get?` at in-range slots. The leaf base case of `Tree.ext`. -/
+  get?_ext : ∀ (a b : L), (∀ i, i < 32 → get? a i = get? b i) → a = b
+  /-- A non-empty leaf has a present slot (`< 32`). The leaf base case of `Tree.exists_get?`. -/
+  exists_get?_of_ne_empty : ∀ (l : L), isEmpty l = false → ∃ i, i < 32 ∧ (get? l i).isSome
 
 namespace Tree
 
@@ -597,6 +628,236 @@ theorem Full_modify : (h : Nat) → (k : Nat) → (f : V → V) → (t : Tree L 
           rw [isEmpty_modify h k f child]; exact hchild.1
         | none =>
           rw [hget] at hfa; simp at hfa
+
+/-! ### `get?` characterization of `meet` and tree extensionality
+
+The `meet`-associativity proof is denotational: it reads `meet` off `get?` and uses that two
+canonical trees agreeing on every `get?` are equal. `get?_meetEq`/`get?_meetSpine` characterize
+the equal-height and spine merges as `optVmeet`; `Tree.ext` recovers a tree from its `get?` by
+probing keys whose top chunk selects a given slot (`chunk_probe_*`). -/
+
+/-- `Tree.get?` unfolded one level (the defining equation at a successor height). -/
+theorem get?_succ (k h : Nat) (n : Tree L (h + 1)) :
+    Tree.get? k (h + 1) n
+      = match Node.get? n (chunk k (h + 1)) with
+        | some child => Tree.get? k h child
+        | none => none := by
+  simp only [Tree.get?]
+
+/-- `Tree.get?` through a present top slot descends into that child. -/
+theorem get?_succ_some (k h : Nat) (n : Tree L (h + 1)) (child : Tree L h)
+    (hc : Node.get? n (chunk k (h + 1)) = some child) : Tree.get? k (h + 1) n = Tree.get? k h child := by
+  rw [get?_succ, hc]
+
+/-- `Tree.get?` through an absent top slot is `none`. -/
+theorem get?_succ_none (k h : Nat) (n : Tree L (h + 1))
+    (hc : Node.get? n (chunk k (h + 1)) = none) : Tree.get? k (h + 1) n = none := by
+  rw [get?_succ, hc]
+
+/-- `Tree.get?` commutes with a height cast. -/
+@[simp] theorem get?_cast {ha hb : Nat} (p : ha = hb) (k : Nat) (t : Tree L ha) :
+    Tree.get? k hb (Tree.cast p t) = Tree.get? k ha t := by subst p; rfl
+
+/-- The empty tree reads `none` everywhere. -/
+theorem get?_empty (k : Nat) : (h : Nat) → Tree.get? k h (Tree.empty h : Tree L h) = none
+  | 0 => by simp only [Tree.get?, Tree.empty]; exact LeafOps.get?_empty _
+  | _ + 1 => by simp only [Tree.empty, get?_succ, Node.get?_empty]
+
+/-- A tree that is empty reads `none` everywhere (even off the top slot). -/
+theorem get?_eq_none_of_isEmpty (k : Nat) : (h : Nat) → (t : Tree L h) →
+    Tree.isEmpty h t = true → Tree.get? k h t = none
+  | 0, l, hl => by
+      simp only [Tree.get?]
+      rw [LeafOps.eq_empty_of_isEmpty l hl, LeafOps.get?_empty]
+  | h + 1, n, hn => by
+      simp only [Tree.isEmpty] at hn
+      simp only [get?_succ, Node.get?_eq_none_of_isEmpty n hn]
+
+/-- `Tree.get?` depends on a key only through its chunks `0..h`, so keys agreeing there look up
+the same value. -/
+theorem get?_congr (k₁ k₂ : Nat) : (h : Nat) → (t : Tree L h) →
+    (∀ j, j ≤ h → chunk k₁ j = chunk k₂ j) → Tree.get? k₁ h t = Tree.get? k₂ h t
+  | 0, l, hch => by simp only [Tree.get?, hch 0 (Nat.le_refl 0)]
+  | h + 1, n, hch => by
+      rw [get?_succ, get?_succ, hch (h + 1) (Nat.le_refl _)]
+      cases Node.get? n (chunk k₂ (h + 1)) with
+      | none => rfl
+      | some c => exact get?_congr k₁ k₂ h c (fun j hj => hch j (Nat.le_succ_of_le hj))
+
+/-- `get?` of an equal-height `meetEq` is the value-level intersection of the two lookups. -/
+theorem get?_meetEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b : Tree L h) →
+    Tree.get? k h (meetEq c h a b) = optVmeet c (Tree.get? k h a) (Tree.get? k h b)
+  | 0, a, b => by
+      simp only [meetEq, Tree.get?]
+      exact LeafOps.get?_meet c a b (chunk k 0) (chunk_lt k 0)
+  | h + 1, a, b => by
+      simp only [meetEq]
+      rw [get?_succ, get?_succ, get?_succ, Node.get?_meet _ a b (chunk k (h + 1)) (chunk_lt _ _)]
+      cases hga : Node.get? a (chunk k (h + 1)) with
+      | none => simp only [Node.optMeet, optVmeet]
+      | some ca =>
+        cases hgb : Node.get? b (chunk k (h + 1)) with
+        | none => simp only [Node.optMeet]; cases Tree.get? k h ca <;> rfl
+        | some cb =>
+          show (match (if Tree.isEmpty h (meetEq c h ca cb) then none else some (meetEq c h ca cb)) with
+                  | some cc => Tree.get? k h cc | none => none)
+              = optVmeet c (Tree.get? k h ca) (Tree.get? k h cb)
+          rw [← get?_meetEq c k h ca cb]
+          by_cases hemp : Tree.isEmpty h (meetEq c h ca cb) = true
+          · rw [if_pos hemp, get?_eq_none_of_isEmpty k h _ hemp]
+          · rw [if_neg hemp]
+
+/-- `get?` of a lift: a key in range reads the original tree; a key needing more height than the
+slot-0 spine provides reads `none`. -/
+theorem get?_liftBy (h : Nat) (t : Tree L h) (k : Nat) : (d : Nat) → requiredHeight k ≤ h + d →
+    Tree.get? k (h + d) (liftBy d t) = if requiredHeight k ≤ h then Tree.get? k h t else none
+  | 0, _ => by simp only [liftBy, Nat.add_zero]; rw [if_pos (by omega)]
+  | d + 1, hk => by
+      show Tree.get? k (h + d + 1) (Node.singleton 0 (liftBy d t))
+          = if requiredHeight k ≤ h then Tree.get? k h t else none
+      rw [get?_succ, Node.get?_singleton 0 (liftBy d t) (chunk k (h + d + 1)) (by decide) (chunk_lt _ _)]
+      by_cases hcase : requiredHeight k ≤ h + d
+      · rw [if_pos (chunk_eq_zero_of_requiredHeight_lt hcase (by omega))]
+        show Tree.get? k (h + d) (liftBy d t) = if requiredHeight k ≤ h then Tree.get? k h t else none
+        rw [get?_liftBy h t k d hcase]
+      · rw [if_neg (chunk_ne_zero_of_requiredHeight_eq (h := h + d) (by omega)),
+            if_neg (show ¬ requiredHeight k ≤ h by omega)]
+
+/-- `get?` of a spine merge: the shorter tree intersected against the keys of the taller tree on
+its slot-0 spine (`get?_meetEq` after descending). For keys in range (`requiredHeight ≤ h`). -/
+theorem get?_meetSpine (c : V → V → V) (h : Nat) (s : Tree L h) (k : Nat)
+    (hk : requiredHeight k ≤ h) : (d : Nat) → (t : Tree L (h + d)) →
+      Tree.get? k h (meetSpine c h d s t) = optVmeet c (Tree.get? k h s) (Tree.get? k (h + d) t)
+  | 0, t => by simp only [meetSpine, Nat.add_zero]; rw [get?_meetEq c k h s t]
+  | d + 1, t => by
+      show Tree.get? k h (meetSpine c h (d + 1) s t)
+          = optVmeet c (Tree.get? k h s) (Tree.get? k (h + d + 1) t)
+      simp only [meetSpine]
+      have hchunk : chunk k (h + d + 1) = 0 :=
+        chunk_eq_zero_of_requiredHeight_lt (Nat.le_trans hk (Nat.le_add_right h d)) (by omega)
+      cases ht0 : Node.get? t 0 with
+      | none =>
+        rw [get?_empty k h, get?_succ_none k (h + d) t (by rw [hchunk]; exact ht0)]
+        cases Tree.get? k h s <;> rfl
+      | some child =>
+        rw [get?_meetSpine c h s k hk d child,
+            get?_succ_some k (h + d) t child (by rw [hchunk]; exact ht0)]
+
+/-- A non-empty `Full` tree has a present key (in range). The denotational analogue of
+`isEmpty_eq_false`. -/
+theorem exists_get? : (h : Nat) → (t : Tree L h) → Full h t → Tree.isEmpty h t = false →
+    ∃ k, requiredHeight k ≤ h ∧ (Tree.get? k h t).isSome
+  | 0, l, _, hne => by
+      obtain ⟨i, hi, hsome⟩ := LeafOps.exists_get?_of_ne_empty l hne
+      have hlt : i.toNat < 32 := by
+        have := UInt32.lt_iff_toNat_lt.mp hi; rwa [show (32:UInt32).toNat = 32 from by decide] at this
+      refine ⟨i.toNat, requiredHeight_le_of_lt_pow (by rw [Nat.pow_one]; exact hlt), ?_⟩
+      simp only [Tree.get?, chunk_toNat_zero i hi]; exact hsome
+  | h + 1, n, hf, hne => by
+      obtain ⟨s, hs, hsome⟩ := Node.exists_get?_of_isEmpty_false n (by simpa [Tree.isEmpty] using hne)
+      obtain ⟨child, hchild⟩ := Option.isSome_iff_exists.mp hsome
+      have hmem := Node.mem_of_get? n s child hchild
+      obtain ⟨k', hk', hk'some⟩ := exists_get? h child (hf child hmem).2 (hf child hmem).1
+      have hpk := lt_pow_of_requiredHeight_le hk'
+      refine ⟨k' + s.toNat * 32 ^ (h + 1), requiredHeight_probe_le s k' h hpk hs, ?_⟩
+      have hns : Node.get? n (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some child := by
+        rw [chunk_probe_high s k' h hpk hs]; exact hchild
+      rw [get?_succ_some _ h n child hns,
+          get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h child (fun j hj => chunk_probe_low s k' h j hj)]
+      exact hk'some
+
+/-- A non-empty *height-minimal* (`TopProper`) tree has a present key whose `requiredHeight`
+is exactly the tree's height: the minimal-height top node has a set slot above slot 0, and
+descending it yields a key reaching the top level. Pins the height to the contents. -/
+theorem exists_get?_topProper : (h : Nat) → (t : Tree L h) → Full h t → TopProper h t →
+    Tree.isEmpty h t = false → ∃ k, requiredHeight k = h ∧ (Tree.get? k h t).isSome
+  | 0, t, hf, _, hne => by
+      obtain ⟨k, hk, hs⟩ := exists_get? 0 t hf hne
+      exact ⟨k, by omega, hs⟩
+  | h + 1, n, hf, htp, _ => by
+      obtain ⟨s, hs1, hs32, hbit⟩ := exists_high_bit n.positionsMask htp
+      have hsome : (Node.get? n s).isSome = true := by rw [← Node.testBit_eq_isSome_get?]; exact hbit
+      obtain ⟨child, hchild⟩ := Option.isSome_iff_exists.mp hsome
+      have hmem := Node.mem_of_get? n s child hchild
+      obtain ⟨k', hk', hk'some⟩ := exists_get? h child (hf child hmem).2 (hf child hmem).1
+      have hpk := lt_pow_of_requiredHeight_le hk'
+      have hs1' : 1 ≤ s.toNat := by have := UInt32.le_iff_toNat_le.mp hs1; simpa using this
+      have hge : ¬ (k' + s.toNat * 32 ^ (h + 1) < 32 ^ (h + 1)) := by
+        have hmul : 1 * 32 ^ (h + 1) ≤ s.toNat * 32 ^ (h + 1) := Nat.mul_le_mul hs1' (Nat.le_refl _)
+        rw [Nat.one_mul] at hmul; omega
+      have hreq : requiredHeight (k' + s.toNat * 32 ^ (h + 1)) = h + 1 := by
+        have hub := requiredHeight_probe_le s k' h hpk hs32
+        have hlb : ¬ requiredHeight (k' + s.toNat * 32 ^ (h + 1)) ≤ h :=
+          fun hle => hge (lt_pow_of_requiredHeight_le hle)
+        omega
+      refine ⟨k' + s.toNat * 32 ^ (h + 1), hreq, ?_⟩
+      rw [get?_succ_some (k' + s.toNat * 32 ^ (h + 1)) h n child
+            (by rw [chunk_probe_high s k' h hpk hs32]; exact hchild),
+          get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h child (fun j hj => chunk_probe_low s k' h j hj)]
+      exact hk'some
+
+/-- **Tree extensionality**: two `Full` trees of the same height agreeing on every in-range
+`get?` are equal. Masks agree by presence (`exists_get?` rules out one-sided slots); children
+agree by the induction hypothesis, fed per-slot child `get?`s via probe keys. -/
+theorem ext : (h : Nat) → {a b : Tree L h} → Full h a → Full h b →
+    (∀ k, requiredHeight k ≤ h → Tree.get? k h a = Tree.get? k h b) → a = b
+  | 0, a, b, _, _, hget => by
+      apply LeafOps.get?_ext
+      intro i hi
+      have hlt : i.toNat < 32 := by
+        have := UInt32.lt_iff_toNat_lt.mp hi; rwa [show (32:UInt32).toNat = 32 from by decide] at this
+      have := hget i.toNat (requiredHeight_le_of_lt_pow (by rw [Nat.pow_one]; exact hlt))
+      simpa only [Tree.get?, chunk_toNat_zero i hi] using this
+  | h + 1, a, b, hfa, hfb, hget => by
+      apply Node.ext
+      intro s hs
+      have hchild : ∀ (ca cb : Tree L h), Node.get? a s = some ca → Node.get? b s = some cb → ca = cb := by
+        intro ca cb hca hcb
+        refine ext h (hfa ca (Node.mem_of_get? a s ca hca)).2 (hfb cb (Node.mem_of_get? b s cb hcb)).2 ?_
+        intro k' hk'
+        have hpk := lt_pow_of_requiredHeight_le hk'
+        have hK := hget (k' + s.toNat * 32 ^ (h + 1)) (requiredHeight_probe_le s k' h hpk hs)
+        have hca' : Node.get? a (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some ca := by
+          rw [chunk_probe_high s k' h hpk hs]; exact hca
+        have hcb' : Node.get? b (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some cb := by
+          rw [chunk_probe_high s k' h hpk hs]; exact hcb
+        rw [get?_succ_some _ h a ca hca', get?_succ_some _ h b cb hcb',
+            get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h ca (fun j hj => chunk_probe_low s k' h j hj),
+            get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h cb (fun j hj => chunk_probe_low s k' h j hj)] at hK
+        exact hK
+      cases hca : Node.get? a s with
+      | none =>
+        cases hcb : Node.get? b s with
+        | none => rfl
+        | some cb =>
+          exfalso
+          have hmem := Node.mem_of_get? b s cb hcb
+          obtain ⟨k', hk', hk'some⟩ := exists_get? h cb (hfb cb hmem).2 (hfb cb hmem).1
+          have hpk := lt_pow_of_requiredHeight_le hk'
+          have hK := hget (k' + s.toNat * 32 ^ (h + 1)) (requiredHeight_probe_le s k' h hpk hs)
+          have hca' : Node.get? a (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = none := by
+            rw [chunk_probe_high s k' h hpk hs]; exact hca
+          have hcb' : Node.get? b (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some cb := by
+            rw [chunk_probe_high s k' h hpk hs]; exact hcb
+          rw [get?_succ_none _ h a hca', get?_succ_some _ h b cb hcb',
+              get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h cb (fun j hj => chunk_probe_low s k' h j hj)] at hK
+          rw [← hK] at hk'some; simp at hk'some
+      | some ca =>
+        cases hcb : Node.get? b s with
+        | none =>
+          exfalso
+          have hmem := Node.mem_of_get? a s ca hca
+          obtain ⟨k', hk', hk'some⟩ := exists_get? h ca (hfa ca hmem).2 (hfa ca hmem).1
+          have hpk := lt_pow_of_requiredHeight_le hk'
+          have hK := hget (k' + s.toNat * 32 ^ (h + 1)) (requiredHeight_probe_le s k' h hpk hs)
+          have hca' : Node.get? a (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some ca := by
+            rw [chunk_probe_high s k' h hpk hs]; exact hca
+          have hcb' : Node.get? b (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = none := by
+            rw [chunk_probe_high s k' h hpk hs]; exact hcb
+          rw [get?_succ_some _ h a ca hca', get?_succ_none _ h b hcb',
+              get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h ca (fun j hj => chunk_probe_low s k' h j hj)] at hK
+          rw [hK] at hk'some; simp at hk'some
+        | some cb => exact congrArg some (hchild ca cb hca hcb)
 
 /-! ### Bridge lemmas relating `joinSpine`/`liftBy` to the equal-height `joinEq`
 

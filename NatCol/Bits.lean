@@ -299,6 +299,34 @@ theorem eq_of_testBit_eq {a b : UInt32} (h : ∀ i, i < 32 → testBit a i = tes
 theorem testBit_or (a b i : UInt32) : testBit (a ||| b) i = (testBit a i || testBit b i) := by
   unfold testBit; bv_decide
 
+/-- A mask that is height-minimal (`2 ≤ m`) has a set bit above slot 0 — that high bit is what
+forces the height in the canonical-shape invariant. -/
+theorem exists_high_bit (m : UInt32) (h : 2 ≤ m) :
+    ∃ s, 1 ≤ s ∧ s < 32 ∧ testBit m s = true := by
+  rcases Classical.em (∃ s, 1 ≤ s ∧ s < 32 ∧ testBit m s = true) with hyes | hno
+  · exact hyes
+  · exfalso
+    have hbits : ∀ s, 1 ≤ s → s < 32 → testBit m s = false := by
+      intro s h1 h2
+      cases hb : testBit m s with
+      | false => rfl
+      | true => exact absurd ⟨s, h1, h2, hb⟩ hno
+    have hm1 : m = m &&& 1 := by
+      apply eq_of_testBit_eq
+      intro i hi
+      by_cases hi0 : i = 0
+      · subst hi0
+        rw [show testBit (m &&& 1) 0 = (testBit m 0 && testBit (1:UInt32) 0) from by unfold testBit; bv_decide,
+            show testBit (1:UInt32) 0 = true from by decide]
+        simp
+      · have h1i : 1 ≤ i := by revert hi0; bv_decide
+        rw [hbits i h1i hi,
+            show testBit (m &&& 1) i = (testBit m i && testBit (1:UInt32) i) from by unfold testBit; bv_decide,
+            hbits i h1i hi]
+        simp
+    have hcon : (2:UInt32) ≤ m → m = m &&& 1 → False := by intro h2 he; rw [he] at h2; bv_decide
+    exact hcon h hm1
+
 /-- A 5-bit chunk is always a valid slot index (`< 32`). -/
 theorem chunk_lt (k level : Nat) : chunk k level < 32 := by
   have hle : (k >>> (5 * level)) &&& 31 ≤ 31 := Nat.and_le_right
@@ -306,5 +334,125 @@ theorem chunk_lt (k level : Nat) : chunk k level < 32 := by
   have e2 : (32 : UInt32).toNat = 32 := by decide
   rw [chunk, UInt32.lt_iff_toNat_lt, UInt32.toNat_ofNat_of_lt' hlt, e2]
   omega
+
+/-! ### `chunk` and `requiredHeight` as arithmetic
+
+The bitwise `chunk`/`requiredHeight` definitions are restated as base-32 `div`/`mod` so the
+trie-extensionality (`Tree.ext`) and `get?`-characterization proofs can probe keys and bound
+chunk levels with ordinary `Nat` arithmetic (`omega` + the `Nat.*_div_*` lemmas). -/
+
+/-- `0 < 32^n` (kept around so the `div`/`mod` rewrites below have their positivity side goal). -/
+private theorem pow32_pos (n : Nat) : 0 < 32^n := Nat.pow_pos (by decide)
+
+/-- The 5-bit chunk at `level` is the base-32 digit: divide out the lower levels, take mod 32. -/
+theorem chunk_eq_div_mod (k level : Nat) : chunk k level = UInt32.ofNat ((k / 32^level) % 32) := by
+  unfold chunk
+  congr 1
+  rw [Nat.shiftRight_eq_div_pow, show (31 : Nat) = 2^5 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
+      Nat.pow_mul, show (2:Nat)^5 = 32 from rfl]
+
+/-- `requiredHeight` is below `h` exactly when the key fits in a height-`h` tree (`< 32^(h+1)`). -/
+theorem requiredHeight_le_iff_lt_pow : ∀ (h k : Nat), requiredHeight k ≤ h ↔ k < 32^(h+1) := by
+  intro h
+  induction h with
+  | zero =>
+    intro k
+    rw [requiredHeight]
+    by_cases hk : k < 32
+    · simp only [if_pos hk]; exact ⟨fun _ => hk, fun _ => Nat.le_refl 0⟩
+    · simp only [if_neg hk]
+      constructor
+      · intro h; omega
+      · intro h; omega
+  | succ h ih =>
+    intro k
+    rw [requiredHeight]
+    by_cases hk : k < 32
+    · have : k < 32^(h+2) := Nat.lt_of_lt_of_le hk (Nat.le_trans (by decide : (32:Nat) ≤ 32^1)
+        (Nat.pow_le_pow_right (by decide) (by omega)))
+      simp only [if_pos hk]; exact ⟨fun _ => this, fun _ => Nat.zero_le _⟩
+    · simp only [if_neg hk]
+      rw [show ∀ a, (1 + a ≤ h + 1) ↔ (a ≤ h) from fun a => by omega, ih (k/32),
+          show (32:Nat)^(h+1+1) = 32^(h+1) * 32 from by rw [Nat.pow_succ]]
+      exact Nat.div_lt_iff_lt_mul (by decide)
+
+/-- A key that fits in a height-`h` tree (`< 32^(h+1)`) has `requiredHeight ≤ h`. -/
+theorem requiredHeight_le_of_lt_pow {k h : Nat} (hk : k < 32^(h+1)) : requiredHeight k ≤ h :=
+  (requiredHeight_le_iff_lt_pow h k).mpr hk
+
+/-- A key with `requiredHeight ≤ h` fits in a height-`h` tree (`< 32^(h+1)`). -/
+theorem lt_pow_of_requiredHeight_le {k h : Nat} (hk : requiredHeight k ≤ h) : k < 32^(h+1) :=
+  (requiredHeight_le_iff_lt_pow h k).mp hk
+
+/-- A key smaller than `32^j` has a zero chunk at level `j` (no bits reach that window). -/
+theorem chunk_eq_zero_of_lt {k j : Nat} (hk : k < 32^j) : chunk k j = 0 := by
+  rw [chunk_eq_div_mod, Nat.div_eq_of_lt hk]
+  rfl
+
+/-- Chunks above the required height are zero. -/
+theorem chunk_eq_zero_of_requiredHeight_lt {k h j : Nat} (hk : requiredHeight k ≤ h) (hj : h < j) :
+    chunk k j = 0 :=
+  chunk_eq_zero_of_lt (Nat.lt_of_lt_of_le (lt_pow_of_requiredHeight_le hk)
+    (Nat.pow_le_pow_right (by decide) (by omega)))
+
+/-- At its own required height (`> 0`), a key's chunk is non-zero — that is what makes the height
+minimal. -/
+theorem chunk_ne_zero_of_requiredHeight_eq {k h : Nat} (hk : requiredHeight k = h + 1) :
+    chunk k (h + 1) ≠ 0 := by
+  have hge : ¬ k < 32^(h+1) := fun hlt => by
+    have := requiredHeight_le_of_lt_pow hlt; omega
+  have hlt : k < 32^(h+2) := lt_pow_of_requiredHeight_le (by omega)
+  rw [chunk_eq_div_mod]
+  have hq1 : 1 ≤ k / 32^(h+1) := (Nat.one_le_div_iff (pow32_pos _)).mpr (Nat.le_of_not_lt hge)
+  have hq2 : k / 32^(h+1) < 32 := by
+    rw [Nat.div_lt_iff_lt_mul (pow32_pos _), Nat.mul_comm, ← Nat.pow_succ]; exact hlt
+  rw [Nat.mod_eq_of_lt hq2]
+  intro hzero
+  have : k / 32^(h+1) = 0 := by
+    have h0 : (UInt32.ofNat (k / 32^(h+1))).toNat = (0 : UInt32).toNat := by rw [hzero]
+    rwa [UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hq2 (by decide)),
+        show ((0:UInt32).toNat) = 0 from rfl] at h0
+  omega
+
+/-- The chunk-0 of an in-range slot `i` (`< 32`) read back as a key is `i` itself. -/
+theorem chunk_toNat_zero (i : UInt32) (hi : i < 32) : chunk i.toNat 0 = i := by
+  have hlt : i.toNat < 32 := by
+    have := UInt32.lt_iff_toNat_lt.mp hi; rwa [show (32:UInt32).toNat = 32 from by decide] at this
+  rw [chunk_eq_div_mod, Nat.pow_zero, Nat.div_one, Nat.mod_eq_of_lt hlt]
+  apply UInt32.toNat_inj.mp
+  rw [UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hlt (by decide))]
+
+/-- Probe key for slot `s` at level `h+1`, carrying lower bits `k'`: its top chunk reads `s`. -/
+theorem chunk_probe_high (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) (hs : s < 32) :
+    chunk (k' + s.toNat * 32^(h+1)) (h+1) = s := by
+  have hslt : s.toNat < 32 := by
+    have := UInt32.lt_iff_toNat_lt.mp hs; rwa [show (32:UInt32).toNat = 32 from by decide] at this
+  rw [chunk_eq_div_mod, Nat.add_mul_div_right _ _ (pow32_pos _), Nat.div_eq_of_lt hk',
+      Nat.zero_add, Nat.mod_eq_of_lt hslt]
+  apply UInt32.toNat_inj.mp
+  rw [UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hslt (by decide))]
+
+/-- The probe key agrees with its lower bits `k'` on every chunk at or below `h`. -/
+theorem chunk_probe_low (s : UInt32) (k' h j : Nat) (hj : j ≤ h) :
+    chunk (k' + s.toNat * 32^(h+1)) j = chunk k' j := by
+  rw [chunk_eq_div_mod, chunk_eq_div_mod]
+  congr 1
+  have e1 : s.toNat * 32^(h+1) = (s.toNat * 32^(h+1-j)) * 32^j := by
+    rw [Nat.mul_assoc, ← Nat.pow_add, show (h+1-j)+j = h+1 from by omega]
+  have e2 : s.toNat * 32^(h+1-j) = (s.toNat * 32^(h-j)) * 32 := by
+    rw [show h+1-j = h-j+1 from by omega, Nat.pow_succ, Nat.mul_assoc]
+  rw [e1, Nat.add_mul_div_right _ _ (pow32_pos j), e2, Nat.add_mul_mod_self_right]
+
+/-- The probe key still fits a height-`(h+1)` tree. -/
+theorem requiredHeight_probe_le (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) (hs : s < 32) :
+    requiredHeight (k' + s.toNat * 32^(h+1)) ≤ h + 1 := by
+  have hslt : s.toNat < 32 := by
+    have := UInt32.lt_iff_toNat_lt.mp hs; rwa [show (32:UInt32).toNat = 32 from by decide] at this
+  apply requiredHeight_le_of_lt_pow
+  rw [show (32:Nat)^(h+1+1) = 32^(h+1) * 32 from by rw [Nat.pow_succ]]
+  calc k' + s.toNat * 32^(h+1) < 32^(h+1) + s.toNat * 32^(h+1) := by omega
+    _ = (1 + s.toNat) * 32^(h+1) := by rw [Nat.add_mul, Nat.one_mul]
+    _ = 32^(h+1) * (1 + s.toNat) := by rw [Nat.mul_comm]
+    _ ≤ 32^(h+1) * 32 := Nat.mul_le_mul (Nat.le_refl _) (by omega)
 
 end NatCol

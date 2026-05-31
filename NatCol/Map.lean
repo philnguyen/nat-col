@@ -38,6 +38,13 @@ instance {α : Type u} : LeafOps (Node α) α where
   join_assoc c hc a b d :=
     Node.join_assoc _ a b d (fun s _ => Node.optJoin_someC_assoc c hc (a.get? s) (b.get? s) (d.get? s))
   isEmpty_join c a b hne := Node.isEmpty_join_left c a b hne
+  get?_empty i := Node.get?_empty i
+  get?_meet c a b i hi := by
+    show Node.get? (Node.meet (fun x y => some (c x y)) a b) i = optVmeet c (Node.get? a i) (Node.get? b i)
+    rw [Node.get?_meet (fun x y => some (c x y)) a b i hi]
+    cases Node.get? a i <;> cases Node.get? b i <;> rfl
+  get?_ext a b h := Node.ext h
+  exists_get?_of_ne_empty n h := Node.exists_get?_of_isEmpty_false n h
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -138,6 +145,14 @@ theorem meet_comm_of_comm (combine : α → α → α) (hcomm : ∀ x y, combine
     (m₁ m₂ : NatMap α) : m₁.meet combine m₂ = m₂.meet combine m₁ := by
   have h : (fun x y => combine y x) = combine := funext fun x => funext fun y => hcomm y x
   rw [meet_comm, h]
+
+/-- `meet` is associative when its combine is associative. (Values at coinciding keys are resolved
+`combine left right`, so associativity of the result needs associativity of `combine`.) -/
+theorem meet_assoc (combine : α → α → α)
+    (hassoc : ∀ x y z, combine (combine x y) z = combine x (combine y z))
+    (m₁ m₂ m₃ : NatMap α) :
+    (m₁.meet combine m₂).meet combine m₃ = m₁.meet combine (m₂.meet combine m₃) :=
+  NatCollection.meet_assoc combine hassoc m₁ m₂ m₃
 
 /-- The empty map restricts every map (its domain is vacuously a subset). -/
 @[simp, grind =]
