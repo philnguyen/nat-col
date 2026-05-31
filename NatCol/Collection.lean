@@ -762,6 +762,65 @@ theorem meet_assoc (combine : V → V → V)
       get?_meet combine a (meet combine b e) k, get?_meet combine b e k]
   exact optVmeet_assoc combine hassoc (a.get? k) (b.get? k) (e.get? k)
 
+/-- **`get?` characterization of `restricts`** (for reflexive `rel`): `a` restricts `b` exactly
+when `optRel rel` relates their lookups at every key. Lifts `Tree.restrictsSpine_iff` across the
+emptiness/height bookkeeping — `get?_cast` clears the height cast, and out-of-range keys read
+`none`, making `optRel` vacuously true on the left. The denotational reading `restricts`
+transitivity is proved against. -/
+theorem get?_restricts (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (a b : NatCollection L) :
+    restricts rel a b = true ↔ ∀ k, optRel rel (a.get? k) (b.get? k) = true := by
+  unfold restricts
+  by_cases hae : a.isEmpty = true
+  · rw [if_pos hae]
+    constructor
+    · intro _ k; rw [get?_eq_none_of_isEmpty a hae k]; rfl
+    · intro _; rfl
+  · rw [if_neg hae]
+    by_cases hbe : b.isEmpty = true
+    · rw [if_pos hbe]
+      constructor
+      · intro h; exact absurd h (by simp)
+      · intro hall
+        obtain ⟨k, hk⟩ := exists_get?_of_ne_empty a (by simpa using hae)
+        obtain ⟨x, hx⟩ := Option.isSome_iff_exists.mp hk
+        have hbad := hall k
+        rw [hx, get?_eq_none_of_isEmpty b hbe k] at hbad
+        simp [optRel] at hbad
+    · rw [if_neg hbe]
+      by_cases hle : a.height ≤ b.height
+      · rw [dif_pos hle,
+            Tree.restrictsSpine_iff rel hrefl a.height a.tree a.wf.1 (b.height - a.height)
+              (Tree.cast (by omega) b.tree) (Tree.Full_cast (by omega) b.tree b.wf.1)]
+        simp only [Tree.get?_cast]
+        constructor
+        · intro hh k
+          by_cases hka : requiredHeight k ≤ a.height
+          · rw [get?_of_le a k hka, get?_of_le b k (by omega)]; exact hh k hka
+          · rw [get?_of_gt a k (by omega)]; rfl
+        · intro hh k hk
+          rw [← get?_of_le a k hk, ← get?_of_le b k (by omega)]; exact hh k
+      · rw [dif_neg hle]
+        constructor
+        · intro h; exact absurd h (by simp)
+        · intro hall
+          obtain ⟨k, hkreq, hks⟩ := exists_get?_at_height a (by simpa using hae)
+          obtain ⟨x, hx⟩ := Option.isSome_iff_exists.mp hks
+          have hbad := hall k
+          rw [hx, get?_of_gt b k (by omega)] at hbad
+          simp [optRel] at hbad
+
+/-- **`restricts` is transitive** when `rel` is reflexive and transitive (a preorder, matching
+`restricts` modelling the refinement order ≤). Read all three `restricts` off `get?`
+(`get?_restricts`) and compose pointwise with `optRel_trans`. Reflexivity is needed only to pin
+down the *set* leaf, whose `restricts` ignores `rel`. -/
+theorem restricts_trans (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (htrans : ∀ x y z, rel x y = true → rel y z = true → rel x z = true)
+    (a b c : NatCollection L) :
+    restricts rel a b = true → restricts rel b c = true → restricts rel a c = true := by
+  rw [get?_restricts rel hrefl a b, get?_restricts rel hrefl b c, get?_restricts rel hrefl a c]
+  intro hab hbc k
+  exact optRel_trans rel htrans (a.get? k) (b.get? k) (c.get? k) (hab k) (hbc k)
+
 section Tests
 
 -- The canonical-shape invariant is a field, so it is available on *every* collection — and

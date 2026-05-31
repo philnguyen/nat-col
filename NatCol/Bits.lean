@@ -299,6 +299,10 @@ theorem eq_of_testBit_eq {a b : UInt32} (h : ∀ i, i < 32 → testBit a i = tes
 theorem testBit_or (a b i : UInt32) : testBit (a ||| b) i = (testBit a i || testBit b i) := by
   unfold testBit; bv_decide
 
+/-- `testBit` distributes over bitwise-and. -/
+theorem testBit_and (a b i : UInt32) : testBit (a &&& b) i = (testBit a i && testBit b i) := by
+  unfold testBit; bv_decide
+
 /-- A mask that is height-minimal (`2 ≤ m`) has a set bit above slot 0 — that high bit is what
 forces the height in the canonical-shape invariant. -/
 theorem exists_high_bit (m : UInt32) (h : 2 ≤ m) :
@@ -442,6 +446,17 @@ theorem chunk_probe_low (s : UInt32) (k' h j : Nat) (hj : j ≤ h) :
   have e2 : s.toNat * 32^(h+1-j) = (s.toNat * 32^(h-j)) * 32 := by
     rw [show h+1-j = h-j+1 from by omega, Nat.pow_succ, Nat.mul_assoc]
   rw [e1, Nat.add_mul_div_right _ _ (pow32_pos j), e2, Nat.add_mul_mod_self_right]
+
+/-- Reducing a key modulo `32^(h+1)` leaves its chunks `0..h` unchanged: those chunks read the
+low `h+1` base-32 digits, which the reduction preserves. Lets a lookup at height `h` ignore a
+key's high digits (used in the forward direction of `restrictsEq_iff`). -/
+theorem chunk_mod_pow (k h j : Nat) (hj : j ≤ h) : chunk (k % 32^(h+1)) j = chunk k j := by
+  rw [chunk_eq_div_mod, chunk_eq_div_mod]
+  congr 1
+  have hsplit : (32 : Nat)^(h+1) = 32^j * 32^(h+1-j) := by rw [← Nat.pow_add]; congr 1; omega
+  have hdvd : (32 : Nat) ∣ 32^(h+1-j) :=
+    ⟨32^(h-j), by rw [show h+1-j = (h-j)+1 from by omega, Nat.pow_succ, Nat.mul_comm]⟩
+  rw [hsplit, Nat.mod_mul_right_div_self, Nat.mod_mod_of_dvd _ hdvd]
 
 /-- The probe key still fits a height-`(h+1)` tree. -/
 theorem requiredHeight_probe_le (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) (hs : s < 32) :

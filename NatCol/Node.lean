@@ -53,6 +53,27 @@ instance {α : Type u} [BEq α] [LawfulBEq α] : LawfulBEq (Node α) where
     rw [Bool.and_eq_true]
     exact ⟨BEq.rfl, BEq.rfl⟩
 
+/-- The value-level reading of `restricts` at a single slot/key: present on the left forces
+present on the right with `rel` holding; absent on the left is vacuously fine. This is the
+denotational counterpart of `restricts` the way `optVmeet` is for `meet`. Lives here (not in
+`Tree`) because `Node.restricts_iff` already needs it. -/
+def optRel {V : Type u} (rel : V → V → Bool) : Option V → Option V → Bool
+  | some x, some y => rel x y
+  | some _, none   => false
+  | none,   _      => true
+
+/-- `optRel` is transitive when `rel` is: composing two restrictions composes the values via
+`rel`-transitivity, and an absent left side stays vacuous. The engine of `restricts`
+transitivity at every layer. -/
+theorem optRel_trans {V : Type u} (rel : V → V → Bool)
+    (htrans : ∀ x y z, rel x y = true → rel y z = true → rel x z = true) :
+    ∀ (ox oy oz : Option V),
+      optRel rel ox oy = true → optRel rel oy oz = true → optRel rel ox oz = true
+  | none, _, _, _, _ => rfl
+  | some _, none, _, h, _ => absurd h (by simp [optRel])
+  | some _, some _, none, _, h => absurd h (by simp [optRel])
+  | some x, some y, some z, hxy, hyz => htrans x y z hxy hyz
+
 namespace Node
 
 /-- The empty node (no slots present), backed by a zero-capacity array. -/
@@ -656,6 +677,141 @@ theorem ext {a b : Node α} (h : ∀ i, i < 32 → a.get? i = b.get? i) : a = b 
   obtain ⟨ma, ea, hca⟩ := a; obtain ⟨mb, eb, hcb⟩ := b
   simp only at hmask hel
   subst hmask; subst hel; rfl
+
+/-- A present slot reads its `get` value through `get?`. -/
+theorem get?_eq_some_get (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) :
+    n.get? i = some (n.get i h) := by rw [Node.get?, dif_pos h]
+
+/-- An absent slot reads `none`. -/
+theorem get?_eq_none_of_testBit (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = false) :
+    n.get? i = none := by rw [Node.get?, dif_neg (by rw [h]; simp)]
+
+/-- The `restricts` fold (over slots `0..n-1`) is `true` exactly when `rel` holds on every slot
+present on *both* sides. This is only the "values match" half of `restricts`; the "domain subset"
+half is the separate mask guard. Stated over `Nat` slots (`UInt32.ofNat i`), matching `Nat.fold`. -/
+private theorem restricts_fold_iff {α} (rel : α → α → Bool) (a b : Node α) : (n : Nat) →
+    ((Nat.fold n (fun i _ ok =>
+        match _ha : testBit a.positionsMask (UInt32.ofNat i), _hb : testBit b.positionsMask (UInt32.ofNat i) with
+        | true, true => ok && rel (a.get (UInt32.ofNat i) _ha) (b.get (UInt32.ofNat i) _hb)
+        | true, false => ok
+        | false, true => ok
+        | false, false => ok) true) = true)
+      ↔ (∀ i, i < n → ∀ x y, a.get? (UInt32.ofNat i) = some x → b.get? (UInt32.ofNat i) = some y → rel x y = true)
+  | 0 => by simp
+  | n + 1 => by
+      rw [Nat.fold_succ]
+      have ih := restricts_fold_iff rel a b n
+      split
+      · -- both present at slot `n`: the step ANDs in `rel`'s verdict on that shared slot
+        rename_i hca hcb
+        rw [Bool.and_eq_true, ih]
+        constructor
+        · rintro ⟨hfold, hrel⟩ i hi x y hgx hgy
+          rcases Nat.lt_succ_iff_lt_or_eq.mp hi with hlt | heq
+          · exact hfold i hlt x y hgx hgy
+          · subst heq
+            rw [get?_eq_some_get a _ hca] at hgx
+            rw [get?_eq_some_get b _ hcb] at hgy
+            simp only [Option.some.injEq] at hgx hgy
+            subst hgx; subst hgy; exact hrel
+        · intro h
+          exact ⟨fun i hi x y hgx hgy => h i (Nat.lt_succ_of_lt hi) x y hgx hgy,
+                 h n (Nat.lt_succ_self n) _ _ (get?_eq_some_get a _ hca) (get?_eq_some_get b _ hcb)⟩
+      · -- left present, right absent: shared values cannot occur at slot `n`, step keeps `ok`
+        rename_i hca hcb
+        rw [ih]
+        constructor
+        · intro hfold i hi x y hgx hgy
+          rcases Nat.lt_succ_iff_lt_or_eq.mp hi with hlt | heq
+          · exact hfold i hlt x y hgx hgy
+          · subst heq; rw [get?_eq_none_of_testBit b _ hcb] at hgy; exact absurd hgy (by simp)
+        · intro h i hi x y hgx hgy; exact h i (Nat.lt_succ_of_lt hi) x y hgx hgy
+      · -- left absent: step keeps `ok`
+        rename_i hca hcb
+        rw [ih]
+        constructor
+        · intro hfold i hi x y hgx hgy
+          rcases Nat.lt_succ_iff_lt_or_eq.mp hi with hlt | heq
+          · exact hfold i hlt x y hgx hgy
+          · subst heq; rw [get?_eq_none_of_testBit a _ hca] at hgx; exact absurd hgx (by simp)
+        · intro h i hi x y hgx hgy; exact h i (Nat.lt_succ_of_lt hi) x y hgx hgy
+      · -- left absent: step keeps `ok`
+        rename_i hca hcb
+        rw [ih]
+        constructor
+        · intro hfold i hi x y hgx hgy
+          rcases Nat.lt_succ_iff_lt_or_eq.mp hi with hlt | heq
+          · exact hfold i hlt x y hgx hgy
+          · subst heq; rw [get?_eq_none_of_testBit a _ hca] at hgx; exact absurd hgx (by simp)
+        · intro h i hi x y hgx hgy; exact h i (Nat.lt_succ_of_lt hi) x y hgx hgy
+
+/-- **`restricts` characterization**: a node restricts another exactly when, slot by slot, the
+left's value forces a related right value (`optRel`). The mask-subset guard is the "present on
+the left ⇒ present on the right" half; the fold is the "`rel` on shared values" half. The
+denotational reading `restricts` transitivity is proved against. -/
+theorem restricts_iff {α} (rel : α → α → Bool) (a b : Node α) :
+    Node.restricts rel a b = true ↔ ∀ i : UInt32, i < 32 → optRel rel (a.get? i) (b.get? i) = true := by
+  -- the mask subset condition `M` is exactly "present on the left ⇒ present on the right"
+  have hMD : (a.positionsMask &&& b.positionsMask = a.positionsMask)
+      ↔ ∀ i : UInt32, i < 32 → testBit a.positionsMask i = true → testBit b.positionsMask i = true := by
+    constructor
+    · intro hM i _ hai
+      have hbit : testBit (a.positionsMask &&& b.positionsMask) i = testBit a.positionsMask i := by rw [hM]
+      rw [testBit_and, hai] at hbit; simpa using hbit
+    · intro hD
+      apply eq_of_testBit_eq
+      intro i hi
+      rw [testBit_and]
+      cases hai : testBit a.positionsMask i with
+      | false => simp
+      | true => simp [hD i hi hai]
+  unfold Node.restricts
+  split
+  · -- guard fired: the masks are not in subset position, so the domain half already fails
+    rename_i hguard
+    have hne : a.positionsMask &&& b.positionsMask ≠ a.positionsMask := by simpa [bne] using hguard
+    constructor
+    · intro h; exact absurd h (by simp)
+    · intro hall
+      refine absurd (hMD.mpr ?_) hne
+      intro iu hiu haiu
+      have hoptiu := hall iu hiu
+      rw [get?_eq_some_get a iu haiu] at hoptiu
+      cases hgb : b.get? iu with
+      | some y => rw [testBit_eq_isSome_get?, hgb]; rfl
+      | none => rw [hgb] at hoptiu; simp [optRel] at hoptiu
+  · -- guard did not fire: masks are in subset position; the fold checks `rel` on every shared slot
+    rename_i hguard
+    have hM : a.positionsMask &&& b.positionsMask = a.positionsMask := by
+      have : ¬ (a.positionsMask &&& b.positionsMask ≠ a.positionsMask) := by simpa [bne] using hguard
+      exact Classical.not_not.mp this
+    have hD := hMD.mp hM
+    refine Iff.trans (restricts_fold_iff rel a b 32) ?_
+    constructor
+    · -- the fold's "rel on shared" + the mask subset `M` give the full `optRel` reading
+      intro hR iu hiu
+      cases hga : a.get? iu with
+      | none => rfl
+      | some x =>
+        have haiu : testBit a.positionsMask iu = true := by rw [testBit_eq_isSome_get?, hga]; rfl
+        have hbiu : testBit b.positionsMask iu = true := hD iu hiu haiu
+        obtain ⟨y, hgb⟩ : ∃ y, b.get? iu = some y := by
+          rw [← Option.isSome_iff_exists, ← testBit_eq_isSome_get?]; exact hbiu
+        rw [hgb]
+        show rel x y = true
+        have hn : iu.toNat < 32 := by
+          rw [UInt32.lt_iff_toNat_lt, show (32 : UInt32).toNat = 32 from by decide] at hiu; exact hiu
+        refine hR iu.toNat hn x y ?_ ?_
+        · rw [UInt32.ofNat_toNat]; exact hga
+        · rw [UInt32.ofNat_toNat]; exact hgb
+    · intro hO i hi x y hgx hgy
+      have hiu : (UInt32.ofNat i) < 32 := by
+        rw [UInt32.lt_iff_toNat_lt, UInt32.toNat_ofNat_of_lt' (Nat.lt_of_lt_of_le hi (by decide)),
+            show (32 : UInt32).toNat = 32 from by decide]
+        exact hi
+      have hoi := hO (UInt32.ofNat i) hiu
+      rw [hgx, hgy] at hoi
+      exact hoi
 
 /-- `get?` as a (proof-free) `getElem?` on the compact array. Lets `get?` lemmas reason about
 the underlying `Array` operations without carrying `Node.get`'s in-bounds proof. -/

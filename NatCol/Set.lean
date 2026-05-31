@@ -72,6 +72,35 @@ instance : LeafOps UInt32 Unit where
       cases hb : testBit u i with
       | false => rfl
       | true => exact absurd ⟨i, hi, hb⟩ hno
+  get?_restricts rel hrefl a b := by
+    show ((a &&& b) == a) = true ↔
+      ∀ i, i < 32 → optRel rel (if testBit a i then some () else none)
+        (if testBit b i then some () else none) = true
+    have hrefl' : rel () () = true := hrefl ()
+    rw [beq_iff_eq]
+    constructor
+    · -- mask subset ⇒ every present-on-left slot is present (and `rel` is vacuous via reflexivity)
+      intro hM i _
+      cases hai : testBit a i with
+      | false => simp [optRel]
+      | true =>
+        have hbi : testBit b i = true := by
+          have hh : testBit (a &&& b) i = testBit a i := by rw [hM]
+          rw [testBit_and, hai] at hh; simpa using hh
+        simp [hbi, optRel, hrefl']
+    · -- per-slot `optRel` ⇒ mask subset (a present-on-left/absent-on-right slot would be `false`)
+      intro hrhs
+      apply eq_of_testBit_eq
+      intro i hi
+      rw [testBit_and]
+      cases hai : testBit a i with
+      | false => simp
+      | true =>
+        have hbi : testBit b i = true := by
+          cases hb : testBit b i with
+          | true => rfl
+          | false => exfalso; have hh := hrhs i hi; simp [hai, hb, optRel] at hh
+        simp [hbi]
 
 /-- A set of natural numbers. -/
 def NatSet : Type := NatCollection UInt32
@@ -169,6 +198,11 @@ theorem subset_empty_left (s : NatSet) : NatSet.empty ⊆ s :=
 @[simp]
 theorem subset_refl (s : NatSet) : s ⊆ s :=
   NatCollection.restricts_refl (fun _ _ => true) (fun _ => rfl) s
+
+/-- Subset is transitive: `s ⊆ t` and `t ⊆ u` give `s ⊆ u`. The set predicate `fun _ _ => true`
+is trivially reflexive and transitive, so no side conditions are needed. -/
+theorem subset_trans {s t u : NatSet} (hst : s ⊆ t) (htu : t ⊆ u) : s ⊆ u :=
+  NatCollection.restricts_trans (fun _ _ => true) (fun _ => rfl) (fun _ _ _ _ _ => rfl) s t u hst htu
 
 end NatSet
 
@@ -277,6 +311,8 @@ private def c : NatSet := NatSet.ofList [3, 40, 2000]
 -- subset is transitive and antisymmetric (concretely)
 #guard (NatSet.ofList [40]) ⊆ a ∧ a ⊆ (a ∪ b) ∧ (NatSet.ofList [40]) ⊆ (a ∪ b)
 #guard a ⊆ b → b ⊆ a → a = b  -- antisymmetry
+-- subset transitivity as a universally-quantified theorem (no side conditions)
+example {s t u : NatSet} : s ⊆ t → t ⊆ u → s ⊆ u := NatSet.subset_trans
 
 /-! ### Height growth then shrink round-trips back to a canonical value -/
 

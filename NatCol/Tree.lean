@@ -106,6 +106,13 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   get?_ext : ∀ (a b : L), (∀ i, i < 32 → get? a i = get? b i) → a = b
   /-- A non-empty leaf has a present slot (`< 32`). The leaf base case of `Tree.exists_get?`. -/
   exists_get?_of_ne_empty : ∀ (l : L), isEmpty l = false → ∃ i, i < 32 ∧ (get? l i).isSome
+  /-- `restricts` reads denotationally: it holds exactly when, slot by slot, a present left value
+  forces a related right value (`optRel`). The reflexivity hypothesis lets the *set* leaf — whose
+  `restricts` discards `rel`, comparing only the bitsets — still satisfy this (its sole value is
+  `()`, so reflexivity makes `rel` vacuous on shared slots). The leaf base case of
+  `Tree.restrictsEq_iff`, which drives `restricts` transitivity. -/
+  get?_restricts : ∀ (rel : V → V → Bool), (∀ x, rel x x = true) → ∀ (a b : L),
+    (restricts rel a b = true ↔ ∀ i, i < 32 → optRel rel (get? a i) (get? b i) = true)
 
 namespace Tree
 
@@ -858,6 +865,152 @@ theorem ext : (h : Nat) → {a b : Tree L h} → Full h a → Full h b →
               get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h ca (fun j hj => chunk_probe_low s k' h j hj)] at hK
           rw [hK] at hk'some; simp at hk'some
         | some cb => exact congrArg some (hchild ca cb hca hcb)
+
+/-! ### `get?` characterization of `restricts`
+
+`restrictsEq_iff`/`restrictsSpine_iff` read the equal-height and spine `restricts` denotationally:
+`a` restricts `b` exactly when `optRel rel` relates their `get?` readings at every in-range key.
+Together with `Tree.ext`'s probe-key machinery these are the tree-level engine of `restricts`
+transitivity at the collection layer (`optRel`-transitivity does the rest). The reflexivity
+hypothesis is threaded down to the set leaf, whose `restricts` ignores `rel`. -/
+
+/-- **`restrictsEq` characterization** (equal height, `Full` operands). The leaf base is the
+`get?_restricts` field; the successor uses `Node.restricts_iff`, matching node slots to keys by
+probing the top chunk (as in `Tree.ext`) and recursing on slot children. The forward direction
+reduces a key to its low `h+1` digits (`chunk_mod_pow`) before applying the child hypothesis. -/
+theorem restrictsEq_iff (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) :
+    (h : Nat) → (a b : Tree L h) → Full h a → Full h b →
+      (restrictsEq rel h a b = true ↔
+        ∀ k, requiredHeight k ≤ h → optRel rel (Tree.get? k h a) (Tree.get? k h b) = true)
+  | 0, a, b, _, _ => by
+      simp only [restrictsEq]
+      rw [LeafOps.get?_restricts rel hrefl a b]
+      constructor
+      · intro hslot k _
+        simp only [Tree.get?]
+        exact hslot (chunk k 0) (chunk_lt k 0)
+      · intro hkey i hi
+        have hlt : i.toNat < 32 := by
+          have := UInt32.lt_iff_toNat_lt.mp hi; rwa [show (32 : UInt32).toNat = 32 from by decide] at this
+        have hk := hkey i.toNat (requiredHeight_le_of_lt_pow (by rw [Nat.pow_one]; exact hlt))
+        simpa only [Tree.get?, chunk_toNat_zero i hi] using hk
+  | h + 1, a, b, hfa, hfb => by
+      simp only [restrictsEq]
+      rw [Node.restricts_iff (fun x y => restrictsEq rel h x y) a b]
+      constructor
+      · -- per-slot relations ⇒ per-key
+        intro hslot k _
+        cases hca : Node.get? a (chunk k (h + 1)) with
+        | none => rw [get?_succ_none _ h a hca]; rfl
+        | some ca =>
+          have hsl := hslot (chunk k (h + 1)) (chunk_lt _ _)
+          rw [hca] at hsl
+          cases hcb : Node.get? b (chunk k (h + 1)) with
+          | none => rw [hcb] at hsl; simp [optRel] at hsl
+          | some cb =>
+            rw [hcb] at hsl
+            simp only [optRel] at hsl
+            have hma := Node.mem_of_get? a _ ca hca
+            have hmb := Node.mem_of_get? b _ cb hcb
+            rw [get?_succ_some _ h a ca hca, get?_succ_some _ h b cb hcb]
+            have hrlt : k % 32 ^ (h + 1) < 32 ^ (h + 1) := Nat.mod_lt _ (Nat.pow_pos (by decide))
+            rw [get?_congr k (k % 32 ^ (h + 1)) h ca (fun j hj => (chunk_mod_pow k h j hj).symm),
+                get?_congr k (k % 32 ^ (h + 1)) h cb (fun j hj => (chunk_mod_pow k h j hj).symm)]
+            exact (restrictsEq_iff rel hrefl h ca cb (hfa ca hma).2 (hfb cb hmb).2).mp hsl
+              (k % 32 ^ (h + 1)) (requiredHeight_le_of_lt_pow hrlt)
+      · -- per-key ⇒ per-slot relations
+        intro hkey s hs
+        cases hca : Node.get? a s with
+        | none => rfl
+        | some ca =>
+          have hma := Node.mem_of_get? a s ca hca
+          have hca_ne : Tree.isEmpty h ca = false := (hfa ca hma).1
+          have hca_full : Full h ca := (hfa ca hma).2
+          cases hcb : Node.get? b s with
+          | none =>
+            exfalso
+            obtain ⟨k', hk', hk'some⟩ := exists_get? h ca hca_full hca_ne
+            have hpk := lt_pow_of_requiredHeight_le hk'
+            have hK := hkey (k' + s.toNat * 32 ^ (h + 1)) (requiredHeight_probe_le s k' h hpk hs)
+            have hca' : Node.get? a (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some ca := by
+              rw [chunk_probe_high s k' h hpk hs]; exact hca
+            have hcb' : Node.get? b (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = none := by
+              rw [chunk_probe_high s k' h hpk hs]; exact hcb
+            rw [get?_succ_some _ h a ca hca', get?_succ_none _ h b hcb',
+                get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h ca (fun j hj => chunk_probe_low s k' h j hj)] at hK
+            obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp hk'some
+            rw [hv] at hK; simp [optRel] at hK
+          | some cb =>
+            have hmb := Node.mem_of_get? b s cb hcb
+            show restrictsEq rel h ca cb = true
+            rw [restrictsEq_iff rel hrefl h ca cb hca_full (hfb cb hmb).2]
+            intro k' hk'
+            have hpk := lt_pow_of_requiredHeight_le hk'
+            have hK := hkey (k' + s.toNat * 32 ^ (h + 1)) (requiredHeight_probe_le s k' h hpk hs)
+            have hca' : Node.get? a (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some ca := by
+              rw [chunk_probe_high s k' h hpk hs]; exact hca
+            have hcb' : Node.get? b (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some cb := by
+              rw [chunk_probe_high s k' h hpk hs]; exact hcb
+            rw [get?_succ_some _ h a ca hca', get?_succ_some _ h b cb hcb',
+                get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h ca (fun j hj => chunk_probe_low s k' h j hj),
+                get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h cb (fun j hj => chunk_probe_low s k' h j hj)] at hK
+            exact hK
+
+/-- **`restrictsSpine` characterization**: a shorter `Full` tree restricts the slot-0 spine of a
+taller `Full` one exactly when `optRel rel` relates their `get?` readings at every key in the
+shorter's range. In-range keys have zero top chunks, so the taller `get?` follows the spine; the
+base is `restrictsEq_iff`, and a broken spine (`none`) means the shorter tree is empty — which
+`get?` detects via `exists_get?`. -/
+theorem restrictsSpine_iff (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (h : Nat) (a : Tree L h) (hfa : Full h a) :
+    (d : Nat) → (t : Tree L (h + d)) → Full (h + d) t →
+      (restrictsSpine rel h d a t = true ↔
+        ∀ k, requiredHeight k ≤ h → optRel rel (Tree.get? k h a) (Tree.get? k (h + d) t) = true)
+  | 0, t, hft => by
+      simp only [restrictsSpine, Nat.add_zero]
+      exact restrictsEq_iff rel hrefl h a t hfa hft
+  | d + 1, t, hft => by
+      simp only [restrictsSpine]
+      cases ht0 : Node.get? t 0 with
+      | some child =>
+        have hmem := Node.mem_of_get? t 0 child ht0
+        have hchild_full : Full (h + d) child := (hft child hmem).2
+        rw [restrictsSpine_iff rel hrefl h a hfa d child hchild_full]
+        constructor
+        · intro hh k hk
+          have hchunk : chunk k (h + d + 1) = 0 :=
+            chunk_eq_zero_of_requiredHeight_lt (Nat.le_trans hk (Nat.le_add_right h d)) (by omega)
+          show optRel rel (get? k h a) (get? k (h + d + 1) t) = true
+          rw [get?_succ_some k (h + d) t child (by rw [hchunk]; exact ht0)]
+          exact hh k hk
+        · intro hh k hk
+          have hchunk : chunk k (h + d + 1) = 0 :=
+            chunk_eq_zero_of_requiredHeight_lt (Nat.le_trans hk (Nat.le_add_right h d)) (by omega)
+          have hb := hh k hk
+          show optRel rel (get? k h a) (get? k (h + d) child) = true
+          rw [← get?_succ_some k (h + d) t child (by rw [hchunk]; exact ht0)]
+          exact hb
+      | none =>
+        constructor
+        · intro hempty k hk
+          have hchunk : chunk k (h + d + 1) = 0 :=
+            chunk_eq_zero_of_requiredHeight_lt (Nat.le_trans hk (Nat.le_add_right h d)) (by omega)
+          show optRel rel (get? k h a) (get? k (h + d + 1) t) = true
+          rw [get?_succ_none k (h + d) t (by rw [hchunk]; exact ht0),
+              get?_eq_none_of_isEmpty k h a hempty]
+          rfl
+        · intro hh
+          cases hia : Tree.isEmpty h a with
+          | true => rfl
+          | false =>
+            exfalso
+            obtain ⟨k₀, hk₀, hk₀some⟩ := exists_get? h a hfa hia
+            have hchunk : chunk k₀ (h + d + 1) = 0 :=
+              chunk_eq_zero_of_requiredHeight_lt (Nat.le_trans hk₀ (Nat.le_add_right h d)) (by omega)
+            have hb : optRel rel (get? k₀ h a) (get? k₀ (h + d + 1) t) = true := hh k₀ hk₀
+            rw [get?_succ_none k₀ (h + d) t (by rw [hchunk]; exact ht0)] at hb
+            obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp hk₀some
+            rw [hv] at hb; simp [optRel] at hb
 
 /-! ### Bridge lemmas relating `joinSpine`/`liftBy` to the equal-height `joinEq`
 

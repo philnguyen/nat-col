@@ -45,6 +45,7 @@ instance {α : Type u} : LeafOps (Node α) α where
     cases Node.get? a i <;> cases Node.get? b i <;> rfl
   get?_ext a b h := Node.ext h
   exists_get?_of_ne_empty n h := Node.exists_get?_of_isEmpty_false n h
+  get?_restricts rel _ a b := Node.restricts_iff rel a b
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -165,6 +166,15 @@ theorem restricts_empty_left (rel : α → α → Bool) (m : NatMap α) :
 theorem restricts_refl (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
     (m : NatMap α) : m.restricts rel m = true := NatCollection.restricts_refl rel hrefl m
 
+/-- `restricts` is transitive when `rel` is a preorder (reflexive and transitive): a domain
+inclusion with `rel`-related values composes, the values via `rel`-transitivity. Reflexivity is
+inherited from the generic theorem (it is only needed there for the *set* leaf). -/
+theorem restricts_trans (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    (htrans : ∀ x y z, rel x y = true → rel y z = true → rel x z = true)
+    (m₁ m₂ m₃ : NatMap α) :
+    m₁.restricts rel m₂ = true → m₂.restricts rel m₃ = true → m₁.restricts rel m₃ = true :=
+  NatCollection.restricts_trans rel hrefl htrans m₁ m₂ m₃
+
 end NatMap
 
 /-! ## Tests -/
@@ -276,6 +286,11 @@ private def q : NatMap Nat := NatMap.ofList [(2, 20), (3, 30), (40, 400)]
 #guard (NatMap.ofList [(40, 40)]).restricts (· == ·) p
 #guard p.restricts (· == ·) p
 #guard (NatMap.ofList [(40, 40)]).restricts (· == ·) (p.join (fun x _ => x) q)
+-- restricts transitivity as a theorem, for any preorder `rel` (here left abstract)
+example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true)
+    (ht : ∀ x y z, rel x y = true → rel y z = true → rel x z = true) (m₁ m₂ m₃ : NatMap Nat) :
+    m₁.restricts rel m₂ = true → m₂.restricts rel m₃ = true → m₁.restricts rel m₃ = true :=
+  NatMap.restricts_trans rel hr ht m₁ m₂ m₃
 
 -- lawful/decidable equality and a compatible hash (requires the value type to be lawful/hashable)
 example : LawfulBEq (NatMap Nat) := inferInstance
