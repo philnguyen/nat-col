@@ -175,6 +175,16 @@ theorem restricts_trans (rel : α → α → Bool) (hrefl : ∀ x, rel x x = tru
     m₁.restricts rel m₂ = true → m₂.restricts rel m₃ = true → m₁.restricts rel m₃ = true :=
   NatCollection.restricts_trans rel hrefl htrans m₁ m₂ m₃
 
+/-- `restricts` is anti-symmetric when `rel` is reflexive and anti-symmetric: mutual restriction
+means equal domains whose values are `rel`-related both ways, which `rel`-antisymmetry collapses
+to value equality at every key — so the maps are equal. Reflexivity is inherited from the generic
+theorem (only needed there for the *set* leaf). -/
+theorem restricts_antisymm (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    (hantisymm : ∀ x y, rel x y = true → rel y x = true → x = y)
+    (m₁ m₂ : NatMap α) :
+    m₁.restricts rel m₂ = true → m₂.restricts rel m₁ = true → m₁ = m₂ :=
+  NatCollection.restricts_antisymm rel hrefl hantisymm m₁ m₂
+
 end NatMap
 
 /-! ## Tests -/
@@ -291,6 +301,11 @@ example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true)
     (ht : ∀ x y z, rel x y = true → rel y z = true → rel x z = true) (m₁ m₂ m₃ : NatMap Nat) :
     m₁.restricts rel m₂ = true → m₂.restricts rel m₃ = true → m₁.restricts rel m₃ = true :=
   NatMap.restricts_trans rel hr ht m₁ m₂ m₃
+-- restricts anti-symmetry as a theorem, for any reflexive + anti-symmetric `rel` (here abstract)
+example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true)
+    (ha : ∀ x y, rel x y = true → rel y x = true → x = y) (m₁ m₂ : NatMap Nat) :
+    m₁.restricts rel m₂ = true → m₂.restricts rel m₁ = true → m₁ = m₂ :=
+  NatMap.restricts_antisymm rel hr ha m₁ m₂
 
 -- lawful/decidable equality and a compatible hash (requires the value type to be lawful/hashable)
 example : LawfulBEq (NatMap Nat) := inferInstance

@@ -74,6 +74,18 @@ theorem optRel_trans {V : Type u} (rel : V → V → Bool)
   | some _, some _, none, _, h => absurd h (by simp [optRel])
   | some x, some y, some z, hxy, hyz => htrans x y z hxy hyz
 
+/-- `optRel` is anti-symmetric when `rel` is: mutual restriction forces both sides present (an
+absent side fails the other direction) and pins their values equal via `rel`-antisymmetry. The
+engine of `restricts` anti-symmetry at every layer. -/
+theorem optRel_antisymm {V : Type u} (rel : V → V → Bool)
+    (hantisymm : ∀ x y, rel x y = true → rel y x = true → x = y) :
+    ∀ (ox oy : Option V),
+      optRel rel ox oy = true → optRel rel oy ox = true → ox = oy
+  | none, none, _, _ => rfl
+  | none, some _, _, h => absurd h (by simp [optRel])
+  | some _, none, h, _ => absurd h (by simp [optRel])
+  | some x, some y, hxy, hyx => by rw [hantisymm x y hxy hyx]
+
 namespace Node
 
 /-- The empty node (no slots present), backed by a zero-capacity array. -/

@@ -821,6 +821,21 @@ theorem restricts_trans (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
   intro hab hbc k
   exact optRel_trans rel htrans (a.get? k) (b.get? k) (c.get? k) (hab k) (hbc k)
 
+/-- **`restricts` is anti-symmetric** when `rel` is reflexive and anti-symmetric: mutual
+restriction reads (via `get?_restricts`) as `optRel rel` holding both ways at every key, which
+forces equal domains with `rel`-related values; `rel`-antisymmetry collapses each to equal
+lookups, so the collections are equal by `ext_get?`. Reflexivity is needed only to read
+`restricts` off `get?` (it pins down the *set* leaf, whose `restricts` ignores `rel`). -/
+theorem restricts_antisymm (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (hantisymm : ∀ x y, rel x y = true → rel y x = true → x = y)
+    (a b : NatCollection L) :
+    restricts rel a b = true → restricts rel b a = true → a = b := by
+  rw [get?_restricts rel hrefl a b, get?_restricts rel hrefl b a]
+  intro hab hba
+  apply ext_get?
+  intro k
+  exact optRel_antisymm rel hantisymm (a.get? k) (b.get? k) (hab k) (hba k)
+
 section Tests
 
 -- The canonical-shape invariant is a field, so it is available on *every* collection — and

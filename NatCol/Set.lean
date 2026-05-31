@@ -204,6 +204,12 @@ is trivially reflexive and transitive, so no side conditions are needed. -/
 theorem subset_trans {s t u : NatSet} (hst : s ⊆ t) (htu : t ⊆ u) : s ⊆ u :=
   NatCollection.restricts_trans (fun _ _ => true) (fun _ => rfl) (fun _ _ _ _ _ => rfl) s t u hst htu
 
+/-- Subset is anti-symmetric: `s ⊆ t` and `t ⊆ s` force `s = t`. The set predicate
+`fun _ _ => true` is trivially reflexive and (since `Unit` is a subsingleton) anti-symmetric, so
+no side conditions are needed. -/
+theorem subset_antisymm {s t : NatSet} (hst : s ⊆ t) (hts : t ⊆ s) : s = t :=
+  NatCollection.restricts_antisymm (fun _ _ => true) (fun _ => rfl) (fun _ _ _ _ => rfl) s t hst hts
+
 end NatSet
 
 /-! ## Tests -/
@@ -311,8 +317,9 @@ private def c : NatSet := NatSet.ofList [3, 40, 2000]
 -- subset is transitive and antisymmetric (concretely)
 #guard (NatSet.ofList [40]) ⊆ a ∧ a ⊆ (a ∪ b) ∧ (NatSet.ofList [40]) ⊆ (a ∪ b)
 #guard a ⊆ b → b ⊆ a → a = b  -- antisymmetry
--- subset transitivity as a universally-quantified theorem (no side conditions)
+-- subset transitivity and anti-symmetry as universally-quantified theorems (no side conditions)
 example {s t u : NatSet} : s ⊆ t → t ⊆ u → s ⊆ u := NatSet.subset_trans
+example {s t : NatSet} : s ⊆ t → t ⊆ s → s = t := NatSet.subset_antisymm
 
 /-! ### Height growth then shrink round-trips back to a canonical value -/
 
