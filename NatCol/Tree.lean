@@ -64,6 +64,10 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   commutativity of `join`; `joinEq_comm` lifts it through the tree. -/
   join_comm : ∀ (f g : V → V → V), (∀ x y, f x y = g y x) →
     ∀ (a b : L), join f a b = join g b a
+  /-- `meet` commutes when the combine is flipped (the `meet` analogue of `join_comm`). Lets the
+  collection layer derive commutativity of `meet`; `meetEq_comm` lifts it through the tree. -/
+  meet_comm : ∀ (f g : V → V → V), (∀ x y, f x y = g y x) →
+    ∀ (a b : L), meet f a b = meet g b a
 
 namespace Tree
 
@@ -279,6 +283,21 @@ theorem joinEq_comm (f g : V → V → V) (hfg : ∀ x y, f x y = g y x) :
     intro a b
     simp only [joinEq]
     refine Node.join_comm a b fun x y => ?_
+    simp only [ih]
+
+/-- `meetEq` commutes when the combine is flipped, at every height (the `meetEq` analogue of
+`joinEq_comm`). Bottoms out in `LeafOps.meet_comm` at a leaf and `Node.meet_comm` at each node (the
+per-slot merge flips by the induction hypothesis: the `if isEmpty` guard depends only on the
+recursively-merged child). -/
+theorem meetEq_comm (f g : V → V → V) (hfg : ∀ x y, f x y = g y x) :
+    (h : Nat) → (a b : Tree L h) → meetEq f h a b = meetEq g h b a := by
+  intro h
+  induction h with
+  | zero => intro a b; simp only [meetEq]; exact LeafOps.meet_comm f g hfg a b
+  | succ h ih =>
+    intro a b
+    simp only [meetEq]
+    refine Node.meet_comm a b fun x y => ?_
     simp only [ih]
 
 /-- Collect `(key, value)` pairs into `acc`, ascending by key. `pfx` carries the key bits

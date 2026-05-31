@@ -344,6 +344,49 @@ theorem join_comm (combine : V → V → V) (a b : NatCollection L) :
       · -- `a` taller: both descend `a`'s spine with the same flipped combine
         rw [dif_neg (Nat.not_le.mpr hgt), dif_pos (Nat.le_of_lt hgt)]
 
+/-- `meet` commutes when the combine is flipped: `meet combine a b = meet (fun x y => combine y x) b a`.
+The empty short-circuits both return `empty`; when the heights differ both sides descend the *same*
+(taller) tree's spine to the *smaller* height — the double flip cancels by η, so they are
+definitionally equal; at equal heights both reduce to a `meetEq` with `d = 0`, related by
+`Tree.meetEq_comm`. -/
+theorem meet_comm (combine : V → V → V) (a b : NatCollection L) :
+    meet combine a b = meet (fun x y => combine y x) b a := by
+  unfold meet
+  by_cases hae : a.isEmpty = true
+  · rw [if_pos hae]
+    by_cases hbe : b.isEmpty = true
+    · -- both empty: each side returns `empty` outright
+      rw [if_pos hbe]
+    · -- only `a` empty: the flipped call skips its first guard, then returns `empty` on the second
+      rw [if_neg hbe, if_pos hae]
+  · rw [if_neg hae]
+    by_cases hbe : b.isEmpty = true
+    · -- only `b` empty: both calls return `empty`
+      rw [if_pos hbe, if_pos hbe]
+    · -- both non-empty: clear the flipped call's `a.isEmpty` guard too, then compare heights
+      rw [if_neg hbe, if_neg hbe, if_neg hae]
+      rcases Nat.lt_trichotomy a.height b.height with hlt | heq | hgt
+      · -- `a` shorter: both descend `b`'s spine to height `a.height` (RHS's double flip cancels by η)
+        rw [dif_pos (Nat.le_of_lt hlt), dif_neg (Nat.not_le.mpr hlt)]
+      · -- equal heights: both reduce to a `meetEq` (`d = 0`); close by `meetEq_comm`
+        rw [dif_pos (Nat.le_of_eq heq), dif_pos (Nat.le_of_eq heq.symm)]
+        obtain ⟨ha, ta, wa⟩ := a
+        obtain ⟨hb, tb, wb⟩ := b
+        dsimp only at heq ⊢
+        subst hb
+        apply normalizeAux_congr
+        -- generalize the (zero) height difference to `subst` away the dependent `Tree.cast`s
+        suffices H : ∀ (d : Nat), d = 0 → ∀ (p₁ p₂ : ha = ha + d),
+            Tree.meetSpine combine ha d ta (Tree.cast p₁ tb)
+              = Tree.meetSpine (fun x y => combine y x) ha d tb (Tree.cast p₂ ta) from
+          H (ha - ha) (Nat.sub_self ha) (by omega) (by omega)
+        intro d hd p₁ p₂
+        subst hd
+        simp only [Tree.meetSpine]
+        exact Tree.meetEq_comm combine (fun x y => combine y x) (fun _ _ => rfl) ha ta tb
+      · -- `a` taller: both descend `a`'s spine to height `b.height` with the same flipped combine
+        rw [dif_neg (Nat.not_le.mpr hgt), dif_pos (Nat.le_of_lt hgt)]
+
 section Tests
 
 -- The canonical-shape invariant is a field, so it is available on *every* collection — and

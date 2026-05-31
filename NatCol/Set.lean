@@ -38,6 +38,9 @@ instance : LeafOps UInt32 Unit where
   join_comm _ _ _ a b := by
     show (a ||| b) = (b ||| a)
     bv_decide
+  meet_comm _ _ _ a b := by
+    show (a &&& b) = (b &&& a)
+    bv_decide
 
 /-- A set of natural numbers. -/
 def NatSet : Type := NatCollection UInt32
@@ -110,6 +113,11 @@ theorem inter_empty_left (s : NatSet) : NatSet.empty ∩ s = NatSet.empty :=
 @[simp, grind =]
 theorem inter_empty_right (s : NatSet) : s ∩ NatSet.empty = NatSet.empty :=
   NatCollection.meet_empty_right (fun _ _ => ()) s
+
+/-- Intersection is commutative. (The set `combine` is constantly `()`, so flipping it is a no-op
+and the flip law `NatCollection.meet_comm` gives unconditional commutativity.) -/
+theorem inter_comm (s t : NatSet) : s ∩ t = t ∩ s :=
+  NatCollection.meet_comm (fun _ _ => ()) s t
 
 /-- The empty set is a subset of (restricts) every set. -/
 @[simp]

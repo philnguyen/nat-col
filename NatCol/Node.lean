@@ -473,6 +473,23 @@ theorem join_comm {α} {f g : α → α → Option α} (a b : Node α)
     dsimp only
     split <;> symm <;> split <;> simp_all
 
+/-- `meet` commutes when the combine is flipped: intersecting `a` with `b` using `f` equals
+intersecting `b` with `a` with `f`'s arguments swapped. The two folds run over the same slots
+(`&&&` is commutative, so the capacity seeds match); on each slot only the both-present case
+contributes, and it agrees by `hfg` (the other three drop the slot regardless). -/
+theorem meet_comm {α} {f g : α → α → Option α} (a b : Node α)
+    (hfg : ∀ x y, f x y = g y x) :
+    Node.meet f a b = Node.meet g b a := by
+  simp only [Node.meet]
+  refine fold_step_congr _ _ _ _ ?_ ?_ 32
+  · -- the capacity seeds agree because `&&&` is commutative
+    rw [show a.positionsMask &&& b.positionsMask = b.positionsMask &&& a.positionsMask from by
+      bv_decide]
+  · -- per slot: scan the four present/absent cases; the both-present one closes by `hfg`
+    intro acc i
+    dsimp only
+    split <;> symm <;> split <;> simp_all
+
 end Node
 
 /-! ## Tests -/

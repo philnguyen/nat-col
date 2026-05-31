@@ -34,6 +34,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   eq_empty_of_isEmpty n h := Node.eq_empty_of_isEmpty n h
   restricts_refl rel hrefl n := Node.restricts_self rel n (fun x _ => hrefl x)
   join_comm f g hfg a b := Node.join_comm a b (fun x y => by rw [hfg])
+  meet_comm f g hfg a b := Node.meet_comm a b (fun x y => by rw [hfg])
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -113,6 +114,19 @@ theorem meet_empty_left (combine : α → α → α) (m : NatMap α) :
 @[simp, grind =]
 theorem meet_empty_right (combine : α → α → α) (m : NatMap α) :
     m.meet combine NatMap.empty = NatMap.empty := NatCollection.meet_empty_right combine m
+
+/-- `meet` commutes when the combine is flipped: swapping the operands swaps the `combine`
+arguments. (Values at coinciding keys are resolved `combine left right`, so the order matters
+unless `combine` is symmetric — see `meet_comm_of_comm`.) -/
+theorem meet_comm (combine : α → α → α) (m₁ m₂ : NatMap α) :
+    m₁.meet combine m₂ = m₂.meet (fun x y => combine y x) m₁ :=
+  NatCollection.meet_comm combine m₁ m₂
+
+/-- `meet` is commutative when its combine is symmetric. -/
+theorem meet_comm_of_comm (combine : α → α → α) (hcomm : ∀ x y, combine x y = combine y x)
+    (m₁ m₂ : NatMap α) : m₁.meet combine m₂ = m₂.meet combine m₁ := by
+  have h : (fun x y => combine y x) = combine := funext fun x => funext fun y => hcomm y x
+  rw [meet_comm, h]
 
 /-- The empty map restricts every map (its domain is vacuously a subset). -/
 @[simp, grind =]
@@ -210,6 +224,9 @@ applies it as `combine left-value right-value`. -/
         == [(1, 11)]                                                                    -- rhs taller
 #guard ((NatMap.ofList [(1, 10), (5000, 5)]).meet (fun x _ => x) (NatMap.ofList [(1, 99)])).toList
         == [(1, 10)]                                                                    -- lhs taller (flipped)
+-- `meet_comm` flip law: swapping operands and flipping the (non-symmetric) combine is the identity
+#guard (NatMap.ofList [(1, 10), (2, 20)]).meet (fun x _ => x) (NatMap.ofList [(1, 99), (5000, 5)])
+     = (NatMap.ofList [(1, 99), (5000, 5)]).meet (fun _ y => y) (NatMap.ofList [(1, 10), (2, 20)])
 
 -- restricts: rhs taller can hold; lhs taller never does; absent key fails
 #guard (NatMap.ofList [(1, 10)]).restricts Nat.ble (NatMap.ofList [(1, 10), (5000, 500)])     -- rhs taller, holds
