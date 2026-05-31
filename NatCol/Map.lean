@@ -380,6 +380,38 @@ theorem join_self_of_idem (combine : α → α → α) (hidem : ∀ v, combine v
   | none => rfl
   | some v => simp only [optVjoin, hidem]
 
+/-- Meeting a map with itself preserves its keys — *regardless* of the value-combining function:
+every key is shared with itself, so the set of keys is unchanged. (The values do change, to
+`combine v v`; see `get?_meet_self`.) -/
+@[simp]
+theorem mem_meet_self (combine : α → α → α) (m : NatMap α) (k : Nat) :
+    k ∈ m.meet combine m ↔ k ∈ m := by
+  show (NatCollection.get? (NatCollection.meet combine m m) k).isSome = true
+      ↔ (NatCollection.get? m k).isSome = true
+  rw [NatCollection.get?_meet combine m m k]
+  cases NatCollection.get? m k <;> simp [optVmeet]
+
+/-- Looking up a key after meeting a map with itself: present keys read `combine v v`, absent keys
+stay absent. The precise (combine-dependent) companion of `mem_meet_self`. -/
+theorem get?_meet_self (combine : α → α → α) (m : NatMap α) (k : Nat) :
+    (m.meet combine m).get? k = (m.get? k).map (fun v => combine v v) := by
+  show NatCollection.get? (NatCollection.meet combine m m) k
+      = (NatCollection.get? m k).map (fun v => combine v v)
+  rw [NatCollection.get?_meet combine m m k]
+  cases NatCollection.get? m k <;> rfl
+
+/-- When the value-combining function is idempotent (`combine v v = v`), meeting a map with itself
+returns the map. -/
+theorem meet_self_of_idem (combine : α → α → α) (hidem : ∀ v, combine v v = v) (m : NatMap α) :
+    m.meet combine m = m := by
+  apply NatCollection.ext_get?
+  intro k
+  show NatCollection.get? (NatCollection.meet combine m m) k = NatCollection.get? m k
+  rw [NatCollection.get?_meet combine m m k]
+  cases NatCollection.get? m k with
+  | none => rfl
+  | some v => simp only [optVmeet, hidem]
+
 end NatMap
 
 -- restricts transitivity as a theorem, for any preorder `rel` (here left abstract)
@@ -402,5 +434,10 @@ example (combine : Nat → Nat → Nat) (m : NatMap Nat) (k : Nat) : k ∈ m.joi
   NatMap.mem_join_self combine m k
 -- and with an idempotent combine it returns the map unchanged
 example (m : NatMap Nat) : m.join max m = m := NatMap.join_self_of_idem max (fun v => Nat.max_self v) m
+-- meeting a map with itself likewise keeps its keys, whatever the combine function is
+example (combine : Nat → Nat → Nat) (m : NatMap Nat) (k : Nat) : k ∈ m.meet combine m ↔ k ∈ m :=
+  NatMap.mem_meet_self combine m k
+-- and with an idempotent combine it returns the map unchanged
+example (m : NatMap Nat) : m.meet min m = m := NatMap.meet_self_of_idem min (fun v => Nat.min_self v) m
 
 end NatCol

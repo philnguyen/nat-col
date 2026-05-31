@@ -414,6 +414,17 @@ theorem union_self (s : NatSet) : s ∪ s = s := by
   | none => rfl
   | some u => cases u; rfl
 
+/-- The intersection of a set with itself is the set. -/
+@[simp]
+theorem inter_self (s : NatSet) : s ∩ s = s := by
+  apply NatCollection.ext_get?
+  intro k
+  show NatCollection.get? (NatCollection.meet (fun _ _ => ()) s s) k = NatCollection.get? s k
+  rw [NatCollection.get?_meet (fun _ _ => ()) s s k]
+  cases NatCollection.get? s k with
+  | none => rfl
+  | some u => cases u; rfl
+
 end NatSet
 
 -- subset transitivity and anti-symmetry as universally-quantified theorems (no side conditions)
@@ -423,5 +434,7 @@ example {s t : NatSet} : s ⊆ t → t ⊆ s → s = t := NatSet.subset_antisymm
 example (s : NatSet) (k : Nat) (h : k ∈ s) : s.insert k = s := NatSet.insert_of_mem h
 -- a set unioned with itself is unchanged
 example (s : NatSet) : s ∪ s = s := NatSet.union_self s
+-- a set intersected with itself is unchanged
+example (s : NatSet) : s ∩ s = s := NatSet.inter_self s
 
 end NatCol
