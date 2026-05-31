@@ -36,6 +36,14 @@ def optVmeet {V : Type u} (c : V → V → V) : Option V → Option V → Option
   | some x, some y => some (c x y)
   | _,      _      => none
 
+/-- Value-level union of two lookups: a key survives if present on *either* side. Values present
+on both are combined with `c`; a value present on one side is copied. The total-`combine` companion
+of `Node.optJoin` (`combine x y = some (c x y)`), used at the leaf/tree/collection levels. -/
+def optVjoin {V : Type u} (c : V → V → V) : Option V → Option V → Option V
+  | some x, some y => some (c x y)
+  | some x, none   => some x
+  | none,   oy     => oy
+
 /-- A leaf collection: maps 5-bit slot indices to values of type `V`. This is the single
 seam that distinguishes sets (`UInt32` leaves, `V = Unit`) from maps (`Node α` leaves,
 `V = α`); everything else is shared. -/
@@ -94,6 +102,10 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   on in-range slots (`< 32`); leaf `get?` only ever reads `chunk`s, which are. -/
   get?_meet : ∀ (c : V → V → V) (a b : L) (i : UInt32), i < 32 →
     get? (meet c a b) i = optVmeet c (get? a i) (get? b i)
+  /-- `get?` of an equal-height `join` is the value-level union of the two lookups. The leaf base
+  case of `Tree.get?_joinEq`. -/
+  get?_join : ∀ (c : V → V → V) (a b : L) (i : UInt32), i < 32 →
+    get? (join c a b) i = optVjoin c (get? a i) (get? b i)
   /-- `get?` reads an `insert` pointwise: the inserted slot reads the new value, every other slot
   is unchanged. Stated on in-range slots (`< 32`); leaf `get?`/`insert` only ever touch `chunk`s,
   which are. The leaf base case of `Tree.get?_insert`. -/
@@ -316,6 +328,16 @@ theorem optVmeet_assoc {V : Type u} (c : V → V → V) (hc : ∀ x y z, c (c x 
 /-- `optVmeet` with the combine's arguments flipped swaps the operands. -/
 theorem optVmeet_flip {V : Type u} (c : V → V → V) (ox oy : Option V) :
     optVmeet (fun x y => c y x) oy ox = optVmeet c ox oy := by
+  cases ox <;> cases oy <;> rfl
+
+/-- A value present only on the left is copied through a `join`. -/
+@[simp] theorem optVjoin_none_right {V : Type u} (c : V → V → V) (ox : Option V) :
+    optVjoin c ox none = ox := by
+  cases ox <;> rfl
+
+/-- `optVjoin` with the combine's arguments flipped swaps the operands. -/
+theorem optVjoin_flip {V : Type u} (c : V → V → V) (ox oy : Option V) :
+    optVjoin (fun x y => c y x) oy ox = optVjoin c ox oy := by
   cases ox <;> cases oy <;> rfl
 
 namespace Tree
@@ -730,6 +752,32 @@ theorem get?_meetEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b : Tree L 
               = optVmeet c (Tree.get? k h ca) (Tree.get? k h cb)
           rw [← get?_meetEq c k h ca cb]
           by_cases hemp : Tree.isEmpty h (meetEq c h ca cb) = true
+          · rw [if_pos hemp, get?_eq_none_of_isEmpty k h _ hemp]
+          · rw [if_neg hemp]
+
+/-- `get?` of an equal-height `joinEq` is the value-level union of the two lookups. -/
+theorem get?_joinEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b : Tree L h) →
+    Tree.get? k h (joinEq c h a b) = optVjoin c (Tree.get? k h a) (Tree.get? k h b)
+  | 0, a, b => by
+      simp only [joinEq, Tree.get?]
+      exact LeafOps.get?_join c a b (chunk k 0) (chunk_lt k 0)
+  | h + 1, a, b => by
+      simp only [joinEq]
+      rw [get?_succ, get?_succ, get?_succ, Node.get?_join _ a b (chunk k (h + 1)) (chunk_lt _ _)]
+      cases hga : Node.get? a (chunk k (h + 1)) with
+      | none =>
+        cases hgb : Node.get? b (chunk k (h + 1)) with
+        | none => simp only [Node.optJoin, optVjoin]
+        | some cb => simp only [Node.optJoin, optVjoin]
+      | some ca =>
+        cases hgb : Node.get? b (chunk k (h + 1)) with
+        | none => simp only [Node.optJoin, optVjoin_none_right]
+        | some cb =>
+          show (match (if Tree.isEmpty h (joinEq c h ca cb) then none else some (joinEq c h ca cb)) with
+                  | some cc => Tree.get? k h cc | none => none)
+              = optVjoin c (Tree.get? k h ca) (Tree.get? k h cb)
+          rw [← get?_joinEq c k h ca cb]
+          by_cases hemp : Tree.isEmpty h (joinEq c h ca cb) = true
           · rw [if_pos hemp, get?_eq_none_of_isEmpty k h _ hemp]
           · rw [if_neg hemp]
 
@@ -1331,6 +1379,17 @@ theorem TopProper_joinSpine (c : V → V → V) (h : Nat) : (d : Nat) → (s : T
       rw [mask_joinEq c (h + d) (liftBy (d + 1) s) t (Full_liftBy (d + 1) s hfs hsne) hft]
       have key : ∀ (x y : UInt32), 2 ≤ y → 2 ≤ x ||| y := by intro x y hy; bv_decide
       exact key _ _ htpt
+
+/-- `get?` of a spine union: descend the taller tree's slot-0 spine and `joinEq` the shorter tree
+there. Stated for any in-range key (`requiredHeight ≤ h + d`); the shorter tree contributes only to
+keys it can reach (`requiredHeight ≤ h`), guarded by `liftBy`. -/
+theorem get?_joinSpine (c : V → V → V) (h : Nat) (s : Tree L h) (hs : Tree.isEmpty h s = false)
+    (hfs : Full h s) (k : Nat) (d : Nat) (t : Tree L (h + d)) (hft : Full (h + d) t)
+    (hk : requiredHeight k ≤ h + d) :
+    Tree.get? k (h + d) (joinSpine c h d s t)
+      = optVjoin c (if requiredHeight k ≤ h then Tree.get? k h s else none) (Tree.get? k (h + d) t) := by
+  rw [joinSpine_eq_joinEq_liftBy c h s hs hfs d t hft, get?_joinEq c k (h + d) (liftBy d s) t,
+      get?_liftBy h s k d hk]
 
 end Tree
 

@@ -58,6 +58,12 @@ instance : LeafOps UInt32 Unit where
         = optVmeet _ (if testBit a i then some () else none) (if testBit b i then some () else none)
     rw [htb]
     by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;> simp [ha, hb, optVmeet]
+  get?_join c a b i _ := by
+    have htb : testBit (a ||| b) i = (testBit a i || testBit b i) := testBit_or a b i
+    show (if testBit (a ||| b) i then some () else none)
+        = optVjoin c (if testBit a i then some () else none) (if testBit b i then some () else none)
+    rw [htb]
+    by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;> simp [ha, hb, optVjoin]
   get?_insert l i j v hi hj := by
     cases v
     show (if testBit (setBit l i) j then some () else none)
@@ -397,6 +403,17 @@ theorem insert_of_mem {s : NatSet} {k : Nat} (h : k ∈ s) : s.insert k = s := b
   · rw [if_pos hj, hj, hk]
   · rw [if_neg hj]
 
+/-- The union of a set with itself is the set. -/
+@[simp]
+theorem union_self (s : NatSet) : s ∪ s = s := by
+  apply NatCollection.ext_get?
+  intro k
+  show NatCollection.get? (NatCollection.join (fun _ _ => ()) s s) k = NatCollection.get? s k
+  rw [NatCollection.get?_join (fun _ _ => ()) s s k]
+  cases NatCollection.get? s k with
+  | none => rfl
+  | some u => cases u; rfl
+
 end NatSet
 
 -- subset transitivity and anti-symmetry as universally-quantified theorems (no side conditions)
@@ -404,5 +421,7 @@ example {s t u : NatSet} : s ⊆ t → t ⊆ u → s ⊆ u := NatSet.subset_tran
 example {s t : NatSet} : s ⊆ t → t ⊆ s → s = t := NatSet.subset_antisymm
 -- inserting an element already present is a no-op
 example (s : NatSet) (k : Nat) (h : k ∈ s) : s.insert k = s := NatSet.insert_of_mem h
+-- a set unioned with itself is unchanged
+example (s : NatSet) : s ∪ s = s := NatSet.union_self s
 
 end NatCol

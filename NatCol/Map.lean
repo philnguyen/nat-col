@@ -46,6 +46,10 @@ instance {α : Type u} : LeafOps (Node α) α where
     show Node.get? (Node.meet (fun x y => some (c x y)) a b) i = optVmeet c (Node.get? a i) (Node.get? b i)
     rw [Node.get?_meet (fun x y => some (c x y)) a b i hi]
     cases Node.get? a i <;> cases Node.get? b i <;> rfl
+  get?_join c a b i hi := by
+    show Node.get? (Node.join (fun x y => some (c x y)) a b) i = optVjoin c (Node.get? a i) (Node.get? b i)
+    rw [Node.get?_join (fun x y => some (c x y)) a b i hi]
+    cases Node.get? a i <;> cases Node.get? b i <;> rfl
   get?_insert l i j v hi hj := Node.get?_insert l i v j hi hj
   get?_ext a b h := Node.ext h
   exists_get?_of_ne_empty n h := Node.exists_get?_of_isEmpty_false n h
@@ -344,6 +348,38 @@ theorem insert_of_get? {m : NatMap α} {k : Nat} {v : α} (h : m.get? k = some v
   · rw [if_pos hj, hj]; exact h.symm
   · rw [if_neg hj]
 
+/-- Joining a map with itself preserves its keys — *regardless* of the value-combining function:
+a key survives on either side, so the set of keys is unchanged. (The values do change, to
+`combine v v`; see `get?_join_self`.) -/
+@[simp]
+theorem mem_join_self (combine : α → α → α) (m : NatMap α) (k : Nat) :
+    k ∈ m.join combine m ↔ k ∈ m := by
+  show (NatCollection.get? (NatCollection.join combine m m) k).isSome = true
+      ↔ (NatCollection.get? m k).isSome = true
+  rw [NatCollection.get?_join combine m m k]
+  cases NatCollection.get? m k <;> simp [optVjoin]
+
+/-- Looking up a key after joining a map with itself: present keys read `combine v v`, absent keys
+stay absent. The precise (combine-dependent) companion of `mem_join_self`. -/
+theorem get?_join_self (combine : α → α → α) (m : NatMap α) (k : Nat) :
+    (m.join combine m).get? k = (m.get? k).map (fun v => combine v v) := by
+  show NatCollection.get? (NatCollection.join combine m m) k
+      = (NatCollection.get? m k).map (fun v => combine v v)
+  rw [NatCollection.get?_join combine m m k]
+  cases NatCollection.get? m k <;> rfl
+
+/-- When the value-combining function is idempotent (`combine v v = v`), joining a map with itself
+returns the map. -/
+theorem join_self_of_idem (combine : α → α → α) (hidem : ∀ v, combine v v = v) (m : NatMap α) :
+    m.join combine m = m := by
+  apply NatCollection.ext_get?
+  intro k
+  show NatCollection.get? (NatCollection.join combine m m) k = NatCollection.get? m k
+  rw [NatCollection.get?_join combine m m k]
+  cases NatCollection.get? m k with
+  | none => rfl
+  | some v => simp only [optVjoin, hidem]
+
 end NatMap
 
 -- restricts transitivity as a theorem, for any preorder `rel` (here left abstract)
@@ -361,5 +397,10 @@ example (m : NatMap Nat) (k v : Nat) : (m.insert k v).get? k = some v := NatMap.
 -- inserting an entry already present is a no-op
 example (m : NatMap Nat) (k v : Nat) (h : m.get? k = some v) : m.insert k v = m :=
   NatMap.insert_of_get? h
+-- joining a map with itself keeps its keys, whatever the combine function is
+example (combine : Nat → Nat → Nat) (m : NatMap Nat) (k : Nat) : k ∈ m.join combine m ↔ k ∈ m :=
+  NatMap.mem_join_self combine m k
+-- and with an idempotent combine it returns the map unchanged
+example (m : NatMap Nat) : m.join max m = m := NatMap.join_self_of_idem max (fun v => Nat.max_self v) m
 
 end NatCol

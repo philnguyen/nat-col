@@ -720,6 +720,47 @@ theorem get?_meet (combine : V → V → V) (a b : NatCollection L) (k : Nat) :
               get?_of_gt b k (by omega)]
           cases a.get? k <;> rfl
 
+/-- **`get?` of a `join`**: the value-level union of the two lookups — a key present on either side
+survives, values present on both are combined. The denotational specification of `join`; `join`
+self-idempotence (`union_self`, and key-preservation for maps under any combine) follows from it. -/
+theorem get?_join (combine : V → V → V) (a b : NatCollection L) (k : Nat) :
+    (join combine a b).get? k = optVjoin combine (a.get? k) (b.get? k) := by
+  unfold join
+  by_cases hae : a.isEmpty = true
+  · rw [dif_pos hae, get?_eq_none_of_isEmpty a hae k]; rfl
+  · rw [dif_neg hae]
+    by_cases hbe : b.isEmpty = true
+    · rw [dif_pos hbe, get?_eq_none_of_isEmpty b hbe k, optVjoin_none_right]
+    · rw [dif_neg hbe]
+      have hane : Tree.isEmpty a.height a.tree = false := by simpa using hae
+      have hbne : Tree.isEmpty b.height b.tree = false := by simpa using hbe
+      by_cases hle : a.height ≤ b.height
+      · rw [dif_pos hle, get?_normalizeAux]
+        by_cases hkh : requiredHeight k ≤ b.height
+        · rw [if_neg (show ¬ requiredHeight k > a.height + (b.height - a.height) by omega),
+              Tree.get?_joinSpine combine a.height a.tree hane a.wf.1 k (b.height - a.height)
+                (Tree.cast (by omega) b.tree) (Tree.Full_cast (by omega) b.tree b.wf.1) (by omega),
+              Tree.get?_cast, get?_of_le b k hkh]
+          by_cases hka : requiredHeight k ≤ a.height
+          · rw [if_pos hka, ← get?_of_le a k hka]
+          · rw [if_neg hka, ← get?_of_gt a k (by omega)]
+        · rw [if_pos (show requiredHeight k > a.height + (b.height - a.height) by omega),
+              get?_of_gt a k (by omega), get?_of_gt b k (by omega)]
+          rfl
+      · rw [dif_neg hle, get?_normalizeAux]
+        by_cases hkh : requiredHeight k ≤ a.height
+        · rw [if_neg (show ¬ requiredHeight k > b.height + (a.height - b.height) by omega),
+              Tree.get?_joinSpine (fun x y => combine y x) b.height b.tree hbne b.wf.1 k
+                (a.height - b.height) (Tree.cast (by omega) a.tree)
+                (Tree.Full_cast (by omega) a.tree a.wf.1) (by omega),
+              Tree.get?_cast, optVjoin_flip combine, get?_of_le a k hkh]
+          by_cases hkb : requiredHeight k ≤ b.height
+          · rw [if_pos hkb, ← get?_of_le b k hkb]
+          · rw [if_neg hkb, ← get?_of_gt b k (by omega)]
+        · rw [if_pos (show requiredHeight k > b.height + (a.height - b.height) by omega),
+              get?_of_gt a k (by omega), get?_of_gt b k (by omega)]
+          rfl
+
 /-- **`get?` of an `insert`**: the inserted key reads the new value; every other key is read
 unchanged. The denotational specification of `insert` — inserting an already-present entry, and
 looking up a freshly-inserted entry, both follow from it (via `ext_get?` for the former). -/
