@@ -1004,6 +1004,73 @@ theorem meet_glb (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (combi
         show rel w (combine x y) = true
         exact hglb w x y hak hbk
 
+/-- **`join` is an upper bound on the left**: `a` restricts `join combine a b`, provided the value
+combine yields a `rel`-greater value than its left argument (`hle`). On a key present only in `a`
+the join copies `a`'s value, so reflexivity discharges it; on a shared key the join holds
+`combine x y`, which must be `rel`-above `x`. -/
+theorem restricts_join_left (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (combine : V → V → V) (hle : ∀ x y, rel x (combine x y) = true) (a b : NatCollection L) :
+    restricts rel a (join combine a b) = true := by
+  rw [get?_restricts rel hrefl a (join combine a b)]
+  intro k
+  rw [get?_join combine a b k]
+  cases a.get? k with
+  | none => rfl
+  | some x =>
+    cases b.get? k with
+    | none => show rel x x = true; exact hrefl x
+    | some y => show rel x (combine x y) = true; exact hle x y
+
+/-- **`join` is an upper bound on the right**: symmetric to `restricts_join_left`, needing the value
+combine to be `rel`-above its right argument (`hre`). -/
+theorem restricts_join_right (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (combine : V → V → V) (hre : ∀ x y, rel y (combine x y) = true) (a b : NatCollection L) :
+    restricts rel b (join combine a b) = true := by
+  rw [get?_restricts rel hrefl b (join combine a b)]
+  intro k
+  rw [get?_join combine a b k]
+  cases b.get? k with
+  | none => rfl
+  | some y =>
+    cases a.get? k with
+    | none => show rel y y = true; exact hrefl y
+    | some x => show rel y (combine x y) = true; exact hre x y
+
+/-- **`join` is the least upper bound**: if both `a` and `b` restrict `m`, so does their `join`,
+provided the value combine is a least upper bound for `rel` (`hlub`: a value above both `x` and `y`
+is above `combine x y`). On a key present in only one operand the join copies that operand's value
+(already known to restrict `m`); on shared keys `hlub` lifts the two bounds to the combined value. -/
+theorem join_lub (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (combine : V → V → V)
+    (hlub : ∀ x y w, rel x w = true → rel y w = true → rel (combine x y) w = true)
+    (a b m : NatCollection L)
+    (ham : restricts rel a m = true) (hbm : restricts rel b m = true) :
+    restricts rel (join combine a b) m = true := by
+  rw [get?_restricts rel hrefl a m] at ham
+  rw [get?_restricts rel hrefl b m] at hbm
+  rw [get?_restricts rel hrefl (join combine a b) m]
+  intro k
+  have hak := ham k
+  have hbk := hbm k
+  rw [get?_join combine a b k]
+  cases hga : a.get? k with
+  | none =>
+    cases hgb : b.get? k with
+    | none => rfl
+    | some y => rw [hgb] at hbk; simp only [optVjoin]; exact hbk
+  | some x =>
+    cases hgb : b.get? k with
+    | none => rw [hga] at hak; simp only [optVjoin]; exact hak
+    | some y =>
+      rw [hga] at hak
+      rw [hgb] at hbk
+      cases hgm : m.get? k with
+      | none => rw [hgm] at hak; simp [optRel] at hak
+      | some w =>
+        rw [hgm] at hak hbk
+        simp only [optRel] at hak hbk
+        show rel (combine x y) w = true
+        exact hlub x y w hak hbk
+
 end NatCollection
 
 end NatCol

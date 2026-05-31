@@ -351,6 +351,30 @@ theorem restricts_meet (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true
     m.restricts rel (a.meet combine b) = true :=
   NatCollection.meet_glb rel hrefl combine hglb m a b hma hmb
 
+/-- `join` is an upper bound on the left: `m` restricts `m.join combine n`, provided the combine
+yields a `rel`-greater value than its left argument (`hle`). -/
+theorem restricts_join_left (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    (combine : α → α → α) (hle : ∀ x y, rel x (combine x y) = true) (m n : NatMap α) :
+    m.restricts rel (m.join combine n) = true :=
+  NatCollection.restricts_join_left rel hrefl combine hle m n
+
+/-- `join` is an upper bound on the right: `n` restricts `m.join combine n`, provided the combine
+yields a `rel`-greater value than its right argument (`hre`). -/
+theorem restricts_join_right (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    (combine : α → α → α) (hre : ∀ x y, rel y (combine x y) = true) (m n : NatMap α) :
+    n.restricts rel (m.join combine n) = true :=
+  NatCollection.restricts_join_right rel hrefl combine hre m n
+
+/-- `join` is the least upper bound: any `m` that both `a` and `b` restrict is also restricted by
+their `join`, provided the combine is a least upper bound for `rel` (`hlub`). Together with
+`restricts_join_left`/`_right`, this says `join` is the supremum of `a` and `b`. -/
+theorem join_restricts (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true) (combine : α → α → α)
+    (hlub : ∀ x y w, rel x w = true → rel y w = true → rel (combine x y) w = true)
+    (a b m : NatMap α)
+    (ham : a.restricts rel m = true) (hbm : b.restricts rel m = true) :
+    (a.join combine b).restricts rel m = true :=
+  NatCollection.join_lub rel hrefl combine hlub a b m ham hbm
+
 /-- Looking up a freshly-inserted entry returns the inserted value. -/
 @[simp]
 theorem get?_insert_self (m : NatMap α) (k : Nat) (v : α) : (m.insert k v).get? k = some v := by
@@ -476,5 +500,16 @@ example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true) (combine : Nat
   ⟨NatMap.meet_restricts_left rel hr combine hl a b,
    NatMap.meet_restricts_right rel hr combine hrr a b,
    NatMap.restricts_meet rel hr combine hg m a b hma hmb⟩
+-- `join` is the least upper bound of two maps in the refinement order: both operands restrict it,
+-- and it restricts any common upper bound `m` (combine a join for `rel`, here abstract)
+example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true) (combine : Nat → Nat → Nat)
+    (hl : ∀ x y, rel x (combine x y) = true) (hrr : ∀ x y, rel y (combine x y) = true)
+    (hu : ∀ x y w, rel x w = true → rel y w = true → rel (combine x y) w = true)
+    (a b m : NatMap Nat) (ham : a.restricts rel m = true) (hbm : b.restricts rel m = true) :
+    a.restricts rel (a.join combine b) = true ∧ b.restricts rel (a.join combine b) = true
+      ∧ (a.join combine b).restricts rel m = true :=
+  ⟨NatMap.restricts_join_left rel hr combine hl a b,
+   NatMap.restricts_join_right rel hr combine hrr a b,
+   NatMap.join_restricts rel hr combine hu a b m ham hbm⟩
 
 end NatCol

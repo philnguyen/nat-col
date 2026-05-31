@@ -384,6 +384,19 @@ for `⊆`. -/
 theorem subset_inter {s t u : NatSet} (h₁ : u ⊆ s) (h₂ : u ⊆ t) : u ⊆ s ∩ t :=
   NatCollection.meet_glb (fun _ _ => true) (fun _ => rfl) (fun _ _ => ()) (fun _ _ _ _ _ => rfl) u s t h₁ h₂
 
+/-- Union is an upper bound: `s ⊆ s ∪ t`. -/
+theorem subset_union_left (s t : NatSet) : s ⊆ s ∪ t :=
+  NatCollection.restricts_join_left (fun _ _ => true) (fun _ => rfl) (fun _ _ => ()) (fun _ _ => rfl) s t
+
+/-- Union is an upper bound: `t ⊆ s ∪ t`. -/
+theorem subset_union_right (s t : NatSet) : t ⊆ s ∪ t :=
+  NatCollection.restricts_join_right (fun _ _ => true) (fun _ => rfl) (fun _ _ => ()) (fun _ _ => rfl) s t
+
+/-- Union is the least upper bound: any set containing both `s` and `t` contains `s ∪ t`. Together
+with `subset_union_left`/`subset_union_right`, this makes `s ∪ t` the supremum of `s`, `t` for `⊆`. -/
+theorem union_subset {s t u : NatSet} (h₁ : s ⊆ u) (h₂ : t ⊆ u) : s ∪ t ⊆ u :=
+  NatCollection.join_lub (fun _ _ => true) (fun _ => rfl) (fun _ _ => ()) (fun _ _ _ _ _ => rfl) s t u h₁ h₂
+
 /-- Subset is transitive: `s ⊆ t` and `t ⊆ u` give `s ⊆ u`. The set predicate `fun _ _ => true`
 is trivially reflexive and transitive, so no side conditions are needed. -/
 theorem subset_trans {s t u : NatSet} (hst : s ⊆ t) (htu : t ⊆ u) : s ⊆ u :=
@@ -454,5 +467,9 @@ example (s : NatSet) : s ∩ s = s := NatSet.inter_self s
 example (s t : NatSet) : s ∩ t ⊆ s := NatSet.inter_subset_left s t
 example (s t : NatSet) : s ∩ t ⊆ t := NatSet.inter_subset_right s t
 example {s t u : NatSet} : u ⊆ s → u ⊆ t → u ⊆ s ∩ t := NatSet.subset_inter
+-- union is the least upper bound: above both operands, and below any common upper bound
+example (s t : NatSet) : s ⊆ s ∪ t := NatSet.subset_union_left s t
+example (s t : NatSet) : t ⊆ s ∪ t := NatSet.subset_union_right s t
+example {s t u : NatSet} : s ⊆ u → t ⊆ u → s ∪ t ⊆ u := NatSet.union_subset
 
 end NatCol
