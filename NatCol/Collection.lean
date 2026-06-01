@@ -254,18 +254,6 @@ instance [BEq L] [LawfulBEq L] : LawfulBEq (NatCollection L) where
 `==` test and, via canonical form, with logical equality). -/
 instance [BEq L] [LawfulBEq L] : DecidableEq (NatCollection L) := _root_.instDecidableEqOfLawfulBEq
 
-section Tests
-
--- The canonical-shape invariant is a field, so it is available on *every* collection — and
--- on every operation result — by construction, no side condition: no excessive height
--- (`TopProper`) and no empty subtree (`Full`).
-example (c : NatCollection L) : Tree.Full c.height c.tree := c.wf.1
-example (c : NatCollection L) : Tree.TopProper c.height c.tree := c.wf.2
-example (c : NatCollection L) (k : Nat) (v : V) :
-    Tree.Canonical (c.insert k v).height (c.insert k v).tree := (c.insert k v).wf
-
-end Tests
-
 ----------------------------------------------------------------------------------------------------
 -- Theorems
 ----------------------------------------------------------------------------------------------------

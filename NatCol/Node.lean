@@ -68,7 +68,6 @@ def optRel {V : Type u} (rel : V → V → Bool) : Option V → Option V → Boo
 
 namespace Node
 
-/-- The empty node (no slots present), backed by a zero-capacity array. -/
 def empty : Node α := ⟨0, Array.emptyWithCapacity 0, by simp [show popCount 0 = 0 from rfl]⟩
 
 /-- An empty node (no slots present) whose element array is pre-allocated with capacity `c`.
@@ -78,15 +77,12 @@ ascending inserts that build the result never reallocate. -/
 private def emptyWithCapacity (c : Nat) : Node α :=
   ⟨0, Array.emptyWithCapacity c, by simp [show popCount 0 = 0 from rfl]⟩
 
-/-- A node with a single child at slot `i`. -/
 def singleton (i : UInt32) (a : α) : Node α :=
   ⟨setBit 0 i, #[a], by
     rw [popCount_setBit 0 i (testBit_zero i)]; simp [show popCount 0 = 0 from rfl]⟩
 
-/-- Has no present slots. -/
 def isEmpty (n : Node α) : Bool := n.positionsMask == 0
 
-/-- Number of present slots. -/
 def size (n : Node α) : Nat := popCount n.positionsMask
 
 /-- The child at a *present* slot. The bit-set proof makes the compact index in-bounds
@@ -134,16 +130,13 @@ def alter (n : Node α) (i : UInt32) (f : Option α → Option α) : Node α :=
             Array.size_insertIdx, n.elements_compact, hsb]⟩
     | none => n
 
-/-- Insert (or overwrite) the child at slot `i`. -/
 def insert (n : Node α) (i : UInt32) (a : α) : Node α := n.alter i (fun _ => some a)
 
-/-- Remove the child at slot `i`. -/
 def erase (n : Node α) (i : UInt32) : Node α := n.alter i (fun _ => none)
 
-/-- Apply `f` to the child at slot `i`, if present. -/
 def modify (n : Node α) (i : UInt32) (f : α → α) : Node α := n.alter i (Option.map f)
 
-/-- Fold over present slots in ascending slot order, exposing the slot index. -/
+/-- Fold over present slots in ascending slot order. -/
 def fold {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node α) : β :=
   Nat.fold 32 (fun i _ (acc : β) =>
     let iu := UInt32.ofNat i
@@ -328,7 +321,6 @@ private def nB : Node Nat := (Node.singleton 4 99).insert 7 70
 #guard (Node.singleton 5 50 |>.insert 0 0 |>.get? 0) == some 0
 #guard (Node.singleton 5 50 |>.insert 0 0 |>.get? 5) == some 50
 
--- overwrite keeps size and replaces value
 #guard (nA.insert 4 400 |>.get? 4) == some 400
 #guard (nA.insert 4 400).size == 3
 
@@ -400,7 +392,6 @@ theorem optRel_antisymm {V : Type u} (rel : V → V → Bool)
 
 namespace Node
 
-/-- A child read from a present slot is one of the stored children. -/
 theorem get_mem (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) :
     n.get i h ∈ n.elements := Array.getElem_mem _
 
@@ -740,7 +731,6 @@ These support the `get?`-based denotational semantics the `NatCollection` lattic
 value-level merge `optJoin`; `Node.ext` recovers a node from its `get?`. Slot indices are always
 `< 32` here (they come from 5-bit `chunk`s), matching `UInt32`'s mod-32 shift semantics. -/
 
-/-- The empty node reads `none` everywhere. -/
 @[simp] theorem get?_empty (i : UInt32) : (Node.empty : Node α).get? i = none := by
   unfold Node.get?
   rw [dif_neg (by simp [Node.empty, testBit_zero])]
@@ -751,7 +741,6 @@ theorem testBit_eq_isSome_get? (n : Node α) (i : UInt32) :
   unfold Node.get?
   split <;> rename_i h <;> simp_all
 
-/-- A node with a present slot is non-empty. -/
 theorem isEmpty_eq_false_of_get? (n : Node α) (s : UInt32) (h : (n.get? s).isSome) :
     Node.isEmpty n = false := by
   have htb : testBit n.positionsMask s = true := by rw [testBit_eq_isSome_get?]; exact h

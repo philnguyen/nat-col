@@ -94,15 +94,15 @@ structure IndexedSet (α : Type u) [Countable α] where
 Basic comparison of `NatSet` with Lean's standard `HashSet Nat` (🍎 to 🍊) and `PersistentHashSet Nat` to get some idea of the relative performance.
 If either `HashSet` or `PersistentHashSet` doesn't have `union`, implement them using `fold`.
 
-Pick a reasonable N (e.g. 1000000). For each test case below, we'll try with:
-- iterating sequentially from 0 until N,
-- iterating over (the same) shuffled [0..N] list (so the values are "relatively small")
-- iterating over (the same) random list of size `N` of values between `0` and `2^63`.
+Pick a reasonable N (e.g. 1000000). Each domain below regenerates the same deterministic list every run:
+- **sequential**: `0 … N-1`
+- **shuffled**: a fixed shuffle of `[0 … N-1]` (so values stay "relatively small")
+- **random**: `N` values in `[0, 2^63)`
 
-For each domain above, measure each operation:
-- "insertion": Converting the value list to the set (then print out the set's size at the end)
-- "lookup": summing over the list (then print out the sum at the end)
-- "union": converting the value list to a list of singletons, then union-ing consecutive sets until there's 1 set left (then print out the set's size at the end)
+For each domain, measure each operation, printing a final size/sum as a cross-check:
+- "insertion": build the set from the value list (report its size)
+- "lookup": sum the elements found over the list (report the sum)
+- "union": turn the values into singletons, then union consecutive sets until one remains (report its size)
 
 Be careful not to measure the time it takes to set up the data (e.g. the initial list).
 

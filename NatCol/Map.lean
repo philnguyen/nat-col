@@ -761,64 +761,6 @@ theorem get?_map {α β : Type u} (f : α → β) (m : NatMap α) (k : Nat) :
 
 end NatMap
 
--- restricts transitivity as a theorem, for any preorder `rel` (here left abstract)
-example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true)
-    (ht : ∀ x y z, rel x y = true → rel y z = true → rel x z = true) (m₁ m₂ m₃ : NatMap Nat) :
-    m₁.restricts rel m₂ = true → m₂.restricts rel m₃ = true → m₁.restricts rel m₃ = true :=
-  NatMap.restricts_trans rel hr ht m₁ m₂ m₃
--- restricts anti-symmetry as a theorem, for any reflexive + anti-symmetric `rel` (here abstract)
-example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true)
-    (ha : ∀ x y, rel x y = true → rel y x = true → x = y) (m₁ m₂ : NatMap Nat) :
-    m₁.restricts rel m₂ = true → m₂.restricts rel m₁ = true → m₁ = m₂ :=
-  NatMap.restricts_antisymm rel hr ha m₁ m₂
--- looking up a just-inserted key returns the inserted value
-example (m : NatMap Nat) (k v : Nat) : (m.insert k v).get? k = some v := NatMap.get?_insert_self m k v
--- inserting an entry already present is a no-op
-example (m : NatMap Nat) (k v : Nat) (h : m.get? k = some v) : m.insert k v = m :=
-  NatMap.insert_of_get? h
--- joining a map with itself keeps its keys, whatever the combine function is
-example (combine : Nat → Nat → Nat) (m : NatMap Nat) (k : Nat) : k ∈ m.join combine m ↔ k ∈ m :=
-  NatMap.mem_join_self combine m k
--- and with an idempotent combine it returns the map unchanged
-example (m : NatMap Nat) : m.join max m = m := NatMap.join_self_of_idem max (fun v => Nat.max_self v) m
--- meeting a map with itself likewise keeps its keys, whatever the combine function is
-example (combine : Nat → Nat → Nat) (m : NatMap Nat) (k : Nat) : k ∈ m.meet combine m ↔ k ∈ m :=
-  NatMap.mem_meet_self combine m k
--- and with an idempotent combine it returns the map unchanged
-example (m : NatMap Nat) : m.meet min m = m := NatMap.meet_self_of_idem min (fun v => Nat.min_self v) m
--- `meet` is the greatest lower bound of two maps in the refinement order: it restricts both
--- operands, and any common lower bound `m` restricts it (combine a meet for `rel`, here abstract)
-example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true) (combine : Nat → Nat → Nat)
-    (hl : ∀ x y, rel (combine x y) x = true) (hrr : ∀ x y, rel (combine x y) y = true)
-    (hg : ∀ w x y, rel w x = true → rel w y = true → rel w (combine x y) = true)
-    (m a b : NatMap Nat) (hma : m.restricts rel a = true) (hmb : m.restricts rel b = true) :
-    (a.meet combine b).restricts rel a = true ∧ (a.meet combine b).restricts rel b = true
-      ∧ m.restricts rel (a.meet combine b) = true :=
-  ⟨NatMap.meet_restricts_left rel hr combine hl a b,
-   NatMap.meet_restricts_right rel hr combine hrr a b,
-   NatMap.restricts_meet rel hr combine hg m a b hma hmb⟩
--- `join` is the least upper bound of two maps in the refinement order: both operands restrict it,
--- and it restricts any common upper bound `m` (combine a join for `rel`, here abstract)
-example (rel : Nat → Nat → Bool) (hr : ∀ x, rel x x = true) (combine : Nat → Nat → Nat)
-    (hl : ∀ x y, rel x (combine x y) = true) (hrr : ∀ x y, rel y (combine x y) = true)
-    (hu : ∀ x y w, rel x w = true → rel y w = true → rel (combine x y) w = true)
-    (a b m : NatMap Nat) (ham : a.restricts rel m = true) (hbm : b.restricts rel m = true) :
-    a.restricts rel (a.join combine b) = true ∧ b.restricts rel (a.join combine b) = true
-      ∧ (a.join combine b).restricts rel m = true :=
-  ⟨NatMap.restricts_join_left rel hr combine hl a b,
-   NatMap.restricts_join_right rel hr combine hrr a b,
-   NatMap.join_restricts rel hr combine hu a b m ham hbm⟩
--- the two distributive laws (abstract combines forming a distributive lattice on values)
-example (cm cj : Nat → Nat → Nat)
-    (hd : ∀ x y z, cm x (cj y z) = cj (cm x y) (cm x z)) (a b e : NatMap Nat) :
-    a.meet cm (b.join cj e) = (a.meet cm b).join cj (a.meet cm e) :=
-  NatMap.meet_join_distrib cm cj hd a b e
-example (cj cm : Nat → Nat → Nat)
-    (hi : ∀ x, cm x x = x) (h1 : ∀ x y, cm (cj x y) x = x) (h2 : ∀ x y, cm x (cj x y) = x)
-    (hd : ∀ x y z, cj x (cm y z) = cm (cj x y) (cj x z)) (a b e : NatMap Nat) :
-    a.join cj (b.meet cm e) = (a.join cj b).meet cm (a.join cj e) :=
-  NatMap.join_meet_distrib cj cm hi h1 h2 hd a b e
-
 /-- `NatMap` is a lawful functor: `map` satisfies the identity and composition laws (and the
 default `mapConst` agrees with `map ∘ const`). The proofs come straight from the structural
 `NatMap.map_id`/`map_comp`, since `map` only rewrites values and preserves the trie shape. -/
@@ -826,13 +768,5 @@ instance : LawfulFunctor NatMap where
   map_const := rfl
   id_map := NatMap.map_id
   comp_map := NatMap.map_comp
-
--- the functor laws, stated through `<$>`
-example : LawfulFunctor NatMap := inferInstance
-example (m : NatMap Nat) : id <$> m = m := id_map m
-example (g h : Nat → Nat) (m : NatMap Nat) : (h ∘ g) <$> m = h <$> g <$> m := comp_map g h m
--- `get?` commutes with `map`: looking up a key in `f <$> m` applies `f` to the value
-example (f : Nat → Nat) (m : NatMap Nat) (k : Nat) : (m.map f).get? k = (m.get? k).map f :=
-  NatMap.get?_map f m k
 
 end NatCol

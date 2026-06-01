@@ -3,10 +3,9 @@ import Std.Tactic.BVDecide
 /-!
 # Bit utilities
 
-Low-level `UInt32`/`Nat` helpers shared by the trie. Keys are decomposed into 5-bit
-chunks (base-32 digits); each trie level dispatches on one chunk. A `Node`'s sparse
-slots are addressed by a 32-bit `positionsMask`, and present children are stored
-compactly using the standard HAMT index trick (popcount of the mask below a slot).
+Low-level `UInt32`/`Nat` helpers shared by the trie. A `Node`'s sparse slots are
+addressed by a 32-bit `positionsMask`, and present children are stored compactly
+using the standard HAMT index trick (popcount of the mask below a slot).
 
 The `popCount`/`setBit`/`clearBit`/`arrayIndex` lemmas at the bottom are what let the
 `Node` compactness invariant (`elements.size = popCount positionsMask`) be maintained by
@@ -30,7 +29,6 @@ def popCountAux (x : UInt32) : UInt32 :=
   let x : UInt32 := (x + (x >>> 4)) &&& (0x0F0F0F0F : UInt32)
   (x * (0x01010101 : UInt32)) >>> 24
 
-/-- Number of set bits in `x` (population count). -/
 def popCount (x : UInt32) : Nat := (popCountAux x).toNat
 
 #guard popCount 0 == 0
@@ -109,7 +107,6 @@ statements follow by `.toNat`, using that a popcount never exceeds 32 (so `+1` c
 overflow). The `setBit`/`clearBit` defs need no `i < 32` hypothesis: `<<<` shifts modulo
 the width, so `1 <<< i` always sets exactly one bit. -/
 
-/-- A population count never exceeds 32. -/
 private theorem popCountAux_le (x : UInt32) : popCountAux x ≤ 32 := by unfold popCountAux; bv_decide
 
 private theorem popCountAux_toNat_le (x : UInt32) : (popCountAux x).toNat ≤ 32 := by
@@ -185,10 +182,8 @@ The collection layer keeps each trie *canonical*, in particular height-minimal: 
 node has a slot ≥ 1 set, encoded as `2 ≤ positionsMask`. These `bv_decide`-discharged facts
 about `setBit` and that bound feed the `Node`/`Tree`/`Collection` proofs. -/
 
-/-- A `UInt32` that is neither `0` nor `1` is at least `2`. -/
 theorem two_le_of_ne (m : UInt32) (h0 : m ≠ 0) (h1 : m ≠ 1) : 2 ≤ m := by bv_decide
 
-/-- Setting a bit never zeroes a mask. -/
 theorem setBit_ne_zero (m i : UInt32) : setBit m i ≠ 0 := by unfold setBit; bv_decide
 
 /-- Setting an already-set bit is a no-op (so `insert` leaves the mask unchanged when the
@@ -246,11 +241,9 @@ theorem arrayIndex_le_of_le (m a b : UInt32) (ha : a < 32) (hb : b < 32) (h : a 
   show (popCountAux (m &&& lowerMask a)).toNat ≤ (popCountAux (m &&& lowerMask b)).toNat
   exact UInt32.le_iff_toNat_le.mp key
 
-/-- Strict `UInt32` order entails `≤`. -/
 theorem uint32_le_of_lt {a b : UInt32} (h : a < b) : a ≤ b :=
   UInt32.le_iff_toNat_le.mpr (Nat.le_of_lt (UInt32.lt_iff_toNat_lt.mp h))
 
-/-- Distinct `UInt32`s are strictly comparable one way or the other. -/
 theorem lt_or_gt_uint32 {a b : UInt32} (h : a ≠ b) : a < b ∨ a > b := by
   rcases Nat.lt_trichotomy a.toNat b.toNat with hlt | heq | hgt
   · exact Or.inl (UInt32.lt_iff_toNat_lt.mpr hlt)
@@ -303,11 +296,9 @@ theorem eq_of_testBit_eq {a b : UInt32} (h : ∀ i, i < 32 → testBit a i = tes
   unfold testBit at *
   bv_decide
 
-/-- `testBit` distributes over bitwise-or. -/
 theorem testBit_or (a b i : UInt32) : testBit (a ||| b) i = (testBit a i || testBit b i) := by
   unfold testBit; bv_decide
 
-/-- `testBit` distributes over bitwise-and. -/
 theorem testBit_and (a b i : UInt32) : testBit (a &&& b) i = (testBit a i && testBit b i) := by
   unfold testBit; bv_decide
 
@@ -388,11 +379,9 @@ theorem requiredHeight_le_iff_lt_pow : ∀ (h k : Nat), requiredHeight k ≤ h �
           show (32:Nat)^(h+1+1) = 32^(h+1) * 32 from by rw [Nat.pow_succ]]
       exact Nat.div_lt_iff_lt_mul (by decide)
 
-/-- A key that fits in a height-`h` tree (`< 32^(h+1)`) has `requiredHeight ≤ h`. -/
 theorem requiredHeight_le_of_lt_pow {k h : Nat} (hk : k < 32^(h+1)) : requiredHeight k ≤ h :=
   (requiredHeight_le_iff_lt_pow h k).mpr hk
 
-/-- A key with `requiredHeight ≤ h` fits in a height-`h` tree (`< 32^(h+1)`). -/
 theorem lt_pow_of_requiredHeight_le {k h : Nat} (hk : requiredHeight k ≤ h) : k < 32^(h+1) :=
   (requiredHeight_le_iff_lt_pow h k).mp hk
 
@@ -426,7 +415,6 @@ theorem chunk_ne_zero_of_requiredHeight_eq {k h : Nat} (hk : requiredHeight k = 
         show ((0:UInt32).toNat) = 0 from rfl] at h0
   omega
 
-/-- The chunk-0 of an in-range slot `i` (`< 32`) read back as a key is `i` itself. -/
 theorem chunk_toNat_zero (i : UInt32) (hi : i < 32) : chunk i.toNat 0 = i := by
   have hlt : i.toNat < 32 := by
     have := UInt32.lt_iff_toNat_lt.mp hi; rwa [show (32:UInt32).toNat = 32 from by decide] at this
@@ -444,7 +432,6 @@ theorem chunk_probe_high (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) (hs : s
   apply UInt32.toNat_inj.mp
   rw [UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hslt (by decide))]
 
-/-- The probe key agrees with its lower bits `k'` on every chunk at or below `h`. -/
 theorem chunk_probe_low (s : UInt32) (k' h j : Nat) (hj : j ≤ h) :
     chunk (k' + s.toNat * 32^(h+1)) j = chunk k' j := by
   rw [chunk_eq_div_mod, chunk_eq_div_mod]
@@ -466,7 +453,6 @@ theorem chunk_mod_pow (k h j : Nat) (hj : j ≤ h) : chunk (k % 32^(h+1)) j = ch
     ⟨32^(h-j), by rw [show h+1-j = (h-j)+1 from by omega, Nat.pow_succ, Nat.mul_comm]⟩
   rw [hsplit, Nat.mod_mul_right_div_self, Nat.mod_mod_of_dvd _ hdvd]
 
-/-- The probe key still fits a height-`(h+1)` tree. -/
 theorem requiredHeight_probe_le (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) (hs : s < 32) :
     requiredHeight (k' + s.toNat * 32^(h+1)) ≤ h + 1 := by
   have hslt : s.toNat < 32 := by
@@ -478,7 +464,6 @@ theorem requiredHeight_probe_le (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) 
     _ = 32^(h+1) * (1 + s.toNat) := by rw [Nat.mul_comm]
     _ ≤ 32^(h+1) * 32 := Nat.mul_le_mul (Nat.le_refl _) (by omega)
 
-/-- A `chunk` equality is equality of the underlying base-32 digit. -/
 private theorem digit_eq_of_chunk_eq {j k i : Nat} (h : chunk j i = chunk k i) :
     j / 32^i % 32 = k / 32^i % 32 := by
   rw [chunk_eq_div_mod, chunk_eq_div_mod] at h

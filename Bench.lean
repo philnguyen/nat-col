@@ -198,10 +198,10 @@ def runOne (struct domain op : String) (n : Nat) : IO Sample := do
 /-- The three data structures: `(cli-key, display name)`. -/
 def structs : List (String × String) :=
   [("natset", "NatSet"), ("hashset", "Std.HashSet"), ("phashset", "PersistentHashSet")]
-/-- The three input domains: `(cli-key, display name)`. -/
+/-- The three input domains. -/
 def domains : List (String × String) :=
   [("seq", "sequential"), ("shuffled", "shuffled"), ("random", "random 0..2⁶³")]
-/-- The three operations: `(cli-key, display name)`. -/
+/-- The three operations. -/
 def ops : List (String × String) :=
   [("insert", "insertion"), ("lookup", "lookup"), ("union", "union")]
 

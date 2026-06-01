@@ -583,25 +583,4 @@ theorem union_inter_distrib (s t u : NatSet) : s ∪ (t ∩ u) = (s ∪ t) ∩ (
 
 end NatSet
 
--- subset transitivity and anti-symmetry as universally-quantified theorems (no side conditions)
-example {s t u : NatSet} : s ⊆ t → t ⊆ u → s ⊆ u := NatSet.subset_trans
-example {s t : NatSet} : s ⊆ t → t ⊆ s → s = t := NatSet.subset_antisymm
--- inserting an element already present is a no-op
-example (s : NatSet) (k : Nat) (h : k ∈ s) : s.insert k = s := NatSet.insert_of_mem h
--- a set unioned with itself is unchanged
-example (s : NatSet) : s ∪ s = s := NatSet.union_self s
--- a set intersected with itself is unchanged
-example (s : NatSet) : s ∩ s = s := NatSet.inter_self s
--- intersection is the greatest lower bound: below both operands, and above any common lower bound
-example (s t : NatSet) : s ∩ t ⊆ s := NatSet.inter_subset_left s t
-example (s t : NatSet) : s ∩ t ⊆ t := NatSet.inter_subset_right s t
-example {s t u : NatSet} : u ⊆ s → u ⊆ t → u ⊆ s ∩ t := NatSet.subset_inter
--- union is the least upper bound: above both operands, and below any common upper bound
-example (s t : NatSet) : s ⊆ s ∪ t := NatSet.subset_union_left s t
-example (s t : NatSet) : t ⊆ s ∪ t := NatSet.subset_union_right s t
-example {s t u : NatSet} : s ⊆ u → t ⊆ u → s ∪ t ⊆ u := NatSet.union_subset
--- the two distributive laws: `∩`/`∪` distribute over each other
-example (s t u : NatSet) : s ∩ (t ∪ u) = (s ∩ t) ∪ (s ∩ u) := NatSet.inter_union_distrib s t u
-example (s t u : NatSet) : s ∪ (t ∩ u) = (s ∪ t) ∩ (s ∪ u) := NatSet.union_inter_distrib s t u
-
 end NatCol
