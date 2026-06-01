@@ -66,4 +66,49 @@ These operations should be implemented once generically on `NatCollection` or `T
 * `join` distributes over `meet`
 * `meet` distributes over `join`
 
+Miscelaneous:
+* Collections are instances of `LawfulBEq`
+* Map is an instance of `LawfulFunctor`
+
 These theorems should be stated and proven once generically for `NatCollection` or `Tree`, then instantiated appropriately for `NatMap` and `NatSet`.
+
+# Derived collections
+
+Convenient collections `IndexedMap k v` and `IndexedSet k` for any type that has an injection to `Nat`:
+```lean
+class Countable (α : Type u) where
+  index : α → Nat
+  index_injective : index a = index b → a = b
+
+structure IndexedMap (k : Type u) [Countable k] (v : Type w) where
+  map : NatMap v
+-- Operations, instances, and theorems straightforwardly deferred to `NatMap`
+
+structure IndexedSet (α : Type u) [Countable α] where
+  set : NatSet
+-- Operations, instances, and theorems straightforwardly deferred to `NatSet`
+```
+
+# Micro benchmarks
+
+Basic comparison of `NatSet` with Lean's standard `HashSet Nat` (🍎 to 🍊) and `PersistentHashSet Nat` to get some idea of the relative performance.
+If either `HashSet` or `PersistentHashSet` doesn't have `union`, implement them using `fold`.
+
+Pick a reasonable N (e.g. 1000000). For each test case below, we'll try with:
+- iterating sequentially from 0 until N,
+- iterating over (the same) shuffled [0..N] list (so the values are "relatively small")
+- iterating over (the same) random list of size `N` of values between `0` and `2^63`.
+
+For each domain above, measure each operation:
+- "insertion": Converting the value list to the set (then print out the set's size at the end)
+- "lookup": summing over the list (then print out the sum at the end)
+- "union": converting the value list to a list of singletons, then union-ing consecutive sets until there's 1 set left (then print out the set's size at the end)
+
+Be careful not to measure the time it takes to set up the data (e.g. the initial list).
+
+Measure both the time (in ms) and memory use (in KB) of each set.
+
+Table at the end: colums for the data structure, rows for the benchmarks.
+
+# Future improvements
+- Memory use and locality. It's currently taking 2 hops to the next level: Each node keeping a pointer to the array of pointers to children. If dependent arrays didn't require `unsafe`, we would have used those.
