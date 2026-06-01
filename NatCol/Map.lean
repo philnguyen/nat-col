@@ -105,6 +105,15 @@ def foldM {β : Type w} {mo : Type w → Type w'} [Monad mo] (f : β → Nat →
     (m : NatMap α) : mo β :=
   NatCollection.foldM f init m
 
+/-- Whether every entry satisfies `p` (a predicate on key and value), short-circuiting at the first
+that fails (vacuously true on the empty map). Same value as
+`m.fold (fun acc k v => acc && p k v) true`, but stops at the first failing entry. -/
+def all (p : Nat → α → Bool) (m : NatMap α) : Bool := NatCollection.all p m
+
+/-- Whether some entry satisfies `p`, short-circuiting at the first that holds (vacuously false on
+the empty map). Same value as `m.fold (fun acc k v => acc || p k v) false`. -/
+def any (p : Nat → α → Bool) (m : NatMap α) : Bool := NatCollection.any p m
+
 -- Membership is on keys: `k ∈ m` reduces to the `Bool` `contains`, so it stays decidable (usable
 -- in `#guard` / `decide`); `k ∉ m` is `¬ k ∈ m`, available automatically.
 instance : Membership Nat (NatMap α) := ⟨fun m k => m.contains k = true⟩
@@ -231,6 +240,23 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
         | .error e => e | .ok _ => 0) == 7          -- stops at the first odd value
 #guard ((NatMap.ofList [(1, 10), (5000, 3)]).foldM (mo := StateM (List (Nat × Nat)))
           (fun (_ : Unit) k v => modify (· ++ [(k, v)])) () |>.run []).2 == [(1, 10), (5000, 3)]
+
+-- all / any over entries (predicate on key and value), short-circuiting. The result is independent
+-- of where the scan stops, so it must agree with the naive `fold`-based `&&` / `||`.
+#guard (NatMap.ofList [(1, 10), (2, 20)]).all (fun _ v => v % 10 == 0)
+#guard !(NatMap.ofList [(1, 10), (2, 25), (3, 30)]).all (fun _ v => v % 10 == 0)   -- 25 fails mid-scan
+#guard (NatMap.ofList [(1, 10), (2, 20)]).any (fun k _ => k % 2 == 0)              -- key 2 holds
+#guard !(NatMap.ofList [(1, 10), (3, 30)]).any (fun k _ => k % 2 == 0)             -- keys 1, 3 odd
+#guard (NatMap.empty : NatMap Nat).all (fun _ _ => false)                          -- vacuously true
+#guard !(NatMap.empty : NatMap Nat).any (fun _ _ => true)                          -- vacuously false
+#guard (NatMap.ofList [(1, 10), (5000, 20)]).all (fun _ v => v % 10 == 0)          -- mixed heights
+-- headline: short-circuit `all`/`any` agree in value with the naive `fold` computations
+#guard (NatMap.ofList [(1, 10), (2, 25), (3, 30)]).all (fun _ v => v % 10 == 0)
+        == (NatMap.ofList [(1, 10), (2, 25), (3, 30)]).fold (fun acc _ v => acc && (v % 10 == 0)) true
+#guard (NatMap.ofList [(1, 10), (2, 20)]).any (fun k _ => k % 2 == 0)
+        == (NatMap.ofList [(1, 10), (2, 20)]).fold (fun acc k _ => acc || (k % 2 == 0)) false
+#guard (NatMap.ofList [(1, 10), (5000, 20)]).all (fun _ v => v % 10 == 0)
+        == (NatMap.ofList [(1, 10), (5000, 20)]).fold (fun acc _ v => acc && (v % 10 == 0)) true
 
 -- map: applies the function to every value, preserving keys and structure (including across heights)
 #guard ((NatMap.ofList [(1, 10), (2, 20), (5000, 3)]).map (· + 1)).toList == [(1, 11), (2, 21), (5000, 4)]

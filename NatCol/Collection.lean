@@ -173,6 +173,13 @@ def foldM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V
     (c : NatCollection L) : m β :=
   Tree.foldM f init c.height c.tree
 
+/-- Whether every present `(key, value)` pair satisfies `p`, short-circuiting at the first failure.
+Same value as `&&`-folding `p` with `fold`, but stops scanning at the first failing pair. -/
+def all (p : Nat → V → Bool) (c : NatCollection L) : Bool := Tree.all p c.height c.tree
+
+/-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first success. -/
+def any (p : Nat → V → Bool) (c : NatCollection L) : Bool := Tree.any p c.height c.tree
+
 /-- Structural equality: equal heights and equal trees. Canonical ⇒ logical equality. -/
 def beq [BEq L] (a b : NatCollection L) : Bool :=
   if h : a.height = b.height then Tree.beq a.height a.tree (Tree.cast h.symm b.tree) else false

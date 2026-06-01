@@ -177,6 +177,15 @@ def foldM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → m
     m β :=
   NatCollection.foldM (fun acc k _ => f acc k) init s
 
+/-- Whether every element satisfies `p`, short-circuiting at the first that fails (vacuously true on
+the empty set). Same value as `s.fold (fun acc k => acc && p k) true`, but stops at the first
+failing element. -/
+def all (p : Nat → Bool) (s : NatSet) : Bool := NatCollection.all (fun k _ => p k) s
+
+/-- Whether some element satisfies `p`, short-circuiting at the first that holds (vacuously false on
+the empty set). Same value as `s.fold (fun acc k => acc || p k) false`. -/
+def any (p : Nat → Bool) (s : NatSet) : Bool := NatCollection.any (fun k _ => p k) s
+
 end NatSet
 
 /-! ## Tests -/
@@ -226,6 +235,26 @@ section Tests
         | .error e => e | .ok _ => 0) == 200        -- stops at the first element ≥ 100
 #guard ((NatSet.ofList [1, 5, 1000]).foldM (m := StateM (List Nat))
           (fun (_ : Unit) k => modify (· ++ [k])) () |>.run []).2 == [1, 5, 1000]
+
+-- all / any over elements, short-circuiting. The result is independent of where the scan stops, so
+-- it must agree with the naive `fold`-based `&&` / `||` (which always visits every element).
+#guard (NatSet.ofList [2, 4, 6]).all (fun k => k % 2 == 0)
+#guard !(NatSet.ofList [2, 4, 5, 6]).all (fun k => k % 2 == 0)        -- 5 fails mid-scan
+#guard (NatSet.ofList [1, 3, 4, 5]).any (fun k => k % 2 == 0)         -- 4 holds mid-scan
+#guard !(NatSet.ofList [1, 3, 5]).any (fun k => k % 2 == 0)
+#guard (∅ : NatSet).all (fun _ => false)                             -- vacuously true
+#guard !(∅ : NatSet).any (fun _ => true)                             -- vacuously false
+#guard (NatSet.ofList [2, 4, 5000]).all (fun k => k % 2 == 0)         -- mixed heights, all even
+#guard (NatSet.ofList [1, 3, 5000]).any (fun k => k % 2 == 0)         -- mixed heights, 5000 even
+-- headline: short-circuit `all`/`any` agree in value with the naive `fold` computations
+#guard (NatSet.ofList [2, 4, 5, 6]).all (fun k => k % 2 == 0)
+        == (NatSet.ofList [2, 4, 5, 6]).fold (fun acc k => acc && (k % 2 == 0)) true
+#guard (NatSet.ofList [1, 3, 4, 5]).any (fun k => k % 2 == 0)
+        == (NatSet.ofList [1, 3, 4, 5]).fold (fun acc k => acc || (k % 2 == 0)) false
+#guard (NatSet.ofList [2, 4, 5000]).all (fun k => k % 2 == 0)
+        == (NatSet.ofList [2, 4, 5000]).fold (fun acc k => acc && (k % 2 == 0)) true
+#guard (∅ : NatSet).any (fun k => k % 2 == 0)
+        == (∅ : NatSet).fold (fun acc k => acc || (k % 2 == 0)) false
 
 -- union (via the `∪` notation)
 #guard ((NatSet.ofList [1, 2]) ∪ (NatSet.ofList [2, 3])).toList == [1, 2, 3]

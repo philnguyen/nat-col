@@ -157,6 +157,21 @@ def foldM {β : Type v} {m : Type v → Type w} [Monad m] (f : β → UInt32 →
     let iu := UInt32.ofNat i
     if h : testBit n.positionsMask iu = true then f acc iu (n.get iu h) else pure acc) init
 
+/-- Whether every present slot (slot index + child) satisfies `p`, short-circuiting: the scan
+stops at the first slot where `p` returns `false`. Same value as `&&`-folding `p` over `fold`, but
+without visiting the remaining slots; built on `Nat.allM` over the 32 slots (at `m := Id`). -/
+def all (p : UInt32 → α → Bool) (n : Node α) : Bool :=
+  Nat.allM (m := Id) 32 (fun i _ =>
+    let iu := UInt32.ofNat i
+    if h : testBit n.positionsMask iu = true then p iu (n.get iu h) else true)
+
+/-- Whether some present slot satisfies `p`, short-circuiting at the first slot where it returns
+`true`. The `any` companion of `all` (built on `Nat.anyM` over the 32 slots). -/
+def any (p : UInt32 → α → Bool) (n : Node α) : Bool :=
+  Nat.anyM (m := Id) 32 (fun i _ =>
+    let iu := UInt32.ofNat i
+    if h : testBit n.positionsMask iu = true then p iu (n.get iu h) else false)
+
 /-- Map a function over every stored child, preserving the slot structure: the slot mask and
 the array length are untouched, so only the element *type* changes (`α` to `β`). The compactness
 invariant is inherited from `n` because `Array.map` preserves size. This is the functorial

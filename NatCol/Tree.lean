@@ -317,6 +317,30 @@ def foldM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V
     (h : Nat) (t : Tree L h) : m β :=
   foldMAux f 0 h t init
 
+/-- Whether every present `(key, value)` pair satisfies `p`, short-circuiting at the first that
+fails. Mirrors `foldAux` but threads a `Bool` with early exit: a leaf scans its present pairs with
+`Array.all`; a node scans its slots with `Node.all`, stopping as soon as a child subtree fails — so
+an entire subtree can be skipped without being descended. -/
+def allAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Bool
+  | 0, l => (LeafOps.toArray l).all (fun (i, v) => p (pfx ||| i.toNat) v)
+  | h + 1, n =>
+    n.all (fun i child => allAux p (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child)
+termination_by h => h
+
+/-- Whether every present `(key, value)` pair satisfies `p`, short-circuiting at the first failure. -/
+def all (p : Nat → V → Bool) (h : Nat) (t : Tree L h) : Bool := allAux p 0 h t
+
+/-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first that
+holds. The `any` companion of `allAux`: a leaf scans with `Array.any`, a node with `Node.any`. -/
+def anyAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Bool
+  | 0, l => (LeafOps.toArray l).any (fun (i, v) => p (pfx ||| i.toNat) v)
+  | h + 1, n =>
+    n.any (fun i child => anyAux p (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child)
+termination_by h => h
+
+/-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first success. -/
+def any (p : Nat → V → Bool) (h : Nat) (t : Tree L h) : Bool := anyAux p 0 h t
+
 /-! ### Canonical shape
 
 `Full` is "no empty subtree": every present child, at every level, is non-empty. `TopProper`
