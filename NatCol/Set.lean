@@ -22,6 +22,7 @@ instance : LeafOps UInt32 Unit where
   isEmpty u := u == 0
   size := popCount
   get? u i := if testBit u i then some () else none
+  contains u i := testBit u i
   insert u i _ := setBit u i
   erase := clearBit
   modify u _ _ := u
@@ -34,6 +35,9 @@ instance : LeafOps UInt32 Unit where
   filter p u := Nat.fold 32 (fun i _ acc =>
     let iu := UInt32.ofNat i
     if testBit u iu && p iu () then setBit acc iu else acc) (0 : UInt32)
+  contains_eq_isSome u i := by
+    show testBit u i = (if testBit u i then some () else none).isSome
+    cases testBit u i <;> rfl
   insert_ne_empty u i _ := beq_eq_false_iff_ne.mpr (setBit_ne_zero u i)
   isEmpty_modify _ _ _ := rfl
   isEmpty_empty := by decide
@@ -528,14 +532,15 @@ theorem subset_antisymm {s t : NatSet} (hst : s ⊆ t) (hts : t ⊆ s) : s = t :
 /-- A freshly-inserted element is a member: `k ∈ s.insert k`. -/
 @[simp]
 theorem mem_insert_self (s : NatSet) (k : Nat) : k ∈ s.insert k := by
-  show (NatCollection.get? (NatCollection.insert s k ()) k).isSome = true
-  rw [NatCollection.get?_insert s k () k]
+  show NatCollection.contains (NatCollection.insert s k ()) k = true
+  rw [NatCollection.contains_eq, NatCollection.get?_insert s k () k]
   simp
 
 /-- Inserting an element already in the set returns the same set. -/
 theorem insert_of_mem {s : NatSet} {k : Nat} (h : k ∈ s) : s.insert k = s := by
   have hk : NatCollection.get? s k = some () := by
-    have hb : (NatCollection.get? s k).isSome = true := h
+    have hb : (NatCollection.get? s k).isSome = true := by
+      rw [← NatCollection.contains_eq]; exact h
     cases hg : NatCollection.get? s k with
     | none => rw [hg] at hb; exact absurd hb (by decide)
     | some u => exact congrArg some (Subsingleton.elim u ())

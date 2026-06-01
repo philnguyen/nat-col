@@ -79,8 +79,11 @@ termination_by h => h
 @[specialize] def get? (c : NatCollection L) (k : Nat) : Option V :=
   if requiredHeight k > c.height then none else Tree.get? k c.height c.tree
 
-/-- Is key `k` present? -/
-@[specialize] def contains (c : NatCollection L) (k : Nat) : Bool := (c.get? k).isSome
+/-- Is key `k` present? Routes through the boxing-free `Tree.contains` rather than
+`(get? k).isSome`; `contains_eq` proves the two agree, so the `get?`-based membership lemmas
+are unaffected. -/
+@[specialize] def contains (c : NatCollection L) (k : Nat) : Bool :=
+  if requiredHeight k > c.height then false else Tree.contains k c.height c.tree
 
 /-- Insert / overwrite key `k` ↦ `v`, growing the height if `k` needs more chunks. -/
 @[specialize] def insert (c : NatCollection L) (k : Nat) (v : V) : NatCollection L :=
@@ -259,6 +262,15 @@ instance [BEq L] [LawfulBEq L] : DecidableEq (NatCollection L) := _root_.instDec
 ----------------------------------------------------------------------------------------------------
 
 /-! ## Lattice laws -/
+
+/-- `contains` agrees with `(get? k).isSome`. The boxing-free `contains` path is thus
+observationally identical to the old definition, so every membership lemma stated via
+`get?`/`.isSome` is unaffected. -/
+theorem contains_eq (c : NatCollection L) (k : Nat) : c.contains k = (c.get? k).isSome := by
+  unfold contains get?
+  by_cases hP : requiredHeight k > c.height
+  · rw [if_pos hP, if_pos hP]; rfl
+  · rw [if_neg hP, if_neg hP]; exact Tree.contains_eq_isSome k c.height c.tree
 
 /-- The empty collection is recognized as empty (lifts the leaf law `LeafOps.isEmpty_empty`
 through `Tree.isEmpty 0 (Tree.empty 0)`). -/

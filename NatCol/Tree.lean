@@ -52,6 +52,9 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   isEmpty   : L → Bool
   size      : L → Nat
   get?      : L → UInt32 → Option V
+  /-- Membership test at a slot, returning `Bool` directly so the lookup path avoids boxing an
+  `Option` it only inspects for presence. Tied to `get?` by `contains_eq_isSome`. -/
+  contains  : L → UInt32 → Bool
   insert    : L → UInt32 → V → L
   erase     : L → UInt32 → L
   modify    : L → UInt32 → (V → V) → L
@@ -64,6 +67,10 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   `Tree.filter`; a fully-filtered leaf becomes empty, but that emptiness is governed at the node
   above (or the collection top), so this carries no canonical-shape obligation of its own. -/
   filter    : (UInt32 → V → Bool) → L → L
+  /-- `contains` agrees with `get?`'s presence: the `Bool` fast path matches the denotational
+  lookup. Lets the collection layer keep its `get?`-based membership lemmas after routing
+  `contains` through the boxing-free path. -/
+  contains_eq_isSome : ∀ (l : L) (i : UInt32), contains l i = (get? l i).isSome
   /-- Inserting a value yields a non-empty leaf, so freshly-built subtrees are never empty.
   Part of the canonical-shape invariant (`Tree.Full`). -/
   insert_ne_empty : ∀ (l : L) (i : UInt32) (v : V), isEmpty (insert l i v) = false
@@ -154,6 +161,17 @@ termination_by h => h
     match Node.get? n (chunk k (h + 1)) with
     | some child => get? k h child
     | none => none
+termination_by h => h
+
+/-- Is key `k` present? The `Bool` companion of `get?`: it descends with a `testBit` + total
+`Node.get` at each level rather than `Node.get?`, so no `Option` is boxed on the path. Tied to
+`get?` by `contains_eq_isSome`. -/
+@[specialize] def contains (k : Nat) : (h : Nat) → Tree L h → Bool
+  | 0, l => LeafOps.contains l (chunk k 0)
+  | h + 1, n =>
+    if hp : testBit n.positionsMask (chunk k (h + 1)) = true then
+      contains k h (n.get (chunk k (h + 1)) hp)
+    else false
 termination_by h => h
 
 /-- A tree of the given height holding the single key `k` ↦ `v`. -/
@@ -845,6 +863,23 @@ theorem get?_succ_some (k h : Nat) (n : Tree L (h + 1)) (child : Tree L h)
 theorem get?_succ_none (k h : Nat) (n : Tree L (h + 1))
     (hc : Node.get? n (chunk k (h + 1)) = none) : Tree.get? k (h + 1) n = none := by
   rw [get?_succ, hc]
+
+/-- The `Bool` lookup `contains` agrees with `get?`'s presence at every height. Lets the
+collection layer route membership through the boxing-free path while keeping all its
+`get?`-based lemmas. -/
+theorem contains_eq_isSome (k : Nat) : (h : Nat) → (t : Tree L h) →
+    Tree.contains k h t = (Tree.get? k h t).isSome
+  | 0, l => by
+    simp only [Tree.contains, Tree.get?]; exact LeafOps.contains_eq_isSome l (chunk k 0)
+  | h + 1, n => by
+    rw [get?_succ]
+    simp only [Tree.contains]
+    by_cases hp : testBit n.positionsMask (chunk k (h + 1)) = true
+    · rw [dif_pos hp, show Node.get? n (chunk k (h + 1)) = some (n.get (chunk k (h + 1)) hp) from
+        dif_pos hp]
+      exact contains_eq_isSome k h (n.get (chunk k (h + 1)) hp)
+    · rw [dif_neg hp, show Node.get? n (chunk k (h + 1)) = none from dif_neg hp]
+      rfl
 
 /-- `Tree.get?` commutes with a height cast. -/
 @[simp] theorem get?_cast {ha hb : Nat} (p : ha = hb) (k : Nat) (t : Tree L ha) :

@@ -24,6 +24,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   isEmpty := Node.isEmpty
   size := Node.size
   get? := Node.get?
+  contains n i := testBit n.positionsMask i
   insert := Node.insert
   erase := Node.erase
   modify := Node.modify
@@ -32,6 +33,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   restricts := Node.restricts
   toArray n := n.fold (fun acc i a => acc.push (i, a)) #[]
   filter p n := Node.filterMap (fun i a => if p i a then some a else none) n
+  contains_eq_isSome n i := Node.testBit_eq_isSome_get? n i
   insert_ne_empty := Node.isEmpty_insert
   isEmpty_modify n i g := Node.isEmpty_alter_invariant n i (Option.map g) (fun o => by cases o <;> rfl)
   isEmpty_empty := rfl
@@ -653,8 +655,9 @@ a key survives on either side, so the set of keys is unchanged. (The values do c
 @[simp]
 theorem mem_join_self (combine : α → α → α) (m : NatMap α) (k : Nat) :
     k ∈ m.join combine m ↔ k ∈ m := by
-  show (NatCollection.get? (NatCollection.join combine m m) k).isSome = true
-      ↔ (NatCollection.get? m k).isSome = true
+  show NatCollection.contains (NatCollection.join combine m m) k = true
+      ↔ NatCollection.contains m k = true
+  simp only [NatCollection.contains_eq]
   rw [NatCollection.get?_join combine m m k]
   cases NatCollection.get? m k <;> simp [optVjoin]
 
@@ -685,8 +688,9 @@ every key is shared with itself, so the set of keys is unchanged. (The values do
 @[simp]
 theorem mem_meet_self (combine : α → α → α) (m : NatMap α) (k : Nat) :
     k ∈ m.meet combine m ↔ k ∈ m := by
-  show (NatCollection.get? (NatCollection.meet combine m m) k).isSome = true
-      ↔ (NatCollection.get? m k).isSome = true
+  show NatCollection.contains (NatCollection.meet combine m m) k = true
+      ↔ NatCollection.contains m k = true
+  simp only [NatCollection.contains_eq]
   rw [NatCollection.get?_meet combine m m k]
   cases NatCollection.get? m k <;> simp [optVmeet]
 
