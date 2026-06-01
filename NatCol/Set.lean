@@ -20,10 +20,10 @@ namespace NatCol
 instance : LeafOps UInt32 Unit where
   empty := 0
   isEmpty u := u == 0
-  size u := popCount u
+  size := popCount
   get? u i := if testBit u i then some () else none
   insert u i _ := setBit u i
-  erase u i := clearBit u i
+  erase := clearBit
   modify u _ _ := u
   join _ a b := a ||| b
   meet _ a b := a &&& b
@@ -138,11 +138,11 @@ instance : EmptyCollection NatSet := ⟨NatCollection.empty⟩
 
 /-- The empty set. -/
 def empty : NatSet := ∅
-def isEmpty (s : NatSet) : Bool := NatCollection.isEmpty s
-def size (s : NatSet) : Nat := NatCollection.size s
-def contains (s : NatSet) (k : Nat) : Bool := NatCollection.contains s k
+def isEmpty : NatSet → Bool := NatCollection.isEmpty
+def size : NatSet → Nat := NatCollection.size
+def contains : NatSet → Nat → Bool := NatCollection.contains
 def insert (s : NatSet) (k : Nat) : NatSet := NatCollection.insert s k ()
-def erase (s : NatSet) (k : Nat) : NatSet := NatCollection.erase s k
+def erase : NatSet → Nat → NatSet := NatCollection.erase
 
 /-- Union. -/
 def union (s t : NatSet) : NatSet := NatCollection.join (fun _ _ => ()) s t

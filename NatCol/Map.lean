@@ -21,28 +21,28 @@ The lattice callbacks always return `some` — values never prune; empty *subtre
 pruned one level up (in `Tree.meetEq`). -/
 instance {α : Type u} : LeafOps (Node α) α where
   empty := Node.empty
-  isEmpty n := Node.isEmpty n
-  size n := Node.size n
-  get? n i := Node.get? n i
-  insert n i a := Node.insert n i a
-  erase n i := Node.erase n i
-  modify n i f := Node.modify n i f
+  isEmpty := Node.isEmpty
+  size := Node.size
+  get? := Node.get?
+  insert := Node.insert
+  erase := Node.erase
+  modify := Node.modify
   join c a b := Node.join (fun x y => some (c x y)) a b
   meet c a b := Node.meet (fun x y => some (c x y)) a b
-  restricts rel a b := Node.restricts rel a b
+  restricts := Node.restricts
   toArray n := n.fold (fun acc i a => acc.push (i, a)) #[]
   filter p n := Node.filterMap (fun i a => if p i a then some a else none) n
-  insert_ne_empty n i v := Node.isEmpty_insert n i v
+  insert_ne_empty := Node.isEmpty_insert
   isEmpty_modify n i g := Node.isEmpty_alter_invariant n i (Option.map g) (fun o => by cases o <;> rfl)
   isEmpty_empty := rfl
-  eq_empty_of_isEmpty n h := Node.eq_empty_of_isEmpty n h
+  eq_empty_of_isEmpty := Node.eq_empty_of_isEmpty
   restricts_refl rel hrefl n := Node.restricts_self rel n (fun x _ => hrefl x)
   join_comm f g hfg a b := Node.join_comm a b (fun x y => by rw [hfg])
   meet_comm f g hfg a b := Node.meet_comm a b (fun x y => by rw [hfg])
   join_assoc c hc a b d :=
     Node.join_assoc _ a b d (fun s _ => Node.optJoin_someC_assoc c hc (a.get? s) (b.get? s) (d.get? s))
-  isEmpty_join c a b hne := Node.isEmpty_join_left c a b hne
-  get?_empty i := Node.get?_empty i
+  isEmpty_join := Node.isEmpty_join_left
+  get?_empty := Node.get?_empty
   get?_meet c a b i hi := by
     show Node.get? (Node.meet (fun x y => some (c x y)) a b) i = optVmeet c (Node.get? a i) (Node.get? b i)
     rw [Node.get?_meet (fun x y => some (c x y)) a b i hi]
@@ -53,7 +53,7 @@ instance {α : Type u} : LeafOps (Node α) α where
     cases Node.get? a i <;> cases Node.get? b i <;> rfl
   get?_insert l i j v hi hj := Node.get?_insert l i v j hi hj
   get?_ext a b h := Node.ext h
-  exists_get?_of_ne_empty n h := Node.exists_get?_of_isEmpty_false n h
+  exists_get?_of_ne_empty := Node.exists_get?_of_isEmpty_false
   get?_restricts rel _ a b := Node.restricts_iff rel a b
 
 /-- A map from natural numbers to `α`. -/
@@ -75,66 +75,64 @@ instance : EmptyCollection (NatMap α) := ⟨NatCollection.empty⟩
 
 /-- The empty map. -/
 def empty : NatMap α := ∅
-def isEmpty (m : NatMap α) : Bool := NatCollection.isEmpty m
-def size (m : NatMap α) : Nat := NatCollection.size m
-def contains (m : NatMap α) (k : Nat) : Bool := NatCollection.contains m k
-def get? (m : NatMap α) (k : Nat) : Option α := NatCollection.get? m k
+def isEmpty : NatMap α → Bool := NatCollection.isEmpty
+def size : NatMap α → Nat := NatCollection.size
+def contains : NatMap α → Nat → Bool := NatCollection.contains
+def get? : NatMap α → Nat → Option α := NatCollection.get?
 def getD (m : NatMap α) (k : Nat) (fallback : α) : α := (m.get? k).getD fallback
-def insert (m : NatMap α) (k : Nat) (v : α) : NatMap α := NatCollection.insert m k v
-def erase (m : NatMap α) (k : Nat) : NatMap α := NatCollection.erase m k
-def modify (m : NatMap α) (k : Nat) (f : α → α) : NatMap α := NatCollection.modify m k f
+def insert : NatMap α → Nat → α → NatMap α := NatCollection.insert
+def erase : NatMap α → Nat → NatMap α := NatCollection.erase
+def modify : NatMap α → Nat → (α → α) → NatMap α := NatCollection.modify
 
 /-- Union; `combine` resolves values at coinciding keys. -/
-def join (combine : α → α → α) (m₁ m₂ : NatMap α) : NatMap α := NatCollection.join combine m₁ m₂
+def join : (α → α → α) → NatMap α → NatMap α → NatMap α := NatCollection.join
 /-- Intersection; `combine` resolves values at coinciding keys. -/
-def meet (combine : α → α → α) (m₁ m₂ : NatMap α) : NatMap α := NatCollection.meet combine m₁ m₂
+def meet : (α → α → α) → NatMap α → NatMap α → NatMap α := NatCollection.meet
 /-- `m₁` restricts `m₂`: `m₁`'s domain ⊆ `m₂`'s, and `rel` holds on values at coinciding keys. -/
-def restricts (rel : α → α → Bool) (m₁ m₂ : NatMap α) : Bool := NatCollection.restricts rel m₁ m₂
+def restricts : (α → α → Bool) → NatMap α → NatMap α → Bool := NatCollection.restricts
 
 /-- All `(key, value)` pairs, ascending by key. -/
-def toList (m : NatMap α) : List (Nat × α) := NatCollection.toList m
+def toList : NatMap α → List (Nat × α) := NatCollection.toList
 /-- Build a map from `(key, value)` pairs (later pairs win on duplicate keys). -/
-def ofList (l : List (Nat × α)) : NatMap α := NatCollection.ofList l
+def ofList : List (Nat × α) → NatMap α := NatCollection.ofList
 
 /-- Fold `f` over `(key, value)` entries in ascending key order, starting from `init`. -/
-def fold {β : Type w} (f : β → Nat → α → β) (init : β) (m : NatMap α) : β :=
-  NatCollection.fold f init m
+def fold {β : Type w} : (β → Nat → α → β) → β → NatMap α → β := NatCollection.fold
 
 /-- Monadic fold over `(key, value)` entries in ascending key order, threading the accumulator
 through `mo`. The monadic companion of `fold` (recovered by instantiating `mo := Id`). -/
-def foldM {β : Type w} {mo : Type w → Type w'} [Monad mo] (f : β → Nat → α → mo β) (init : β)
-    (m : NatMap α) : mo β :=
-  NatCollection.foldM f init m
+def foldM {β : Type w} {mo : Type w → Type w'} [Monad mo] :
+    (β → Nat → α → mo β) → β → NatMap α → mo β := NatCollection.foldM
 
 /-- Whether every entry satisfies `p` (a predicate on key and value), short-circuiting at the first
 that fails (vacuously true on the empty map). Same value as
 `m.fold (fun acc k v => acc && p k v) true`, but stops at the first failing entry. -/
-def all (p : Nat → α → Bool) (m : NatMap α) : Bool := NatCollection.all p m
+def all : (Nat → α → Bool) → NatMap α → Bool := NatCollection.all
 
 /-- Whether some entry satisfies `p`, short-circuiting at the first that holds (vacuously false on
 the empty map). Same value as `m.fold (fun acc k v => acc || p k v) false`. -/
-def any (p : Nat → α → Bool) (m : NatMap α) : Bool := NatCollection.any p m
+def any : (Nat → α → Bool) → NatMap α → Bool := NatCollection.any
 
 /-- Keep only the entries `(key, value)` satisfying `p`. The result is canonical, so it equals the
 map built directly from the surviving entries (and its height shrinks when deep keys are removed). -/
-def filter (p : Nat → α → Bool) (m : NatMap α) : NatMap α := NatCollection.filter p m
+def filter : (Nat → α → Bool) → NatMap α → NatMap α := NatCollection.filter
 
 /-- Monadic `all` over entries (predicate on key and value), threading effects in ascending key
 order and short-circuiting at the first failure. The monadic companion of `all`. -/
-def allM {mo : Type → Type w} [Monad mo] (p : Nat → α → mo Bool) (m : NatMap α) : mo Bool :=
-  NatCollection.allM p m
+def allM {mo : Type → Type w} [Monad mo] : (Nat → α → mo Bool) → NatMap α → mo Bool :=
+  NatCollection.allM
 
 /-- Monadic `any` over entries, short-circuiting at the first success. The monadic companion of
 `any`. -/
-def anyM {mo : Type → Type w} [Monad mo] (p : Nat → α → mo Bool) (m : NatMap α) : mo Bool :=
-  NatCollection.anyM p m
+def anyM {mo : Type → Type w} [Monad mo] : (Nat → α → mo Bool) → NatMap α → mo Bool :=
+  NatCollection.anyM
 
 /-- Monadic `filter`: keep the entries for which `p` returns `true`, running `p` on every entry in
 ascending key order and threading its effects through `mo`. The result is canonical — rebuilt from
 the survivors (see `NatCollection.filterM`) — so it equals the pure `filter` when `p` is
 effect-free. Restricted to `α : Type`, as `NatCollection.filterM` is. -/
-def filterM {α : Type} {mo : Type → Type w} [Monad mo] (p : Nat → α → mo Bool) (m : NatMap α) :
-    mo (NatMap α) := NatCollection.filterM p m
+def filterM {α : Type} {mo : Type → Type w} [Monad mo] :
+    (Nat → α → mo Bool) → NatMap α → mo (NatMap α) := NatCollection.filterM
 
 -- Membership is on keys: `k ∈ m` reduces to the `Bool` `contains`, so it stays decidable (usable
 -- in `#guard` / `decide`); `k ∉ m` is `¬ k ∈ m`, available automatically.
@@ -827,7 +825,7 @@ default `mapConst` agrees with `map ∘ const`). The proofs come straight from t
 instance : LawfulFunctor NatMap where
   map_const := rfl
   id_map := NatMap.map_id
-  comp_map := fun g h x => NatMap.map_comp g h x
+  comp_map := NatMap.map_comp
 
 -- the functor laws, stated through `<$>`
 example : LawfulFunctor NatMap := inferInstance
