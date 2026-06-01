@@ -172,6 +172,24 @@ def any (p : UInt32 → α → Bool) (n : Node α) : Bool :=
     let iu := UInt32.ofNat i
     if h : testBit n.positionsMask iu = true then p iu (n.get iu h) else false)
 
+/-- Monadic `all`: whether every present slot satisfies the monadic predicate `p`, threading `p`'s
+effects through `m` in ascending slot order and short-circuiting at the first slot where `p` returns
+`false` (later slots are then neither visited nor run). The monadic companion of `all` (its
+`m := Id` instance); built on `Nat.allM` over the 32 slots. Absent slots contribute `pure true`,
+so they run no effect. -/
+def allM {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α) : m Bool :=
+  Nat.allM 32 (fun i _ =>
+    let iu := UInt32.ofNat i
+    if h : testBit n.positionsMask iu = true then p iu (n.get iu h) else pure true)
+
+/-- Monadic `any`: whether some present slot satisfies the monadic predicate `p`, short-circuiting
+at the first slot where it returns `true`. The `any` companion of `allM`; absent slots contribute
+`pure false`, running no effect. -/
+def anyM {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α) : m Bool :=
+  Nat.anyM 32 (fun i _ =>
+    let iu := UInt32.ofNat i
+    if h : testBit n.positionsMask iu = true then p iu (n.get iu h) else pure false)
+
 /-- Map a function over every stored child, preserving the slot structure: the slot mask and
 the array length are untouched, so only the element *type* changes (`α` to `β`). The compactness
 invariant is inherited from `n` because `Array.map` preserves size. This is the functorial

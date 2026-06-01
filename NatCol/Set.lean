@@ -193,6 +193,22 @@ def any (p : Nat → Bool) (s : NatSet) : Bool := NatCollection.any (fun k _ => 
 directly from the surviving elements (and its height shrinks when the deep keys are removed). -/
 def filter (p : Nat → Bool) (s : NatSet) : NatSet := NatCollection.filter (fun k _ => p k) s
 
+/-- Monadic `all`: whether every element satisfies the monadic predicate `p`, threading effects in
+ascending order and short-circuiting at the first failure. The monadic companion of `all`. -/
+def allM {m : Type → Type w} [Monad m] (p : Nat → m Bool) (s : NatSet) : m Bool :=
+  NatCollection.allM (fun k _ => p k) s
+
+/-- Monadic `any`: whether some element satisfies `p`, short-circuiting at the first success. -/
+def anyM {m : Type → Type w} [Monad m] (p : Nat → m Bool) (s : NatSet) : m Bool :=
+  NatCollection.anyM (fun k _ => p k) s
+
+/-- Monadic `filter`: keep the elements for which `p` returns `true`, running `p` on every element
+in ascending order and threading its effects through `m`. The result is canonical — rebuilt from
+the survivors (see `NatCollection.filterM`) — so it equals the pure `filter` when `p` is
+effect-free. -/
+def filterM {m : Type → Type w} [Monad m] (p : Nat → m Bool) (s : NatSet) : m NatSet :=
+  NatCollection.filterM (fun k _ => p k) s
+
 end NatSet
 
 /-! ## Tests -/
@@ -276,6 +292,32 @@ section Tests
 -- filter agrees with `List.filter` through `toList` (order preserved, mixed heights)
 #guard ((NatSet.ofList [1, 40, 99, 5000]).filter (fun k => k % 2 == 1)).toList
         == ((NatSet.ofList [1, 40, 99, 5000]).toList.filter (fun k => k % 2 == 1))
+
+-- monadic allM / anyM / filterM: in `Id` they reproduce the pure ops; in a real monad they thread
+-- effects in ascending order. `StateM` records the visit order, which also exposes short-circuiting.
+#guard Id.run ((NatSet.ofList [2, 4, 6]).allM (fun k => pure (k % 2 == 0)))
+#guard !Id.run ((NatSet.ofList [2, 5, 6]).anyM (fun k => pure (k > 100)))
+#guard Id.run ((NatSet.ofList [1, 2, 3]).filterM (fun k => pure (k % 2 == 1))) = NatSet.ofList [1, 3]
+-- allM stops at the first failure (5 is odd), so 6 is never visited (the StateM log ends at 5)
+#guard Id.run (((NatSet.ofList [2, 4, 5, 6]).allM (m := StateM (List Nat))
+          (fun k => do modify (· ++ [k]); pure (k % 2 == 0))).run []) == (false, [2, 4, 5])
+-- anyM stops at the first success (4 is even), so 5 and 6 are never visited
+#guard Id.run (((NatSet.ofList [1, 3, 4, 5, 6]).anyM (m := StateM (List Nat))
+          (fun k => do modify (· ++ [k]); pure (k % 2 == 0))).run []) == (true, [1, 3, 4])
+-- allM / anyM agree in value with the pure all / any
+#guard Id.run ((NatSet.ofList [2, 4, 5, 6]).allM (fun k => pure (k % 2 == 0)))
+        == (NatSet.ofList [2, 4, 5, 6]).all (fun k => k % 2 == 0)
+#guard Id.run ((NatSet.ofList [1, 3, 4, 5]).anyM (fun k => pure (k % 2 == 0)))
+        == (NatSet.ofList [1, 3, 4, 5]).any (fun k => k % 2 == 0)
+-- filterM in `Id` agrees with the pure filter; it visits every element in ascending order; and in
+-- `Except` a throwing predicate short-circuits at the first offending element (300 is never seen).
+#guard Id.run ((NatSet.ofList [1, 2, 3, 4, 5, 6]).filterM (fun k => pure (k % 2 == 0)))
+        = (NatSet.ofList [1, 2, 3, 4, 5, 6]).filter (fun k => k % 2 == 0)
+#guard (((NatSet.ofList [1, 5, 1000]).filterM (m := StateM (List Nat))
+          (fun k => do modify (· ++ [k]); pure true)).run []).2 == [1, 5, 1000]
+#guard (match ((NatSet.ofList [1, 200, 5, 300]).filterM
+          (fun k => if k ≥ 100 then throw k else pure (k % 2 == 0)) : Except Nat NatSet) with
+        | .error e => e | .ok _ => 0) == 200
 
 -- union (via the `∪` notation)
 #guard ((NatSet.ofList [1, 2]) ∪ (NatSet.ofList [2, 3])).toList == [1, 2, 3]

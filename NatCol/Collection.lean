@@ -180,12 +180,41 @@ def all (p : Nat → V → Bool) (c : NatCollection L) : Bool := Tree.all p c.he
 /-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first success. -/
 def any (p : Nat → V → Bool) (c : NatCollection L) : Bool := Tree.any p c.height c.tree
 
+/-- Monadic `all`: whether every present `(key, value)` pair satisfies the monadic predicate `p`,
+threading effects through `m` in ascending key order and short-circuiting at the first failure
+(whole subtrees past it are skipped). The monadic companion of `all`. -/
+def allM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (c : NatCollection L) : m Bool :=
+  Tree.allM p c.height c.tree
+
+/-- Monadic `any`: whether some present `(key, value)` pair satisfies `p`, short-circuiting at the
+first success. The monadic companion of `any`. -/
+def anyM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (c : NatCollection L) : m Bool :=
+  Tree.anyM p c.height c.tree
+
 /-- Keep only the `(key, value)` pairs satisfying `p`. A structural single pass: `Tree.filter`
 filters every leaf and prunes empty subtrees (so the result has no internal empty subtree), then
 `normalizeAux` lowers the height if filtering emptied the upper levels — restoring full canonical
 shape, so the result equals the collection built directly from the survivors. -/
 def filter (p : Nat → V → Bool) (c : NatCollection L) : NatCollection L :=
   normalizeAux c.height (Tree.filter p c.height c.tree) (Tree.Full_filter p c.height c.tree c.wf.1)
+
+/-- Monadic `filter`: keep the `(key, value)` pairs for which `p` returns `true`, running `p` on
+every pair in ascending key order and threading its effects through `m`.
+
+Unlike the pure `filter` (a single structural pass that carries its own canonical-shape proof), the
+surviving *shape* here depends on the monadic results of `p`, which cannot be characterized through
+an arbitrary `m` — so no static `Full`/`TopProper` proof is available for it. Instead the survivors
+are collected with `List.filterM` (preserving ascending key order) and the result is rebuilt with
+`ofList`, whose every `insert` re-establishes the canonical invariant. So the result is canonical by
+construction and equals the pure `filter` whenever `p` is effect-free.
+
+Restricted to `Type`-valued leaves: the result `m (NatCollection L)` forces `NatCollection L` into
+`m`'s input universe, while `p`'s `m Bool` forces that universe to be `Type` — exactly the
+restriction `List.filterM`/`Array.filterM` carry for the same reason. -/
+def filterM {L V : Type} [LeafOps L V] {m : Type → Type w} [Monad m] (p : Nat → V → m Bool)
+    (c : NatCollection L) : m (NatCollection L) := do
+  let survivors ← c.toList.filterM (fun kv => p kv.1 kv.2)
+  pure (ofList survivors)
 
 /-- Structural equality: equal heights and equal trees. Canonical ⇒ logical equality. -/
 def beq [BEq L] (a b : NatCollection L) : Bool :=

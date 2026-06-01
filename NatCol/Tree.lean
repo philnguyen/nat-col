@@ -345,6 +345,35 @@ termination_by h => h
 /-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first success. -/
 def any (p : Nat → V → Bool) (h : Nat) (t : Tree L h) : Bool := anyAux p 0 h t
 
+/-- Monadic `all`: whether every present `(key, value)` pair satisfies the monadic predicate `p`,
+threading effects through `m` in ascending key order and short-circuiting at the first failure (a
+whole subtree past it is then neither descended nor run). Mirrors `allAux` but threads `m`: a leaf
+scans with `Array.allM`, a node with `Node.allM`. -/
+def allMAux {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (pfx : Nat) :
+    (h : Nat) → Tree L h → m Bool
+  | 0, l => (LeafOps.toArray l).allM (fun (i, v) => p (pfx ||| i.toNat) v)
+  | h + 1, n =>
+    n.allM (fun i child => allMAux p (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child)
+termination_by h => h
+
+/-- Monadic `all` over all present `(key, value)` pairs, short-circuiting at the first failure. -/
+def allM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (h : Nat) (t : Tree L h) : m Bool :=
+  allMAux p 0 h t
+
+/-- Monadic `any`: whether some present `(key, value)` pair satisfies the monadic predicate `p`,
+short-circuiting at the first that holds. The `any` companion of `allMAux`: a leaf scans with
+`Array.anyM`, a node with `Node.anyM`. -/
+def anyMAux {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (pfx : Nat) :
+    (h : Nat) → Tree L h → m Bool
+  | 0, l => (LeafOps.toArray l).anyM (fun (i, v) => p (pfx ||| i.toNat) v)
+  | h + 1, n =>
+    n.anyM (fun i child => anyMAux p (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child)
+termination_by h => h
+
+/-- Monadic `any` over all present `(key, value)` pairs, short-circuiting at the first success. -/
+def anyM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (h : Nat) (t : Tree L h) : m Bool :=
+  anyMAux p 0 h t
+
 /-- Keep only the present `(key, value)` pairs satisfying `p`, pruning subtrees that filter down
 to empty (so the result stays canonical below the top level — exactly as `erase` does). `pfx`
 carries the key bits fixed by higher levels, as in `foldAux`. A leaf filters via `LeafOps.filter`;

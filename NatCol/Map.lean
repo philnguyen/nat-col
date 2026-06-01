@@ -119,6 +119,23 @@ def any (p : Nat → α → Bool) (m : NatMap α) : Bool := NatCollection.any p 
 map built directly from the surviving entries (and its height shrinks when deep keys are removed). -/
 def filter (p : Nat → α → Bool) (m : NatMap α) : NatMap α := NatCollection.filter p m
 
+/-- Monadic `all` over entries (predicate on key and value), threading effects in ascending key
+order and short-circuiting at the first failure. The monadic companion of `all`. -/
+def allM {mo : Type → Type w} [Monad mo] (p : Nat → α → mo Bool) (m : NatMap α) : mo Bool :=
+  NatCollection.allM p m
+
+/-- Monadic `any` over entries, short-circuiting at the first success. The monadic companion of
+`any`. -/
+def anyM {mo : Type → Type w} [Monad mo] (p : Nat → α → mo Bool) (m : NatMap α) : mo Bool :=
+  NatCollection.anyM p m
+
+/-- Monadic `filter`: keep the entries for which `p` returns `true`, running `p` on every entry in
+ascending key order and threading its effects through `mo`. The result is canonical — rebuilt from
+the survivors (see `NatCollection.filterM`) — so it equals the pure `filter` when `p` is
+effect-free. Restricted to `α : Type`, as `NatCollection.filterM` is. -/
+def filterM {α : Type} {mo : Type → Type w} [Monad mo] (p : Nat → α → mo Bool) (m : NatMap α) :
+    mo (NatMap α) := NatCollection.filterM p m
+
 -- Membership is on keys: `k ∈ m` reduces to the `Bool` `contains`, so it stays decidable (usable
 -- in `#guard` / `decide`); `k ∉ m` is `¬ k ∈ m`, available automatically.
 instance : Membership Nat (NatMap α) := ⟨fun m k => m.contains k = true⟩
@@ -280,6 +297,31 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 -- filter agrees with `List.filter` through `toList` (order preserved, mixed heights)
 #guard ((NatMap.ofList [(1, 10), (40, 40), (5000, 3)]).filter (fun _ v => v % 2 == 0)).toList
         == ((NatMap.ofList [(1, 10), (40, 40), (5000, 3)]).toList.filter (fun (_, v) => v % 2 == 0))
+
+-- monadic allM / anyM / filterM: in `Id` they reproduce the pure ops; in a real monad they thread
+-- effects in ascending key order. `StateM` records the visit order, which also exposes short-circuiting.
+#guard Id.run ((NatMap.ofList [(1, 10), (2, 20)]).allM (fun _ v => pure (v % 10 == 0)))
+#guard !Id.run ((NatMap.ofList [(1, 10), (2, 20)]).anyM (fun k _ => pure (k > 100)))
+#guard Id.run ((NatMap.ofList [(1, 10), (2, 20)]).filterM (fun k _ => pure (k % 2 == 1)))
+        = NatMap.ofList [(1, 10)]
+-- allM stops at the first failing entry (value 25), so (3, 30) is never visited
+#guard Id.run (((NatMap.ofList [(1, 10), (2, 25), (3, 30)]).allM (mo := StateM (List Nat))
+          (fun _ v => do modify (· ++ [v]); pure (v % 10 == 0))).run []) == (false, [10, 25])
+-- anyM stops at the first holding entry (key 2 even), so (3, 30) is never visited
+#guard Id.run (((NatMap.ofList [(1, 10), (2, 20), (3, 30)]).anyM (mo := StateM (List Nat))
+          (fun k _ => do modify (· ++ [k]); pure (k % 2 == 0))).run []) == (true, [1, 2])
+-- allM / anyM agree in value with the pure all / any
+#guard Id.run ((NatMap.ofList [(1, 10), (2, 25), (3, 30)]).allM (fun _ v => pure (v % 10 == 0)))
+        == (NatMap.ofList [(1, 10), (2, 25), (3, 30)]).all (fun _ v => v % 10 == 0)
+-- filterM in `Id` agrees with the pure filter; it visits every entry in ascending key order; and in
+-- `Except` a throwing predicate short-circuits at the first offending entry (key 300 is never seen).
+#guard Id.run ((NatMap.ofList [(1, 10), (2, 20), (3, 30), (4, 40)]).filterM (fun _ v => pure (v % 20 == 0)))
+        = (NatMap.ofList [(1, 10), (2, 20), (3, 30), (4, 40)]).filter (fun _ v => v % 20 == 0)
+#guard (((NatMap.ofList [(1, 10), (5000, 3)]).filterM (mo := StateM (List (Nat × Nat)))
+          (fun k v => do modify (· ++ [(k, v)]); pure true)).run []).2 == [(1, 10), (5000, 3)]
+#guard (match ((NatMap.ofList [(1, 10), (200, 1), (5, 50), (300, 2)]).filterM
+          (fun k _ => if k ≥ 100 then throw k else pure true) : Except Nat (NatMap Nat)) with
+        | .error e => e | .ok _ => 0) == 200
 
 -- map: applies the function to every value, preserving keys and structure (including across heights)
 #guard ((NatMap.ofList [(1, 10), (2, 20), (5000, 3)]).map (· + 1)).toList == [(1, 11), (2, 21), (5000, 4)]
