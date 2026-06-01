@@ -81,20 +81,20 @@ def singleton (i : UInt32) (a : α) : Node α :=
   ⟨setBit 0 i, #[a], by
     rw [popCount_setBit 0 i (testBit_zero i)]; simp [show popCount 0 = 0 from rfl]⟩
 
-def isEmpty (n : Node α) : Bool := n.positionsMask == 0
+@[inline] def isEmpty (n : Node α) : Bool := n.positionsMask == 0
 
-def size (n : Node α) : Nat := popCount n.positionsMask
+@[inline] def size (n : Node α) : Nat := popCount n.positionsMask
 
 /-- The child at a *present* slot. The bit-set proof makes the compact index in-bounds
 (`arrayIndex_lt` + the `elements_compact` field), so the read is total — no `Option`, no
 spurious `none` to discharge at the call site. -/
-def get (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) : α :=
+@[inline] def get (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) : α :=
   n.elements[arrayIndex n.positionsMask i]'(by
     rw [n.elements_compact]; exact arrayIndex_lt n.positionsMask i h)
 
 /-- The child at slot `i`, if present. The dependent `if` hands the present-case proof to
 `get`, so there is no spurious `none`. -/
-def get? (n : Node α) (i : UInt32) : Option α :=
+@[inline] def get? (n : Node α) (i : UInt32) : Option α :=
   if h : testBit n.positionsMask i = true then some (n.get i h) else none
 
 /-- General single-slot update: `f` sees the current value at slot `i` (if any) and
@@ -105,7 +105,7 @@ is exactly what the compactness proofs need: a present slot's compact index is `
 (so `eraseIdx`/`set` are in bounds and clearing the bit drops the count by one), and an
 absent slot's index is `≤ size` (so `insertIdx` is in bounds and setting the bit raises
 the count by one). -/
-def alter (n : Node α) (i : UInt32) (f : Option α → Option α) : Node α :=
+@[specialize] def alter (n : Node α) (i : UInt32) (f : Option α → Option α) : Node α :=
   match hpres : testBit n.positionsMask i with
   | true =>
     match f (some (n.get i hpres)) with
@@ -137,7 +137,7 @@ def erase (n : Node α) (i : UInt32) : Node α := n.alter i (fun _ => none)
 def modify (n : Node α) (i : UInt32) (f : α → α) : Node α := n.alter i (Option.map f)
 
 /-- Fold over present slots in ascending slot order. -/
-def fold {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node α) : β :=
+@[specialize] def fold {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node α) : β :=
   Nat.fold 32 (fun i _ (acc : β) =>
     let iu := UInt32.ofNat i
     if h : testBit n.positionsMask iu = true then f acc iu (n.get iu h) else acc) init
@@ -216,7 +216,7 @@ compactness-preserving `alter`, so the result is compact by construction with no
 The accumulator is pre-sized to `popCount (a.positionsMask ||| b.positionsMask)`, the exact
 slot count of the union mask (an upper bound on the result, since `combine` may prune), so
 those appends never reallocate. -/
-def join (combine : α → α → Option α) (a b : Node α) : Node α :=
+@[specialize] def join (combine : α → α → Option α) (a b : Node α) : Node α :=
   let step := fun (acc : Node α) i =>
     let iu := UInt32.ofNat i
     match ha : testBit a.positionsMask iu, hb : testBit b.positionsMask iu with
@@ -235,7 +235,7 @@ def join (combine : α → α → Option α) (a b : Node α) : Node α :=
 built by ascending `insert` into an empty accumulator, so it is compact by construction. The
 accumulator is pre-sized to `popCount (a.positionsMask &&& b.positionsMask)`, the slot count
 of the intersection mask (an upper bound on the result), so the inserts never reallocate. -/
-def meet (combine : α → α → Option α) (a b : Node α) : Node α :=
+@[specialize] def meet (combine : α → α → Option α) (a b : Node α) : Node α :=
   let step := fun (acc : Node α) i =>
     let iu := UInt32.ofNat i
     match ha : testBit a.positionsMask iu, hb : testBit b.positionsMask iu with

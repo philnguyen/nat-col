@@ -137,18 +137,18 @@ def empty : (h : Nat) → Tree L h
   | _ + 1 => Node.empty
 
 /-- Is the tree empty? (For canonical trees only the leaf or the top node can be empty.) -/
-def isEmpty : (h : Nat) → Tree L h → Bool
+@[specialize] def isEmpty : (h : Nat) → Tree L h → Bool
   | 0, l => LeafOps.isEmpty l
   | _ + 1, n => Node.isEmpty n
 
 /-- Number of keys present. -/
-def size : (h : Nat) → Tree L h → Nat
+@[specialize] def size : (h : Nat) → Tree L h → Nat
   | 0, l => LeafOps.size l
   | h + 1, n => n.elements.foldl (fun acc c => acc + size h c) 0
 termination_by h => h
 
 /-- Look up the value at key `k`. -/
-def get? (k : Nat) : (h : Nat) → Tree L h → Option V
+@[specialize] def get? (k : Nat) : (h : Nat) → Tree L h → Option V
   | 0, l => LeafOps.get? l (chunk k 0)
   | h + 1, n =>
     match Node.get? n (chunk k (h + 1)) with
@@ -157,14 +157,14 @@ def get? (k : Nat) : (h : Nat) → Tree L h → Option V
 termination_by h => h
 
 /-- A tree of the given height holding the single key `k` ↦ `v`. -/
-def singleton (k : Nat) (v : V) : (h : Nat) → Tree L h
+@[specialize] def singleton (k : Nat) (v : V) : (h : Nat) → Tree L h
   | 0 => LeafOps.insert LeafOps.empty (chunk k 0) v
   | h + 1 => Node.singleton (chunk k (h + 1)) (singleton k v h)
 termination_by h => h
 
 /-- Insert / overwrite key `k` ↦ `v`. Assumes `h` is large enough to hold `k`
 (the `NatCollection` layer grows the height first when needed). -/
-def insert (k : Nat) (v : V) : (h : Nat) → Tree L h → Tree L h
+@[specialize] def insert (k : Nat) (v : V) : (h : Nat) → Tree L h → Tree L h
   | 0, l => LeafOps.insert l (chunk k 0) v
   | h + 1, n => n.alter (chunk k (h + 1)) fun
       | some child => some (insert k v h child)
@@ -173,7 +173,7 @@ termination_by h => h
 
 /-- Erase key `k`, pruning subtrees that become empty (keeps the tree canonical below
 the top level). -/
-def erase (k : Nat) : (h : Nat) → Tree L h → Tree L h
+@[specialize] def erase (k : Nat) : (h : Nat) → Tree L h → Tree L h
   | 0, l => LeafOps.erase l (chunk k 0)
   | h + 1, n => n.alter (chunk k (h + 1)) fun
       | some child =>
@@ -183,7 +183,7 @@ def erase (k : Nat) : (h : Nat) → Tree L h → Tree L h
 termination_by h => h
 
 /-- Apply `f` to the value at key `k`, if present. -/
-def modify (k : Nat) (f : V → V) : (h : Nat) → Tree L h → Tree L h
+@[specialize] def modify (k : Nat) (f : V → V) : (h : Nat) → Tree L h → Tree L h
   | 0, l => LeafOps.modify l (chunk k 0) f
   | h + 1, n => n.alter (chunk k (h + 1)) fun
       | some child => some (modify k f h child)
@@ -192,7 +192,7 @@ termination_by h => h
 
 /-- Lift a tree up by `d` levels (wrapping it under slot 0). Cast-free: the result type
 `Tree L (h + d)` lines up definitionally because `h + (d+1)` reduces to `(h + d) + 1`. -/
-def liftBy : (d : Nat) → {h : Nat} → Tree L h → Tree L (h + d)
+@[specialize] def liftBy : (d : Nat) → {h : Nat} → Tree L h → Tree L (h + d)
   | 0, _, t => t
   | _ + 1, _, t => Node.singleton 0 (liftBy _ t)
 
@@ -207,7 +207,7 @@ The recursive merge is guarded by `if isEmpty … then none`, exactly like `meet
 canonical (non-empty) children this guard never fires — a union is never empty — so it does
 not change behavior, but it makes "no empty subtree" (`Tree.Full`) hold by construction:
 every surviving merged child is provably non-empty. -/
-def joinEq (c : V → V → V) : (h : Nat) → Tree L h → Tree L h → Tree L h
+@[specialize] def joinEq (c : V → V → V) : (h : Nat) → Tree L h → Tree L h → Tree L h
   | 0, a, b => LeafOps.join c a b
   | h + 1, a, b => Node.join (fun x y =>
       let t := joinEq c h x y
@@ -217,7 +217,7 @@ termination_by h => h
 /-- Intersection of two equal-height trees. Children present on only one side are dropped
 by `Node.meet`; shared subtrees are intersected recursively and pruned if they become
 empty. -/
-def meetEq (c : V → V → V) : (h : Nat) → Tree L h → Tree L h → Tree L h
+@[specialize] def meetEq (c : V → V → V) : (h : Nat) → Tree L h → Tree L h → Tree L h
   | 0, a, b => LeafOps.meet c a b
   | h + 1, a, b => Node.meet (fun x y =>
       let t := meetEq c h x y
@@ -226,7 +226,7 @@ termination_by h => h
 
 /-- `a` restricts `b` (equal heights): `a`'s keys are a subset of `b`'s and `rel` holds
 on every coinciding value. -/
-def restrictsEq (rel : V → V → Bool) : (h : Nat) → Tree L h → Tree L h → Bool
+@[specialize] def restrictsEq (rel : V → V → Bool) : (h : Nat) → Tree L h → Tree L h → Bool
   | 0, a, b => LeafOps.restricts rel a b
   | h + 1, a, b => Node.restricts (fun x y => restrictsEq rel h x y) a b
 termination_by h => h
@@ -243,7 +243,7 @@ height. These are the spine analogues of the equal-height kernels above. -/
 spine to height `h`, `joinEq` there, and plug the result back in; off-spine children of `t` are
 reused untouched. The `combine` order is `c (s-value) (t-value)`. The `if isEmpty` guard makes
 "no empty subtree" hold by construction, exactly as in `joinEq`. -/
-def joinSpine (c : V → V → V) (h : Nat) : (d : Nat) → Tree L h → Tree L (h + d) → Tree L (h + d)
+@[specialize] def joinSpine (c : V → V → V) (h : Nat) : (d : Nat) → Tree L h → Tree L (h + d) → Tree L (h + d)
   | 0, s, t => joinEq c h s t
   | d + 1, s, t => t.alter 0 fun
       | some child =>
@@ -255,7 +255,7 @@ termination_by d => d
 /-- Intersection of a shorter `s` (height `h`) with a taller `t` (height `h + d`): only keys on
 `t`'s slot-0 spine can be shared, so descend to height `h` and `meetEq` there, discarding all
 off-spine structure of `t`. The result lives at the *smaller* height `h`. -/
-def meetSpine (c : V → V → V) (h : Nat) : (d : Nat) → Tree L h → Tree L (h + d) → Tree L h
+@[specialize] def meetSpine (c : V → V → V) (h : Nat) : (d : Nat) → Tree L h → Tree L (h + d) → Tree L h
   | 0, s, t => meetEq c h s t
   | d + 1, s, t =>
       match Node.get? t 0 with
@@ -267,7 +267,7 @@ termination_by d => d
 slot-0 spine, so descend to height `h` and `restrictsEq` there; `b`'s off-spine children are
 irrelevant. If the spine runs out (`none`), `b` has no key in `a`'s range, so `a ⊆ b` iff `a` is
 empty. -/
-def restrictsSpine (rel : V → V → Bool) (h : Nat) : (d : Nat) → Tree L h → Tree L (h + d) → Bool
+@[specialize] def restrictsSpine (rel : V → V → Bool) (h : Nat) : (d : Nat) → Tree L h → Tree L (h + d) → Bool
   | 0, a, b => restrictsEq rel h a b
   | d + 1, a, b =>
       match Node.get? b 0 with
@@ -284,7 +284,7 @@ termination_by h => h
 
 /-- Collect `(key, value)` pairs into `acc`, ascending by key. `pfx` carries the key bits
 fixed by higher levels. -/
-def toArrayAux (pfx : Nat) : (h : Nat) → Tree L h → Array (Nat × V) → Array (Nat × V)
+@[specialize] def toArrayAux (pfx : Nat) : (h : Nat) → Tree L h → Array (Nat × V) → Array (Nat × V)
   | 0, l, acc => (LeafOps.toArray l).foldl (fun acc (i, v) => acc.push (pfx ||| i.toNat, v)) acc
   | h + 1, n, acc =>
     n.fold (fun acc i child => toArrayAux (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child acc) acc
@@ -296,7 +296,7 @@ def toArray (h : Nat) (t : Tree L h) : Array (Nat × V) := toArrayAux 0 h t #[]
 /-- Fold `f` over present `(key, value)` pairs in ascending key order, threading the accumulator.
 `pfx` carries the key bits fixed by higher levels (mirrors `toArrayAux`, but applies `f` directly
 rather than pushing onto an array — so it folds the trie in place, with no intermediate array). -/
-def foldAux {β : Type w} (f : β → Nat → V → β) (pfx : Nat) : (h : Nat) → Tree L h → β → β
+@[specialize] def foldAux {β : Type w} (f : β → Nat → V → β) (pfx : Nat) : (h : Nat) → Tree L h → β → β
   | 0, l, acc => (LeafOps.toArray l).foldl (fun acc (i, v) => f acc (pfx ||| i.toNat) v) acc
   | h + 1, n, acc =>
     n.fold (fun acc i child => foldAux f (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child acc) acc
@@ -325,7 +325,7 @@ def foldM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V
 fails. Mirrors `foldAux` but threads a `Bool` with early exit: a leaf scans its present pairs with
 `Array.all`; a node scans its slots with `Node.all`, stopping as soon as a child subtree fails — so
 an entire subtree can be skipped without being descended. -/
-def allAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Bool
+@[specialize] def allAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Bool
   | 0, l => (LeafOps.toArray l).all (fun (i, v) => p (pfx ||| i.toNat) v)
   | h + 1, n =>
     n.all (fun i child => allAux p (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child)
@@ -336,7 +336,7 @@ def all (p : Nat → V → Bool) (h : Nat) (t : Tree L h) : Bool := allAux p 0 h
 
 /-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first that
 holds. The `any` companion of `allAux`: a leaf scans with `Array.any`, a node with `Node.any`. -/
-def anyAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Bool
+@[specialize] def anyAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Bool
   | 0, l => (LeafOps.toArray l).any (fun (i, v) => p (pfx ||| i.toNat) v)
   | h + 1, n =>
     n.any (fun i child => anyAux p (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child)

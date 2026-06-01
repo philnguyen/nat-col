@@ -42,12 +42,12 @@ variable {L : Type u} {V : Type u} [LeafOps L V]
 /-- The empty collection. -/
 def empty : NatCollection L := ⟨0, Tree.empty 0, ⟨Tree.Full_empty 0, trivial⟩⟩
 
-def isEmpty (c : NatCollection L) : Bool := Tree.isEmpty c.height c.tree
+@[specialize] def isEmpty (c : NatCollection L) : Bool := Tree.isEmpty c.height c.tree
 
-def size (c : NatCollection L) : Nat := Tree.size c.height c.tree
+@[specialize] def size (c : NatCollection L) : Nat := Tree.size c.height c.tree
 
 /-- Lift a collection's tree up to a common height `H ≥ c.height`. -/
-def liftTo (c : NatCollection L) (H : Nat) (le : c.height ≤ H) : Tree L H :=
+@[specialize] def liftTo (c : NatCollection L) (H : Nat) (le : c.height ≤ H) : Tree L H :=
   Tree.cast (by omega) (Tree.liftBy (H - c.height) c.tree)
 
 /-- Lifting a non-empty canonical collection's tree keeps it `Full`. -/
@@ -60,7 +60,7 @@ height while the top node is empty or holds only slot 0 (this is what restores m
 after `erase`/`meet`; for `insert`/`modify`/`join` results the top is already proper, so it is
 the identity). The `Full` precondition is preserved as we descend, and the final top — being
 neither `0` nor only-slot-`0` — is height-minimal (`TopProper`). -/
-def normalizeAux : (h : Nat) → (t : Tree L h) → Tree.Full h t → NatCollection L
+@[specialize] def normalizeAux : (h : Nat) → (t : Tree L h) → Tree.Full h t → NatCollection L
   | 0, t, hf => ⟨0, t, ⟨hf, trivial⟩⟩
   | h + 1, n, hf =>
     match hm0 : n.positionsMask == 0 with
@@ -76,14 +76,14 @@ def normalizeAux : (h : Nat) → (t : Tree L h) → Tree.Full h t → NatCollect
 termination_by h => h
 
 /-- Look up the value at key `k`. -/
-def get? (c : NatCollection L) (k : Nat) : Option V :=
+@[specialize] def get? (c : NatCollection L) (k : Nat) : Option V :=
   if requiredHeight k > c.height then none else Tree.get? k c.height c.tree
 
 /-- Is key `k` present? -/
-def contains (c : NatCollection L) (k : Nat) : Bool := (c.get? k).isSome
+@[specialize] def contains (c : NatCollection L) (k : Nat) : Bool := (c.get? k).isSome
 
 /-- Insert / overwrite key `k` ↦ `v`, growing the height if `k` needs more chunks. -/
-def insert (c : NatCollection L) (k : Nat) (v : V) : NatCollection L :=
+@[specialize] def insert (c : NatCollection L) (k : Nat) (v : V) : NatCollection L :=
   match hemp : c.isEmpty with
   | true =>
     normalizeAux (requiredHeight k) (Tree.singleton k v (requiredHeight k))
@@ -94,7 +94,7 @@ def insert (c : NatCollection L) (k : Nat) (v : V) : NatCollection L :=
       (Tree.Full_insert H k v _ (Full_liftTo c H (Nat.le_max_left _ _) hemp))
 
 /-- Erase key `k`. -/
-def erase (c : NatCollection L) (k : Nat) : NatCollection L :=
+@[specialize] def erase (c : NatCollection L) (k : Nat) : NatCollection L :=
   if requiredHeight k > c.height then c
   else normalizeAux c.height (Tree.erase k c.height c.tree) (Tree.Full_erase c.height k c.tree c.wf.1)
 
@@ -108,7 +108,7 @@ shorter tree up to the taller's height, descend the taller tree's slot-0 spine t
 height, `joinSpine` there, and reuse all off-spine structure (see `Tree.joinSpine`). When the
 *left* operand is the taller one, `combine` is flipped so the original `combine a-value b-value`
 order is preserved. -/
-def join (combine : V → V → V) (a b : NatCollection L) : NatCollection L :=
+@[specialize] def join (combine : V → V → V) (a b : NatCollection L) : NatCollection L :=
   if hae : a.isEmpty then b
   else if hbe : b.isEmpty then a
   else if hle : a.height ≤ b.height then
@@ -128,7 +128,7 @@ taller tree's slot-0 spine can be shared, so descend to the *smaller* height and
 there, discarding the taller tree's off-spine structure (see `Tree.meetSpine`). The result lives
 at the smaller height; `normalizeAux` lowers it further as needed. When the *left* operand is the
 taller one, `combine` is flipped so the original argument order is preserved. -/
-def meet (combine : V → V → V) (a b : NatCollection L) : NatCollection L :=
+@[specialize] def meet (combine : V → V → V) (a b : NatCollection L) : NatCollection L :=
   if a.isEmpty then empty
   else if b.isEmpty then empty
   else if hle : a.height ≤ b.height then
@@ -148,7 +148,7 @@ a coinciding key. When `b` is the taller tree, `a`'s keys can only match on `b`'
 so descend to `a`'s height and `restrictsSpine` there, ignoring `b`'s off-spine structure (see
 `Tree.restrictsSpine`). When `a` is the taller one it has a key above `b`'s key range (it is
 canonical, so `TopProper` forces an off-spine slot), hence cannot be a subset — answer `false`. -/
-def restricts (rel : V → V → Bool) (a b : NatCollection L) : Bool :=
+@[specialize] def restricts (rel : V → V → Bool) (a b : NatCollection L) : Bool :=
   if a.isEmpty then true
   else if b.isEmpty then false
   else if hle : a.height ≤ b.height then
@@ -157,14 +157,14 @@ def restricts (rel : V → V → Bool) (a b : NatCollection L) : Bool :=
     false
 
 /-- All `(key, value)` pairs, ascending by key. -/
-def toList (c : NatCollection L) : List (Nat × V) := (Tree.toArray c.height c.tree).toList
+@[specialize] def toList (c : NatCollection L) : List (Nat × V) := (Tree.toArray c.height c.tree).toList
 
 /-- Build a collection from `(key, value)` pairs (later pairs win on duplicate keys). -/
-def ofList (l : List (Nat × V)) : NatCollection L := l.foldl (fun c (k, v) => c.insert k v) empty
+@[specialize] def ofList (l : List (Nat × V)) : NatCollection L := l.foldl (fun c (k, v) => c.insert k v) empty
 
 /-- Fold `f` over all present `(key, value)` pairs, ascending by key, starting from `init`.
 Folds the trie directly (no intermediate `toList`/`toArray`). -/
-def fold {β : Type w} (f : β → Nat → V → β) (init : β) (c : NatCollection L) : β :=
+@[specialize] def fold {β : Type w} (f : β → Nat → V → β) (init : β) (c : NatCollection L) : β :=
   Tree.fold f init c.height c.tree
 
 /-- Monadic fold over all present `(key, value)` pairs, ascending by key, starting from `init`.
