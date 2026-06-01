@@ -340,7 +340,7 @@ def fold {β : Type w} (f : β → Nat → V → β) (init : β) (h : Nat) (t : 
 /-- Monadic fold over present `(key, value)` pairs in ascending key order, threading the
 accumulator through `m`. The monadic companion of `foldAux`: the leaf level folds via
 `Array.foldlM`, each node level via `Node.foldM`. -/
-def foldMAux {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V → m β) (pfx : Nat) :
+private def foldMAux {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V → m β) (pfx : Nat) :
     (h : Nat) → Tree L h → β → m β
   | 0, l, acc => (LeafOps.toArray l).foldlM (fun acc (i, v) => f acc (pfx ||| i.toNat) v) acc
   | h + 1, n, acc =>
@@ -380,7 +380,7 @@ def any (p : Nat → V → Bool) (h : Nat) (t : Tree L h) : Bool := anyAux p 0 h
 threading effects through `m` in ascending key order and short-circuiting at the first failure (a
 whole subtree past it is then neither descended nor run). Mirrors `allAux` but threads `m`: a leaf
 scans with `Array.allM`, a node with `Node.allM`. -/
-def allMAux {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (pfx : Nat) :
+private def allMAux {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (pfx : Nat) :
     (h : Nat) → Tree L h → m Bool
   | 0, l => (LeafOps.toArray l).allM (fun (i, v) => p (pfx ||| i.toNat) v)
   | h + 1, n =>
@@ -394,7 +394,7 @@ def allM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (h : Nat) (t
 /-- Monadic `any`: whether some present `(key, value)` pair satisfies the monadic predicate `p`,
 short-circuiting at the first that holds. The `any` companion of `allMAux`: a leaf scans with
 `Array.anyM`, a node with `Node.anyM`. -/
-def anyMAux {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (pfx : Nat) :
+private def anyMAux {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (pfx : Nat) :
     (h : Nat) → Tree L h → m Bool
   | 0, l => (LeafOps.toArray l).anyM (fun (i, v) => p (pfx ||| i.toNat) v)
   | h + 1, n =>
@@ -409,7 +409,7 @@ def anyM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (h : Nat) (t
 to empty (so the result stays canonical below the top level — exactly as `erase` does). `pfx`
 carries the key bits fixed by higher levels, as in `foldAux`. A leaf filters via `LeafOps.filter`;
 a node filters every child recursively (`Node.filterMap`) and drops any child that becomes empty. -/
-def filterAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Tree L h
+private def filterAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Tree L h
   | 0, l => LeafOps.filter (fun i v => p (pfx ||| i.toNat) v) l
   | h + 1, n =>
     n.filterMap (fun i child =>
@@ -644,7 +644,7 @@ theorem Full_erase : (h : Nat) → (k : Nat) → (t : Tree L h) →
           rw [hget] at hfa; simp at hfa
 
 /-- `joinEq` preserves "no empty subtree": every merged child is guarded non-empty. -/
-theorem Full_joinEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
+private theorem Full_joinEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
     Full h a → Full h b → Full h (joinEq c h a b)
   | 0, _, _, _, _, _ => trivial
   | h + 1, c, a, b, ha, hb => by
@@ -719,7 +719,7 @@ theorem joinEq_assoc (c : V → V → V) (hc : ∀ x y z, c (c x y) z = c x (c y
                 joinEq_assoc c hc h x y z hxf.2 hyf.2 hzf.2]
 
 /-- `meetEq` preserves "no empty subtree": every surviving child is guarded non-empty. -/
-theorem Full_meetEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
+private theorem Full_meetEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
     Full h a → Full h b → Full h (meetEq c h a b)
   | 0, _, _, _, _, _ => trivial
   | h + 1, c, a, b, ha, hb => by
@@ -737,7 +737,7 @@ theorem Full_meetEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
 filtered subtree (the `if isEmpty` guard prunes the rest), `Full` by induction; the leaf case is
 vacuous. The `filterMap` analogue of `Full_erase`/`Full_meetEq`. `pfx` is irrelevant to shape, so
 it is re-quantified at the tail and structural recursion proceeds on the height. -/
-theorem Full_filterAux (p : Nat → V → Bool) :
+private theorem Full_filterAux (p : Nat → V → Bool) :
     (h : Nat) → (t : Tree L h) → Full h t → ∀ pfx, Full h (filterAux p pfx h t)
   | 0, _, _, _ => trivial
   | h + 1, n, hn, pfx => by
@@ -868,12 +868,12 @@ theorem get?_succ (k h : Nat) (n : Tree L (h + 1)) :
   simp only [Tree.get?]
 
 /-- `Tree.get?` through a present top slot descends into that child. -/
-theorem get?_succ_some (k h : Nat) (n : Tree L (h + 1)) (child : Tree L h)
+private theorem get?_succ_some (k h : Nat) (n : Tree L (h + 1)) (child : Tree L h)
     (hc : Node.get? n (chunk k (h + 1)) = some child) : Tree.get? k (h + 1) n = Tree.get? k h child := by
   rw [get?_succ, hc]
 
 /-- `Tree.get?` through an absent top slot is `none`. -/
-theorem get?_succ_none (k h : Nat) (n : Tree L (h + 1))
+private theorem get?_succ_none (k h : Nat) (n : Tree L (h + 1))
     (hc : Node.get? n (chunk k (h + 1)) = none) : Tree.get? k (h + 1) n = none := by
   rw [get?_succ, hc]
 
@@ -915,7 +915,7 @@ theorem get?_eq_none_of_isEmpty (k : Nat) : (h : Nat) → (t : Tree L h) →
 
 /-- `Tree.get?` depends on a key only through its chunks `0..h`, so keys agreeing there look up
 the same value. -/
-theorem get?_congr (k₁ k₂ : Nat) : (h : Nat) → (t : Tree L h) →
+private theorem get?_congr (k₁ k₂ : Nat) : (h : Nat) → (t : Tree L h) →
     (∀ j, j ≤ h → chunk k₁ j = chunk k₂ j) → Tree.get? k₁ h t = Tree.get? k₂ h t
   | 0, l, hch => by simp only [Tree.get?, hch 0 (Nat.le_refl 0)]
   | h + 1, n, hch => by
@@ -925,7 +925,7 @@ theorem get?_congr (k₁ k₂ : Nat) : (h : Nat) → (t : Tree L h) →
       | some c => exact get?_congr k₁ k₂ h c (fun j hj => hch j (Nat.le_succ_of_le hj))
 
 /-- `get?` of an equal-height `meetEq` is the value-level intersection of the two lookups. -/
-theorem get?_meetEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b : Tree L h) →
+private theorem get?_meetEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b : Tree L h) →
     Tree.get? k h (meetEq c h a b) = optVmeet c (Tree.get? k h a) (Tree.get? k h b)
   | 0, a, b => by
       simp only [meetEq, Tree.get?]
@@ -948,7 +948,7 @@ theorem get?_meetEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b : Tree L 
           · rw [if_neg hemp]
 
 /-- `get?` of an equal-height `joinEq` is the value-level union of the two lookups. -/
-theorem get?_joinEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b : Tree L h) →
+private theorem get?_joinEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b : Tree L h) →
     Tree.get? k h (joinEq c h a b) = optVjoin c (Tree.get? k h a) (Tree.get? k h b)
   | 0, a, b => by
       simp only [joinEq, Tree.get?]

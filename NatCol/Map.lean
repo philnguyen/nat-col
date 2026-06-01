@@ -158,13 +158,13 @@ well-founded recursion: its defining equations are propositional, unfolded below
 
 /-- Map `f` over every value of a height-`h` map-trie, preserving the `Node` masks at every
 level. Only leaf values change type, from `α` to `β`. -/
-def treeMap {α β : Type u} (f : α → β) : (h : Nat) → Tree (Node α) h → Tree (Node β) h
+private def treeMap {α β : Type u} (f : α → β) : (h : Nat) → Tree (Node α) h → Tree (Node β) h
   | 0, leaf => leaf.map f
   | _ + 1, node => node.map (treeMap f _)
 termination_by h => h
 
 /-- `treeMap` preserves emptiness at every height (each node's mask is untouched). -/
-theorem treeMap_isEmpty {α β : Type u} (f : α → β) :
+private theorem treeMap_isEmpty {α β : Type u} (f : α → β) :
     (h : Nat) → (t : Tree (Node α) h) → Tree.isEmpty h (treeMap f h t) = Tree.isEmpty h t
   | 0, leaf => by
       show Node.isEmpty (treeMap f 0 leaf) = Node.isEmpty leaf
@@ -177,7 +177,7 @@ theorem treeMap_isEmpty {α β : Type u} (f : α → β) :
 
 /-- `treeMap` preserves the "no empty subtree" invariant (`Full`): a mapped child is non-empty
 iff the original was (`treeMap_isEmpty`), and stays `Full` by induction. -/
-theorem treeMap_Full {α β : Type u} (f : α → β) :
+private theorem treeMap_Full {α β : Type u} (f : α → β) :
     (h : Nat) → (t : Tree (Node α) h) → Tree.Full h t → Tree.Full h (treeMap f h t)
   | 0, _, _ => trivial
   | h + 1, node, hfull => by
@@ -192,7 +192,7 @@ theorem treeMap_Full {α β : Type u} (f : α → β) :
 termination_by h => h
 
 /-- `treeMap` preserves height-minimality (`TopProper`): the top node's mask is untouched. -/
-theorem treeMap_TopProper {α β : Type u} (f : α → β) :
+private theorem treeMap_TopProper {α β : Type u} (f : α → β) :
     (h : Nat) → (t : Tree (Node α) h) → Tree.TopProper h t → Tree.TopProper h (treeMap f h t)
   | 0, _, _ => trivial
   | h + 1, node, htp => by
@@ -202,7 +202,7 @@ theorem treeMap_TopProper {α β : Type u} (f : α → β) :
       exact htp
 
 /-- `treeMap` preserves the full canonical-shape invariant. -/
-theorem treeMap_Canonical {α β : Type u} (f : α → β) (h : Nat) (t : Tree (Node α) h)
+private theorem treeMap_Canonical {α β : Type u} (f : α → β) (h : Nat) (t : Tree (Node α) h)
     (hcan : Tree.Canonical h t) : Tree.Canonical h (treeMap f h t) :=
   ⟨treeMap_Full f h t hcan.1, treeMap_TopProper f h t hcan.2⟩
 
@@ -433,7 +433,7 @@ mapping function. These then transfer verbatim to `NatMap.map`, whose result kee
 height — so two `map`s are equal once their trees are (`mk_eq`). -/
 
 /-- Mapping the identity over a map-trie is the identity. -/
-theorem treeMap_id {α : Type u} : (h : Nat) → (t : Tree (Node α) h) → treeMap id h t = t
+private theorem treeMap_id {α : Type u} : (h : Nat) → (t : Tree (Node α) h) → treeMap id h t = t
   | 0, leaf => by simp only [treeMap]; exact Node.map_id leaf
   | h + 1, node => by
       have ih : treeMap id h = (id : Tree (Node α) h → Tree (Node α) h) := funext (treeMap_id h)
@@ -443,7 +443,7 @@ theorem treeMap_id {α : Type u} : (h : Nat) → (t : Tree (Node α) h) → tree
 termination_by h => h
 
 /-- Mapping a composition is the composition of maps. -/
-theorem treeMap_comp {α β γ : Type u} (f : α → β) (g : β → γ) :
+private theorem treeMap_comp {α β γ : Type u} (f : α → β) (g : β → γ) :
     (h : Nat) → (t : Tree (Node α) h) → treeMap (g ∘ f) h t = treeMap g h (treeMap f h t)
   | 0, leaf => by simp only [treeMap]; exact Node.map_comp f g leaf
   | h + 1, node => by
@@ -457,7 +457,7 @@ theorem treeMap_comp {α β γ : Type u} (f : α → β) (g : β → γ) :
 termination_by h => h
 
 /-- `get?` reads a mapped trie pointwise: looking up a key applies `f` to whatever was there. -/
-theorem treeMap_get? {α β : Type u} (f : α → β) :
+private theorem treeMap_get? {α β : Type u} (f : α → β) :
     (h : Nat) → (t : Tree (Node α) h) → (k : Nat) →
       Tree.get? k h (treeMap f h t) = (Tree.get? k h t).map f
   | 0, leaf, k => by

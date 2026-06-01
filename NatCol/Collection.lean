@@ -269,9 +269,9 @@ observationally identical to the old definition, so every membership lemma state
 `get?`/`.isSome` is unaffected. -/
 theorem contains_eq (c : NatCollection L) (k : Nat) : c.contains k = (c.get? k).isSome := by
   unfold contains get?
-  by_cases hP : requiredHeight k > c.height
-  · rw [if_pos hP, if_pos hP]; rfl
-  · rw [if_neg hP, if_neg hP]; exact Tree.contains_eq_isSome k c.height c.tree
+  split
+  · rfl
+  · exact Tree.contains_eq_isSome k c.height c.tree
 
 /-- The empty collection is recognized as empty (lifts the leaf law `LeafOps.isEmpty_empty`
 through `Tree.isEmpty 0 (Tree.empty 0)`). -/
@@ -703,7 +703,7 @@ theorem exists_get?_of_ne_empty (c : NatCollection L) (hc : c.isEmpty = false) :
 
 /-- A non-empty collection has a present key *at its own height* — the canonical-shape invariant
 makes the top level non-trivial, so some key reaches it. This pins the height to the contents. -/
-theorem exists_get?_at_height (c : NatCollection L) (hne : c.isEmpty = false) :
+private theorem exists_get?_at_height (c : NatCollection L) (hne : c.isEmpty = false) :
     ∃ k, requiredHeight k = c.height ∧ (c.get? k).isSome := by
   obtain ⟨k, hk, hs⟩ := Tree.exists_get?_topProper c.height c.tree c.wf.1 c.wf.2 hne
   exact ⟨k, hk, by rw [get?_of_le c k (by omega)]; exact hs⟩
@@ -711,7 +711,7 @@ theorem exists_get?_at_height (c : NatCollection L) (hne : c.isEmpty = false) :
 /-- `get?` of a `normalizeAux` result: the smart constructor lowers the height but preserves the
 key→value reading (height-lowering only strips empty / slot-0-only top levels, which lie outside
 or on the slot-0 spine of every key). -/
-theorem get?_normalizeAux : (h : Nat) → (t : Tree L h) → (hf : Tree.Full h t) → (k : Nat) →
+private theorem get?_normalizeAux : (h : Nat) → (t : Tree L h) → (hf : Tree.Full h t) → (k : Nat) →
     (normalizeAux h t hf).get? k = if requiredHeight k > h then none else Tree.get? k h t
   | 0, t, hf, k => by
       rw [show normalizeAux 0 t hf = ⟨0, t, ⟨hf, trivial⟩⟩ from by simp only [normalizeAux]]
