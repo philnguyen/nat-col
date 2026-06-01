@@ -326,38 +326,39 @@ private def nB : Node Nat := (Node.singleton 4 99).insert 7 70
 
 #guard n0.isEmpty
 #guard !nA.isEmpty
-#guard nA.size == 3
-#guard nA.get? 1 == some 10
-#guard nA.get? 4 == some 40
-#guard nA.get? 31 == some 310
-#guard nA.get? 2 == none
-#guard nA.get? 0 == none
+#guard nA.size = 3
+#guard nA.get? 1 = some 10
+#guard nA.get? 4 = some 40
+#guard nA.get? 31 = some 310
+#guard nA.get? 2 = none
+#guard nA.get? 0 = none
 
 -- insert at slot 0 (lowest) and check ordering is preserved structurally
-#guard (Node.singleton 5 50 |>.insert 0 0 |>.get? 0) == some 0
-#guard (Node.singleton 5 50 |>.insert 0 0 |>.get? 5) == some 50
+#guard (Node.singleton 5 50 |>.insert 0 0 |>.get? 0) = some 0
+#guard (Node.singleton 5 50 |>.insert 0 0 |>.get? 5) = some 50
 
-#guard (nA.insert 4 400 |>.get? 4) == some 400
-#guard (nA.insert 4 400).size == 3
+#guard (nA.insert 4 400 |>.get? 4) = some 400
+#guard (nA.insert 4 400).size = 3
 
 -- erase then re-query; erasing an absent slot is a no-op
-#guard (nA.erase 4 |>.get? 4) == none
-#guard (nA.erase 4).size == 2
+#guard (nA.erase 4 |>.get? 4) = none
+#guard (nA.erase 4).size = 2
+-- `Node` has `BEq`/`LawfulBEq` but no `DecidableEq`, so node-vs-node tests stay on `==`
 #guard nA.erase 2 == nA
 
 -- modify only touches present slots
-#guard (nA.modify 1 (· + 5) |>.get? 1) == some 15
+#guard (nA.modify 1 (· + 5) |>.get? 1) = some 15
 #guard nA.modify 2 (· + 5) == nA
 
 -- join: slot 4 collides (sum), others copied through
-#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 1) == some 10
-#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 4) == some 139
-#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 7) == some 70
-#guard (Node.join (fun x y => some (x + y)) nA nB).size == 4
+#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 1) = some 10
+#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 4) = some 139
+#guard (Node.join (fun x y => some (x + y)) nA nB |>.get? 7) = some 70
+#guard (Node.join (fun x y => some (x + y)) nA nB).size = 4
 
 -- meet: only the shared slot 4 survives
-#guard (Node.meet (fun x y => some (x + y)) nA nB |>.get? 4) == some 139
-#guard (Node.meet (fun x y => some (x + y)) nA nB).size == 1
+#guard (Node.meet (fun x y => some (x + y)) nA nB |>.get? 4) = some 139
+#guard (Node.meet (fun x y => some (x + y)) nA nB).size = 1
 #guard (Node.meet (fun _ _ => none) nA nB).isEmpty           -- pruned to empty
 
 -- restricts: subset of slots + predicate on shared values
@@ -368,7 +369,7 @@ private def nB : Node Nat := (Node.singleton 4 99).insert 7 70
 #guard Node.restricts (fun _ _ => true) Node.empty nA              -- empty restricts all
 
 -- fold visits slots ascending
-#guard nA.fold (fun acc i a => acc ++ [(i.toNat, a)]) [] == [(1, 10), (4, 40), (31, 310)]
+#guard nA.fold (fun acc i a => acc ++ [(i.toNat, a)]) [] = [(1, 10), (4, 40), (31, 310)]
 
 -- the `elements_compact` invariant is a field every node carries, so it is available on
 -- operation results too — here, on a `join` output — by construction, no side condition

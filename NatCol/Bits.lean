@@ -31,14 +31,14 @@ byte counts with one multiply, all in a fixed handful of shifts/masks rather tha
 
 @[inline] def popCount (x : UInt32) : Nat := (popCountAux x).toNat
 
-#guard popCount 0 == 0
-#guard popCount 1 == 1
-#guard popCount 0xFFFFFFFF == 32
-#guard popCount 0b10110 == 3
-#guard popCount 0x80000000 == 1      -- high bit only
-#guard popCount 0xAAAAAAAA == 16     -- alternating bits (even positions)
-#guard popCount 0x55555555 == 16     -- alternating bits (odd positions)
-#guard popCount 0x0F0F0F0F == 16     -- exercises the byte-fold step
+#guard popCount 0 = 0
+#guard popCount 1 = 1
+#guard popCount 0xFFFFFFFF = 32
+#guard popCount 0b10110 = 3
+#guard popCount 0x80000000 = 1      -- high bit only
+#guard popCount 0xAAAAAAAA = 16     -- alternating bits (even positions)
+#guard popCount 0x55555555 = 16     -- alternating bits (odd positions)
+#guard popCount 0x0F0F0F0F = 16     -- exercises the byte-fold step
 
 /-- Is bit `i` of `x` set? `i` is expected in `0..31`. -/
 @[inline] def testBit (x i : UInt32) : Bool := (x >>> i) &&& 1 == 1
@@ -52,34 +52,34 @@ byte counts with one multiply, all in a fixed handful of shifts/masks rather tha
 /-- Clear bit `i` of `x`. -/
 @[inline] def clearBit (x i : UInt32) : UInt32 := x &&& ~~~(1 <<< i)
 
-#guard setBit 0 3 == 0b1000
-#guard clearBit 0b1010 3 == 0b10
+#guard setBit 0 3 = 0b1000
+#guard clearBit 0b1010 3 = 0b10
 #guard testBit (setBit 0 7) 7
 #guard !testBit (clearBit (setBit 0 7) 7) 7
 
 /-- Mask of all bits strictly below `i`, i.e. `2^i - 1`. -/
 @[inline] def lowerMask (i : UInt32) : UInt32 := (1 <<< i) - 1
 
-#guard lowerMask 0 == 0
-#guard lowerMask 1 == 1
-#guard lowerMask 5 == 0b11111
+#guard lowerMask 0 = 0
+#guard lowerMask 1 = 1
+#guard lowerMask 5 = 0b11111
 
 /-- Compact array index for slot `i` in a node whose present slots are `mask`:
 the number of present slots strictly below `i`. -/
 @[inline] def arrayIndex (mask i : UInt32) : Nat := popCount (mask &&& lowerMask i)
 
-#guard arrayIndex 0b10110 1 == 0
-#guard arrayIndex 0b10110 2 == 1
-#guard arrayIndex 0b10110 4 == 2
+#guard arrayIndex 0b10110 1 = 0
+#guard arrayIndex 0b10110 2 = 1
+#guard arrayIndex 0b10110 4 = 2
 
 /-- The 5-bit chunk of `k` at the given `level` (0 = least significant chunk). -/
 @[inline] def chunk (k : Nat) (level : Nat) : UInt32 := UInt32.ofNat ((k >>> (5 * level)) &&& 31)
 
-#guard chunk 42 0 == 10   -- 42 = 0b101010 -> low 5 bits 01010 = 10
-#guard chunk 42 1 == 1    -- next chunk = 1
-#guard chunk 31 0 == 31
-#guard chunk 32 0 == 0
-#guard chunk 32 1 == 1
+#guard chunk 42 0 = 10   -- 42 = 0b101010 -> low 5 bits 01010 = 10
+#guard chunk 42 1 = 1    -- next chunk = 1
+#guard chunk 31 0 = 31
+#guard chunk 32 0 = 0
+#guard chunk 32 1 = 1
 
 /-- Minimal trie height able to hold key `k`: the index of `k`'s highest non-zero
 chunk. A tree of `height h` holds exactly keys `< 32^(h+1)`. -/
@@ -88,13 +88,13 @@ def requiredHeight (k : Nat) : Nat :=
 termination_by k
 decreasing_by omega
 
-#guard requiredHeight 0 == 0
-#guard requiredHeight 31 == 0
-#guard requiredHeight 32 == 1
-#guard requiredHeight 1023 == 1
-#guard requiredHeight 1024 == 2
-#guard requiredHeight 1048575 == 3   -- 32^4 - 1
-#guard requiredHeight 1048576 == 4   -- 32^4
+#guard requiredHeight 0 = 0
+#guard requiredHeight 31 = 0
+#guard requiredHeight 32 = 1
+#guard requiredHeight 1023 = 1
+#guard requiredHeight 1024 = 2
+#guard requiredHeight 1048575 = 3   -- 32^4 - 1
+#guard requiredHeight 1048576 = 4   -- 32^4
 
 /-- Index of the lowest set bit of `m` (count of trailing zeros). The lowest set bit is isolated
 by `m &&& (0 - m)` (a power of two); subtracting one yields a mask of exactly that many low bits,
@@ -106,12 +106,12 @@ present slots in ascending order without scanning all 32. -/
 to step through present slots. -/
 @[inline] def clearLowest (m : UInt32) : UInt32 := m &&& (m - 1)
 
-#guard lowestSetIdx 0b10110 == 1
-#guard lowestSetIdx 0b1000 == 3
-#guard lowestSetIdx 1 == 0
-#guard lowestSetIdx 0x80000000 == 31
-#guard clearLowest 0b10110 == 0b10100
-#guard clearLowest 1 == 0
+#guard lowestSetIdx 0b10110 = 1
+#guard lowestSetIdx 0b1000 = 3
+#guard lowestSetIdx 1 = 0
+#guard lowestSetIdx 0x80000000 = 31
+#guard clearLowest 0b10110 = 0b10100
+#guard clearLowest 1 = 0
 
 ----------------------------------------------------------------------------------------------------
 -- Theorems

@@ -222,46 +222,46 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 
 -- basic lookups, including across chunk boundaries
 #guard (NatMap.empty : NatMap Nat).isEmpty
-#guard (NatMap.empty.insert 42 100 : NatMap Nat).size == 1
-#guard (NatMap.empty.insert 42 100 : NatMap Nat).get? 42 == some 100
-#guard (NatMap.empty.insert 42 100 : NatMap Nat).get? 43 == none
-#guard (NatMap.empty.insert 42 100 : NatMap Nat).getD 42 0 == 100
-#guard (NatMap.empty.insert 42 100 : NatMap Nat).getD 43 0 == 0
+#guard (NatMap.empty.insert 42 100 : NatMap Nat).size = 1
+#guard (NatMap.empty.insert 42 100 : NatMap Nat).get? 42 = some 100
+#guard (NatMap.empty.insert 42 100 : NatMap Nat).get? 43 = none
+#guard (NatMap.empty.insert 42 100 : NatMap Nat).getD 42 0 = 100
+#guard (NatMap.empty.insert 42 100 : NatMap Nat).getD 43 0 = 0
 #guard 2 ∈ m1
 #guard 99 ∉ m1
-#guard (NatMap.empty.insert 1000 7 : NatMap Nat).get? 1000 == some 7  -- multi-chunk key
+#guard (NatMap.empty.insert 1000 7 : NatMap Nat).get? 1000 = some 7  -- multi-chunk key
 
 -- insert overwrites the value, keeps size
-#guard (NatMap.empty.insert 42 1 |>.insert 42 2).get? 42 == some 2
-#guard (NatMap.empty.insert 42 1 |>.insert 42 2 : NatMap Nat).size == 1
+#guard (NatMap.empty.insert 42 1 |>.insert 42 2).get? 42 = some 2
+#guard (NatMap.empty.insert 42 1 |>.insert 42 2 : NatMap Nat).size = 1
 
 -- modify touches present keys only
-#guard (m1.modify 2 (· + 5)).get? 2 == some 25
+#guard (m1.modify 2 (· + 5)).get? 2 = some 25
 #guard m1.modify 99 (· + 5) = m1
 
 -- erase
-#guard (m1.erase 2).get? 2 == none
-#guard (m1.erase 2).size == 2
+#guard (m1.erase 2).get? 2 = none
+#guard (m1.erase 2).size = 2
 #guard (NatMap.empty.insert 42 1 |>.erase 42) = (NatMap.empty : NatMap Nat)
 
 -- toList sorted by key irrespective of insertion order
-#guard (NatMap.empty.insert 3 30 |>.insert 1 10 |>.insert 2 20).toList == [(1, 10), (2, 20), (3, 30)]
-#guard (NatMap.ofList [(5, 50), (1000, 1)]).toList == [(5, 50), (1000, 1)]
+#guard (NatMap.empty.insert 3 30 |>.insert 1 10 |>.insert 2 20).toList = [(1, 10), (2, 20), (3, 30)]
+#guard (NatMap.ofList [(5, 50), (1000, 1)]).toList = [(5, 50), (1000, 1)]
 
 -- fold visits entries in ascending key order, regardless of insertion order or height
-#guard (NatMap.ofList [(3, 30), (1, 10), (2, 20)]).fold (fun acc k v => acc + k + v) 0 == 66
-#guard (NatMap.ofList [(1, 10), (2, 20)]).fold (fun acc k v => acc ++ [(k, v)]) [] == [(1, 10), (2, 20)]
-#guard (NatMap.empty : NatMap Nat).fold (fun acc _ v => acc + v) 0 == 0
-#guard (NatMap.ofList [(1, 10), (5000, 3)]).fold (fun acc k v => acc ++ [(k, v)]) [] == [(1, 10), (5000, 3)]  -- mixed heights
+#guard (NatMap.ofList [(3, 30), (1, 10), (2, 20)]).fold (fun acc k v => acc + k + v) 0 = 66
+#guard (NatMap.ofList [(1, 10), (2, 20)]).fold (fun acc k v => acc ++ [(k, v)]) [] = [(1, 10), (2, 20)]
+#guard (NatMap.empty : NatMap Nat).fold (fun acc _ v => acc + v) 0 = 0
+#guard (NatMap.ofList [(1, 10), (5000, 3)]).fold (fun acc k v => acc ++ [(k, v)]) [] = [(1, 10), (5000, 3)]  -- mixed heights
 
 -- foldM in `Id` reproduces `fold`; in a real monad it threads effects — `Except` short-circuits at
 -- the first odd value, and `StateM` records the ascending visit order (here across heights).
-#guard Id.run ((NatMap.ofList [(3, 30), (1, 10), (2, 20)]).foldM (fun acc k v => pure (acc + k + v)) 0) == 66
+#guard Id.run ((NatMap.ofList [(3, 30), (1, 10), (2, 20)]).foldM (fun acc k v => pure (acc + k + v)) 0) = 66
 #guard (match ((NatMap.ofList [(1, 10), (2, 7), (3, 30)]).foldM
           (fun acc _ v => if v % 2 == 1 then throw v else pure (acc + v)) 0 : Except Nat Nat) with
-        | .error e => e | .ok _ => 0) == 7          -- stops at the first odd value
+        | .error e => e | .ok _ => 0) = 7          -- stops at the first odd value
 #guard ((NatMap.ofList [(1, 10), (5000, 3)]).foldM (mo := StateM (List (Nat × Nat)))
-          (fun (_ : Unit) k v => modify (· ++ [(k, v)])) () |>.run []).2 == [(1, 10), (5000, 3)]
+          (fun (_ : Unit) k v => modify (· ++ [(k, v)])) () |>.run []).2 = [(1, 10), (5000, 3)]
 
 -- all / any over entries (predicate on key and value), short-circuiting. The result is independent
 -- of where the scan stops, so it must agree with the naive `fold`-based `&&` / `||`.
@@ -274,29 +274,29 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 #guard (NatMap.ofList [(1, 10), (5000, 20)]).all (fun _ v => v % 10 == 0)          -- mixed heights
 -- headline: short-circuit `all`/`any` agree in value with the naive `fold` computations
 #guard (NatMap.ofList [(1, 10), (2, 25), (3, 30)]).all (fun _ v => v % 10 == 0)
-        == (NatMap.ofList [(1, 10), (2, 25), (3, 30)]).fold (fun acc _ v => acc && (v % 10 == 0)) true
+        = (NatMap.ofList [(1, 10), (2, 25), (3, 30)]).fold (fun acc _ v => acc && (v % 10 == 0)) true
 #guard (NatMap.ofList [(1, 10), (2, 20)]).any (fun k _ => k % 2 == 0)
-        == (NatMap.ofList [(1, 10), (2, 20)]).fold (fun acc k _ => acc || (k % 2 == 0)) false
+        = (NatMap.ofList [(1, 10), (2, 20)]).fold (fun acc k _ => acc || (k % 2 == 0)) false
 #guard (NatMap.ofList [(1, 10), (5000, 20)]).all (fun _ v => v % 10 == 0)
-        == (NatMap.ofList [(1, 10), (5000, 20)]).fold (fun acc _ v => acc && (v % 10 == 0)) true
+        = (NatMap.ofList [(1, 10), (5000, 20)]).fold (fun acc _ v => acc && (v % 10 == 0)) true
 
 -- filter keeps exactly the entries satisfying the predicate. The result is canonical, so it is
 -- *equal* (not merely same-entries) to the map built directly from the survivors.
 #guard ((NatMap.ofList [(1, 10), (2, 20), (3, 30), (4, 40)]).filter (fun _ v => v % 20 == 0)).toList
-        == [(2, 20), (4, 40)]
+        = [(2, 20), (4, 40)]
 #guard (NatMap.ofList [(1, 10), (2, 20)]).filter (fun k _ => k % 2 == 1) = NatMap.ofList [(1, 10)]
 #guard (NatMap.ofList [(1, 10), (2, 20)]).filter (fun _ _ => true) = NatMap.ofList [(1, 10), (2, 20)]
 #guard (NatMap.ofList [(1, 10), (2, 20)]).filter (fun _ _ => false) = (NatMap.empty : NatMap Nat)
 #guard (NatMap.empty : NatMap Nat).filter (fun _ _ => true) = NatMap.empty
 -- the predicate sees both key and value
 #guard ((NatMap.ofList [(1, 10), (2, 20), (3, 30)]).filter (fun k v => 25 ≤ k + v)).toList
-        == [(3, 30)]
+        = [(3, 30)]
 -- filtering away the deep keys shrinks the height back to canonical (mixed-height input)
 #guard (NatMap.ofList [(1, 10), (2, 20), (5000, 3)]).filter (fun k _ => k ≤ 99)
         = NatMap.ofList [(1, 10), (2, 20)]
 -- filter agrees with `List.filter` through `toList` (order preserved, mixed heights)
 #guard ((NatMap.ofList [(1, 10), (40, 40), (5000, 3)]).filter (fun _ v => v % 2 == 0)).toList
-        == ((NatMap.ofList [(1, 10), (40, 40), (5000, 3)]).toList.filter (fun (_, v) => v % 2 == 0))
+        = ((NatMap.ofList [(1, 10), (40, 40), (5000, 3)]).toList.filter (fun (_, v) => v % 2 == 0))
 
 -- monadic allM / anyM / filterM: in `Id` they reproduce the pure ops; in a real monad they thread
 -- effects in ascending key order. `StateM` records the visit order, which also exposes short-circuiting.
@@ -306,42 +306,42 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
         = NatMap.ofList [(1, 10)]
 -- allM stops at the first failing entry (value 25), so (3, 30) is never visited
 #guard Id.run (((NatMap.ofList [(1, 10), (2, 25), (3, 30)]).allM (mo := StateM (List Nat))
-          (fun _ v => do modify (· ++ [v]); pure (v % 10 == 0))).run []) == (false, [10, 25])
+          (fun _ v => do modify (· ++ [v]); pure (v % 10 == 0))).run []) = (false, [10, 25])
 -- anyM stops at the first holding entry (key 2 even), so (3, 30) is never visited
 #guard Id.run (((NatMap.ofList [(1, 10), (2, 20), (3, 30)]).anyM (mo := StateM (List Nat))
-          (fun k _ => do modify (· ++ [k]); pure (k % 2 == 0))).run []) == (true, [1, 2])
+          (fun k _ => do modify (· ++ [k]); pure (k % 2 == 0))).run []) = (true, [1, 2])
 -- allM / anyM agree in value with the pure all / any
 #guard Id.run ((NatMap.ofList [(1, 10), (2, 25), (3, 30)]).allM (fun _ v => pure (v % 10 == 0)))
-        == (NatMap.ofList [(1, 10), (2, 25), (3, 30)]).all (fun _ v => v % 10 == 0)
+        = (NatMap.ofList [(1, 10), (2, 25), (3, 30)]).all (fun _ v => v % 10 == 0)
 -- filterM in `Id` agrees with the pure filter; it visits every entry in ascending key order; and in
 -- `Except` a throwing predicate short-circuits at the first offending entry (key 300 is never seen).
 #guard Id.run ((NatMap.ofList [(1, 10), (2, 20), (3, 30), (4, 40)]).filterM (fun _ v => pure (v % 20 == 0)))
         = (NatMap.ofList [(1, 10), (2, 20), (3, 30), (4, 40)]).filter (fun _ v => v % 20 == 0)
 #guard (((NatMap.ofList [(1, 10), (5000, 3)]).filterM (mo := StateM (List (Nat × Nat)))
-          (fun k v => do modify (· ++ [(k, v)]); pure true)).run []).2 == [(1, 10), (5000, 3)]
+          (fun k v => do modify (· ++ [(k, v)]); pure true)).run []).2 = [(1, 10), (5000, 3)]
 #guard (match ((NatMap.ofList [(1, 10), (200, 1), (5, 50), (300, 2)]).filterM
           (fun k _ => if k ≥ 100 then throw k else pure true) : Except Nat (NatMap Nat)) with
-        | .error e => e | .ok _ => 0) == 200
+        | .error e => e | .ok _ => 0) = 200
 
 -- map: applies the function to every value, preserving keys and structure (including across heights)
-#guard ((NatMap.ofList [(1, 10), (2, 20), (5000, 3)]).map (· + 1)).toList == [(1, 11), (2, 21), (5000, 4)]
+#guard ((NatMap.ofList [(1, 10), (2, 20), (5000, 3)]).map (· + 1)).toList = [(1, 11), (2, 21), (5000, 4)]
 #guard (NatMap.empty.map (· + 1) : NatMap Nat) = NatMap.empty
-#guard ((NatMap.ofList [(1, 5), (2, 7)]).map (· * 2)).get? 2 == some 14
-#guard ((NatMap.ofList [(1, 5), (2, 7)]).map (fun _ => true)).toList == [(1, true), (2, true)]  -- changes value type
+#guard ((NatMap.ofList [(1, 5), (2, 7)]).map (· * 2)).get? 2 = some 14
+#guard ((NatMap.ofList [(1, 5), (2, 7)]).map (fun _ => true)).toList = [(1, true), (2, true)]  -- changes value type
 -- the `Functor` instance: `<$>` is `NatMap.map`
-#guard ((· * 2) <$> NatMap.ofList [(1, 5), (2, 7)]).get? 1 == some 10
+#guard ((· * 2) <$> NatMap.ofList [(1, 5), (2, 7)]).get? 1 = some 10
 #guard (id <$> NatMap.ofList [(1, 5), (2, 7)] : NatMap Nat) = NatMap.ofList [(1, 5), (2, 7)]
 
 -- join: collisions combined (sum), others copied through
 #guard ((NatMap.ofList [(1, 10), (2, 20)]).join (· + ·) (NatMap.ofList [(2, 2), (3, 3)])).toList
-        == [(1, 10), (2, 22), (3, 3)]
+        = [(1, 10), (2, 22), (3, 3)]
 #guard m1.join (· + ·) NatMap.empty = m1                              -- right identity
 #guard (NatMap.empty : NatMap Nat).join (· + ·) m1 = m1              -- left identity
 #guard m1.join (fun a _ => a) m1 = m1                                 -- idempotent (left-biased)
 
 -- meet: only shared keys survive, combined
 #guard ((NatMap.ofList [(1, 10), (2, 20)]).meet (· + ·) (NatMap.ofList [(2, 2), (3, 3)])).toList
-        == [(2, 22)]
+        = [(2, 22)]
 #guard m1.meet (· + ·) NatMap.empty = (NatMap.empty : NatMap Nat)    -- annihilator
 #guard (NatMap.ofList [(1, 1)]).meet (· + ·) (NatMap.ofList [(2, 2)]) = (NatMap.empty : NatMap Nat)  -- disjoint
 #guard m1.meet (fun a _ => a) m1 = m1                                 -- idempotent (left-biased)
@@ -362,25 +362,25 @@ applies it as `combine left-value right-value`. -/
 
 -- join: collisions combined, taller operand on either side; `+` is commutative so order is symmetric
 #guard ((NatMap.ofList [(1, 10), (2, 20)]).join (· + ·) (NatMap.ofList [(1, 1), (5000, 500)])).toList
-        == [(1, 11), (2, 20), (5000, 500)]                                              -- rhs taller
+        = [(1, 11), (2, 20), (5000, 500)]                                              -- rhs taller
 #guard ((NatMap.ofList [(1, 1), (5000, 500)]).join (· + ·) (NatMap.ofList [(1, 10), (2, 20)])).toList
-        == [(1, 11), (2, 20), (5000, 500)]                                              -- lhs taller
+        = [(1, 11), (2, 20), (5000, 500)]                                              -- lhs taller
 -- left-biased combine pins down argument order across heights (left value must win both ways)
 #guard ((NatMap.ofList [(1, 10)]).join (fun x _ => x) (NatMap.ofList [(1, 99), (5000, 500)])).toList
-        == [(1, 10), (5000, 500)]                                                       -- rhs taller
+        = [(1, 10), (5000, 500)]                                                       -- rhs taller
 #guard ((NatMap.ofList [(1, 10), (5000, 500)]).join (fun x _ => x) (NatMap.ofList [(1, 99)])).toList
-        == [(1, 10), (5000, 500)]                                                       -- lhs taller (flipped)
+        = [(1, 10), (5000, 500)]                                                       -- lhs taller (flipped)
 -- `join_comm` flip law: swapping operands and flipping the (non-symmetric) combine is the identity
 #guard (NatMap.ofList [(1, 10), (2, 20)]).join (fun x _ => x) (NatMap.ofList [(1, 99), (5000, 5)])
      = (NatMap.ofList [(1, 99), (5000, 5)]).join (fun _ y => y) (NatMap.ofList [(1, 10), (2, 20)])
 
 -- meet: only shared keys survive at the smaller height, taller operand on either side
 #guard ((NatMap.ofList [(1, 10), (2, 20), (5000, 500)]).meet (· + ·) (NatMap.ofList [(1, 1), (3, 3)])).toList
-        == [(1, 11)]                                                                    -- lhs taller
+        = [(1, 11)]                                                                    -- lhs taller
 #guard ((NatMap.ofList [(1, 1), (3, 3)]).meet (· + ·) (NatMap.ofList [(1, 10), (2, 20), (5000, 500)])).toList
-        == [(1, 11)]                                                                    -- rhs taller
+        = [(1, 11)]                                                                    -- rhs taller
 #guard ((NatMap.ofList [(1, 10), (5000, 5)]).meet (fun x _ => x) (NatMap.ofList [(1, 99)])).toList
-        == [(1, 10)]                                                                    -- lhs taller (flipped)
+        = [(1, 10)]                                                                    -- lhs taller (flipped)
 -- `meet_comm` flip law: swapping operands and flipping the (non-symmetric) combine is the identity
 #guard (NatMap.ofList [(1, 10), (2, 20)]).meet (fun x _ => x) (NatMap.ofList [(1, 99), (5000, 5)])
      = (NatMap.ofList [(1, 99), (5000, 5)]).meet (fun _ y => y) (NatMap.ofList [(1, 10), (2, 20)])
@@ -399,10 +399,10 @@ private def q : NatMap Nat := NatMap.ofList [(2, 20), (3, 30), (40, 400)]
 #guard p.join (· + ·) q = q.join (· + ·) p
 #guard (p.join (· + ·) q).join (· + ·) p = p.join (· + ·) (q.join (· + ·) p)
 -- meet with `+`: only shared keys (2, 40), values summed
-#guard (p.meet (· + ·) q).toList == [(2, 22), (40, 440)]
+#guard (p.meet (· + ·) q).toList = [(2, 22), (40, 440)]
 -- domain of join = union of domains; domain of meet = intersection
-#guard (p.join (· + ·) q).size == 5
-#guard (p.meet (· + ·) q).size == 2
+#guard (p.join (· + ·) q).size = 5
+#guard (p.meet (· + ·) q).size = 2
 -- restricts is reflexive/transitive on a chain of growing domains
 #guard (NatMap.ofList [(40, 40)]).restricts (· == ·) p
 #guard p.restricts (· == ·) p
@@ -416,7 +416,7 @@ example : DecidableEq (NatMap Nat) := inferInstance
 #guard NatMap.ofList [(1, 10), (2, 20)] = NatMap.ofList [(2, 20), (1, 10)]
 #guard ¬ (NatMap.ofList [(1, 10)] = NatMap.ofList [(1, 11)])
 #guard (NatMap.ofList [(1, 10), (2, 20)] == NatMap.ofList [(2, 20), (1, 10)]) = true
-#guard hash (NatMap.ofList [(1, 10), (2, 20)]) == hash (NatMap.ofList [(2, 20), (1, 10)])
+#guard hash (NatMap.ofList [(1, 10), (2, 20)]) = hash (NatMap.ofList [(2, 20), (1, 10)])
 
 end Tests
 
