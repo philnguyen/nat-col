@@ -60,6 +60,10 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   restricts : (V → V → Bool) → L → L → Bool
   /-- Present `(slot, value)` pairs in ascending slot order. -/
   toArray   : L → Array (UInt32 × V)
+  /-- Keep only the slots whose `(slot, value)` satisfies `p`. The leaf base case of
+  `Tree.filter`; a fully-filtered leaf becomes empty, but that emptiness is governed at the node
+  above (or the collection top), so this carries no canonical-shape obligation of its own. -/
+  filter    : (UInt32 → V → Bool) → L → L
   /-- Inserting a value yields a non-empty leaf, so freshly-built subtrees are never empty.
   Part of the canonical-shape invariant (`Tree.Full`). -/
   insert_ne_empty : ∀ (l : L) (i : UInt32) (v : V), isEmpty (insert l i v) = false
@@ -340,6 +344,21 @@ termination_by h => h
 
 /-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first success. -/
 def any (p : Nat → V → Bool) (h : Nat) (t : Tree L h) : Bool := anyAux p 0 h t
+
+/-- Keep only the present `(key, value)` pairs satisfying `p`, pruning subtrees that filter down
+to empty (so the result stays canonical below the top level — exactly as `erase` does). `pfx`
+carries the key bits fixed by higher levels, as in `foldAux`. A leaf filters via `LeafOps.filter`;
+a node filters every child recursively (`Node.filterMap`) and drops any child that becomes empty. -/
+def filterAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Tree L h
+  | 0, l => LeafOps.filter (fun i v => p (pfx ||| i.toNat) v) l
+  | h + 1, n =>
+    n.filterMap (fun i child =>
+      let c := filterAux p (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child
+      if isEmpty h c then none else some c)
+termination_by h => h
+
+/-- Keep only the present `(key, value)` pairs satisfying `p`. -/
+def filter (p : Nat → V → Bool) (h : Nat) (t : Tree L h) : Tree L h := filterAux p 0 h t
 
 /-! ### Canonical shape
 
@@ -653,6 +672,29 @@ theorem Full_meetEq : (h : Nat) → (c : V → V → V) → (a b : Tree L h) →
       · rename_i hne
         simp only [Option.some.injEq] at hv; subst hv
         exact ⟨by simpa using hne, Full_meetEq h c x y (ha x hx).2 (hb y hy).2⟩
+
+/-- `filterAux` preserves "no empty subtree": each surviving child is the guarded-non-empty
+filtered subtree (the `if isEmpty` guard prunes the rest), `Full` by induction; the leaf case is
+vacuous. The `filterMap` analogue of `Full_erase`/`Full_meetEq`. `pfx` is irrelevant to shape, so
+it is re-quantified at the tail and structural recursion proceeds on the height. -/
+theorem Full_filterAux (p : Nat → V → Bool) :
+    (h : Nat) → (t : Tree L h) → Full h t → ∀ pfx, Full h (filterAux p pfx h t)
+  | 0, _, _, _ => trivial
+  | h + 1, n, hn, pfx => by
+      simp only [filterAux]
+      refine Node.filterMap_forall ?_
+      intro i hi y hy
+      simp only at hy
+      split at hy
+      · simp at hy
+      · rename_i hne
+        simp only [Option.some.injEq] at hy; subst hy
+        have hchild : Full h (n.get i hi) := (hn (n.get i hi) (n.get_mem i hi)).2
+        exact ⟨by simpa using hne, Full_filterAux p h (n.get i hi) hchild _⟩
+
+/-- `filter` preserves "no empty subtree". -/
+theorem Full_filter (p : Nat → V → Bool) (h : Nat) (t : Tree L h) (hf : Full h t) :
+    Full h (filter p h t) := Full_filterAux p h t hf 0
 
 /-- Lifting a non-empty tree keeps it non-empty. -/
 theorem isEmpty_liftBy : (d : Nat) → {h : Nat} → (t : Tree L h) →

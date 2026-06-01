@@ -31,6 +31,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   meet c a b := Node.meet (fun x y => some (c x y)) a b
   restricts rel a b := Node.restricts rel a b
   toArray n := n.fold (fun acc i a => acc.push (i, a)) #[]
+  filter p n := Node.filterMap (fun i a => if p i a then some a else none) n
   insert_ne_empty n i v := Node.isEmpty_insert n i v
   isEmpty_modify n i g := Node.isEmpty_alter_invariant n i (Option.map g) (fun o => by cases o <;> rfl)
   isEmpty_empty := rfl
@@ -113,6 +114,10 @@ def all (p : Nat → α → Bool) (m : NatMap α) : Bool := NatCollection.all p 
 /-- Whether some entry satisfies `p`, short-circuiting at the first that holds (vacuously false on
 the empty map). Same value as `m.fold (fun acc k v => acc || p k v) false`. -/
 def any (p : Nat → α → Bool) (m : NatMap α) : Bool := NatCollection.any p m
+
+/-- Keep only the entries `(key, value)` satisfying `p`. The result is canonical, so it equals the
+map built directly from the surviving entries (and its height shrinks when deep keys are removed). -/
+def filter (p : Nat → α → Bool) (m : NatMap α) : NatMap α := NatCollection.filter p m
 
 -- Membership is on keys: `k ∈ m` reduces to the `Bool` `contains`, so it stays decidable (usable
 -- in `#guard` / `decide`); `k ∉ m` is `¬ k ∈ m`, available automatically.
@@ -257,6 +262,24 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
         == (NatMap.ofList [(1, 10), (2, 20)]).fold (fun acc k _ => acc || (k % 2 == 0)) false
 #guard (NatMap.ofList [(1, 10), (5000, 20)]).all (fun _ v => v % 10 == 0)
         == (NatMap.ofList [(1, 10), (5000, 20)]).fold (fun acc _ v => acc && (v % 10 == 0)) true
+
+-- filter keeps exactly the entries satisfying the predicate. The result is canonical, so it is
+-- *equal* (not merely same-entries) to the map built directly from the survivors.
+#guard ((NatMap.ofList [(1, 10), (2, 20), (3, 30), (4, 40)]).filter (fun _ v => v % 20 == 0)).toList
+        == [(2, 20), (4, 40)]
+#guard (NatMap.ofList [(1, 10), (2, 20)]).filter (fun k _ => k % 2 == 1) = NatMap.ofList [(1, 10)]
+#guard (NatMap.ofList [(1, 10), (2, 20)]).filter (fun _ _ => true) = NatMap.ofList [(1, 10), (2, 20)]
+#guard (NatMap.ofList [(1, 10), (2, 20)]).filter (fun _ _ => false) = (NatMap.empty : NatMap Nat)
+#guard (NatMap.empty : NatMap Nat).filter (fun _ _ => true) = NatMap.empty
+-- the predicate sees both key and value
+#guard ((NatMap.ofList [(1, 10), (2, 20), (3, 30)]).filter (fun k v => 25 ≤ k + v)).toList
+        == [(3, 30)]
+-- filtering away the deep keys shrinks the height back to canonical (mixed-height input)
+#guard (NatMap.ofList [(1, 10), (2, 20), (5000, 3)]).filter (fun k _ => k ≤ 99)
+        = NatMap.ofList [(1, 10), (2, 20)]
+-- filter agrees with `List.filter` through `toList` (order preserved, mixed heights)
+#guard ((NatMap.ofList [(1, 10), (40, 40), (5000, 3)]).filter (fun _ v => v % 2 == 0)).toList
+        == ((NatMap.ofList [(1, 10), (40, 40), (5000, 3)]).toList.filter (fun (_, v) => v % 2 == 0))
 
 -- map: applies the function to every value, preserving keys and structure (including across heights)
 #guard ((NatMap.ofList [(1, 10), (2, 20), (5000, 3)]).map (· + 1)).toList == [(1, 11), (2, 21), (5000, 4)]

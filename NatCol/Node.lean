@@ -179,6 +179,22 @@ action underlying `NatMap.map`. -/
 def map {β : Type v} (f : α → β) (n : Node α) : Node β :=
   ⟨n.positionsMask, n.elements.map f, by rw [Array.size_map]; exact n.elements_compact⟩
 
+/-- Filter-and-map over present slots: for each present slot `i` holding child `a`, keep
+`f i a` when it is `some` and drop the slot when it is `none`. Like `map`, but `f` is slot-aware
+and may remove slots. Built — as `join`/`meet` are — by ascending `insert` into an empty
+accumulator (pre-sized to `n`'s slot count, an upper bound on the survivors), so the result is
+compact by construction with no extra proof. -/
+def filterMap (f : UInt32 → α → Option α) (n : Node α) : Node α :=
+  let step := fun (acc : Node α) i =>
+    let iu := UInt32.ofNat i
+    match h : testBit n.positionsMask iu with
+    | true =>
+      match f iu (n.get iu h) with
+      | some y => acc.insert iu y
+      | none   => acc
+    | false => acc
+  Nat.fold 32 (fun i _ acc => step acc i) (Node.emptyWithCapacity (popCount n.positionsMask))
+
 /-- Union of two nodes. Slots in exactly one side are reused as-is; slots in both are
 merged with `combine` (a `none` result drops the slot).
 
@@ -484,6 +500,28 @@ theorem meet_forall {α} {P : α → Prop} {combine : α → α → Option α} {
       · exact hacc _ hz
     · exact hacc _ hz
     · exact hacc _ hz
+    · exact hacc _ hz
+  · intro z hz; simp [Node.emptyWithCapacity] at hz
+
+/-- Every child of a `filterMap` result satisfies `P`, provided each present slot's `some`
+output does. The single-operand, slot-aware analogue of `meet_forall`: a result child is the
+`f`-output of some present slot, so `hf` (quantified over present slots) covers it. -/
+theorem filterMap_forall {α} {P : α → Prop} {f : UInt32 → α → Option α} {n : Node α}
+    (hf : ∀ (i : UInt32) (h : testBit n.positionsMask i = true) (y : α),
+            f i (n.get i h) = some y → P y) :
+    ∀ z ∈ (Node.filterMap f n).elements, P z := by
+  unfold Node.filterMap
+  apply fold_elements_forall
+  · intro acc i hacc z hz
+    dsimp only at hz ⊢
+    split at hz
+    · rename_i hb
+      split at hz
+      · rename_i y hcv
+        rcases mem_insert _ _ _ _ hz with h | h
+        · subst h; exact hf _ hb _ hcv
+        · exact hacc _ h
+      · exact hacc _ hz
     · exact hacc _ hz
   · intro z hz; simp [Node.emptyWithCapacity] at hz
 

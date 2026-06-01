@@ -31,6 +31,9 @@ instance : LeafOps UInt32 Unit where
   toArray u := Nat.fold 32 (fun i _ acc =>
     let iu := UInt32.ofNat i
     if testBit u iu then acc.push (iu, ()) else acc) #[]
+  filter p u := Nat.fold 32 (fun i _ acc =>
+    let iu := UInt32.ofNat i
+    if testBit u iu && p iu () then setBit acc iu else acc) (0 : UInt32)
   insert_ne_empty u i _ := beq_eq_false_iff_ne.mpr (setBit_ne_zero u i)
   isEmpty_modify _ _ _ := rfl
   isEmpty_empty := by decide
@@ -186,6 +189,10 @@ def all (p : Nat → Bool) (s : NatSet) : Bool := NatCollection.all (fun k _ => 
 the empty set). Same value as `s.fold (fun acc k => acc || p k) false`. -/
 def any (p : Nat → Bool) (s : NatSet) : Bool := NatCollection.any (fun k _ => p k) s
 
+/-- Keep only the elements satisfying `p`. The result is canonical, so it equals the set built
+directly from the surviving elements (and its height shrinks when the deep keys are removed). -/
+def filter (p : Nat → Bool) (s : NatSet) : NatSet := NatCollection.filter (fun k _ => p k) s
+
 end NatSet
 
 /-! ## Tests -/
@@ -255,6 +262,20 @@ section Tests
         == (NatSet.ofList [2, 4, 5000]).fold (fun acc k => acc && (k % 2 == 0)) true
 #guard (∅ : NatSet).any (fun k => k % 2 == 0)
         == (∅ : NatSet).fold (fun acc k => acc || (k % 2 == 0)) false
+
+-- filter keeps exactly the elements satisfying the predicate. The result is canonical, so it is
+-- *equal* (not merely same-elements) to the set built directly from the survivors.
+#guard (NatSet.ofList [1, 2, 3, 4, 5, 6]).filter (fun k => k % 2 == 0) = NatSet.ofList [2, 4, 6]
+#guard ((NatSet.ofList [1, 2, 3, 4, 5, 6]).filter (fun k => k % 2 == 0)).toList == [2, 4, 6]
+#guard (NatSet.ofList [1, 2, 3]).filter (fun _ => true) = NatSet.ofList [1, 2, 3]   -- keep all
+#guard (NatSet.ofList [1, 2, 3]).filter (fun _ => false) = (∅ : NatSet)             -- drop all
+#guard (∅ : NatSet).filter (fun _ => true) = (∅ : NatSet)                           -- empty
+-- filtering away the deep keys shrinks the height back to canonical (mixed-height input)
+#guard (NatSet.ofList [1, 2, 5000]).filter (fun k => k ≤ 99) = NatSet.ofList [1, 2]
+#guard hash ((NatSet.ofList [1, 2, 5000]).filter (fun k => k ≤ 99)) == hash (NatSet.ofList [1, 2])
+-- filter agrees with `List.filter` through `toList` (order preserved, mixed heights)
+#guard ((NatSet.ofList [1, 40, 99, 5000]).filter (fun k => k % 2 == 1)).toList
+        == ((NatSet.ofList [1, 40, 99, 5000]).toList.filter (fun k => k % 2 == 1))
 
 -- union (via the `∪` notation)
 #guard ((NatSet.ofList [1, 2]) ∪ (NatSet.ofList [2, 3])).toList == [1, 2, 3]

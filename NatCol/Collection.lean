@@ -180,6 +180,13 @@ def all (p : Nat → V → Bool) (c : NatCollection L) : Bool := Tree.all p c.he
 /-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first success. -/
 def any (p : Nat → V → Bool) (c : NatCollection L) : Bool := Tree.any p c.height c.tree
 
+/-- Keep only the `(key, value)` pairs satisfying `p`. A structural single pass: `Tree.filter`
+filters every leaf and prunes empty subtrees (so the result has no internal empty subtree), then
+`normalizeAux` lowers the height if filtering emptied the upper levels — restoring full canonical
+shape, so the result equals the collection built directly from the survivors. -/
+def filter (p : Nat → V → Bool) (c : NatCollection L) : NatCollection L :=
+  normalizeAux c.height (Tree.filter p c.height c.tree) (Tree.Full_filter p c.height c.tree c.wf.1)
+
 /-- Structural equality: equal heights and equal trees. Canonical ⇒ logical equality. -/
 def beq [BEq L] (a b : NatCollection L) : Bool :=
   if h : a.height = b.height then Tree.beq a.height a.tree (Tree.cast h.symm b.tree) else false
