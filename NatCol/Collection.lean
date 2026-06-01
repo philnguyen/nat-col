@@ -162,6 +162,17 @@ def toList (c : NatCollection L) : List (Nat × V) := (Tree.toArray c.height c.t
 /-- Build a collection from `(key, value)` pairs (later pairs win on duplicate keys). -/
 def ofList (l : List (Nat × V)) : NatCollection L := l.foldl (fun c (k, v) => c.insert k v) empty
 
+/-- Fold `f` over all present `(key, value)` pairs, ascending by key, starting from `init`.
+Folds the trie directly (no intermediate `toList`/`toArray`). -/
+def fold {β : Type w} (f : β → Nat → V → β) (init : β) (c : NatCollection L) : β :=
+  Tree.fold f init c.height c.tree
+
+/-- Monadic fold over all present `(key, value)` pairs, ascending by key, starting from `init`.
+The monadic companion of `fold`; folds the trie directly. -/
+def foldM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V → m β) (init : β)
+    (c : NatCollection L) : m β :=
+  Tree.foldM f init c.height c.tree
+
 /-- Structural equality: equal heights and equal trees. Canonical ⇒ logical equality. -/
 def beq [BEq L] (a b : NatCollection L) : Bool :=
   if h : a.height = b.height then Tree.beq a.height a.tree (Tree.cast h.symm b.tree) else false

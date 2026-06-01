@@ -283,11 +283,39 @@ fixed by higher levels. -/
 def toArrayAux (pfx : Nat) : (h : Nat) → Tree L h → Array (Nat × V) → Array (Nat × V)
   | 0, l, acc => (LeafOps.toArray l).foldl (fun acc (i, v) => acc.push (pfx ||| i.toNat, v)) acc
   | h + 1, n, acc =>
-    n.foldl (fun acc i child => toArrayAux (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child acc) acc
+    n.fold (fun acc i child => toArrayAux (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child acc) acc
 termination_by h => h
 
 /-- All `(key, value)` pairs, ascending by key. -/
 def toArray (h : Nat) (t : Tree L h) : Array (Nat × V) := toArrayAux 0 h t #[]
+
+/-- Fold `f` over present `(key, value)` pairs in ascending key order, threading the accumulator.
+`pfx` carries the key bits fixed by higher levels (mirrors `toArrayAux`, but applies `f` directly
+rather than pushing onto an array — so it folds the trie in place, with no intermediate array). -/
+def foldAux {β : Type w} (f : β → Nat → V → β) (pfx : Nat) : (h : Nat) → Tree L h → β → β
+  | 0, l, acc => (LeafOps.toArray l).foldl (fun acc (i, v) => f acc (pfx ||| i.toNat) v) acc
+  | h + 1, n, acc =>
+    n.fold (fun acc i child => foldAux f (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child acc) acc
+termination_by h => h
+
+/-- Fold `f` over all present `(key, value)` pairs, ascending by key, starting from `init`. -/
+def fold {β : Type w} (f : β → Nat → V → β) (init : β) (h : Nat) (t : Tree L h) : β :=
+  foldAux f 0 h t init
+
+/-- Monadic fold over present `(key, value)` pairs in ascending key order, threading the
+accumulator through `m`. The monadic companion of `foldAux`: the leaf level folds via
+`Array.foldlM`, each node level via `Node.foldM`. -/
+def foldMAux {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V → m β) (pfx : Nat) :
+    (h : Nat) → Tree L h → β → m β
+  | 0, l, acc => (LeafOps.toArray l).foldlM (fun acc (i, v) => f acc (pfx ||| i.toNat) v) acc
+  | h + 1, n, acc =>
+    n.foldM (fun acc i child => foldMAux f (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child acc) acc
+termination_by h => h
+
+/-- Monadic fold over all present `(key, value)` pairs, ascending by key, starting from `init`. -/
+def foldM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V → m β) (init : β)
+    (h : Nat) (t : Tree L h) : m β :=
+  foldMAux f 0 h t init
 
 /-! ### Canonical shape
 

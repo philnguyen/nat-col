@@ -30,7 +30,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   join c a b := Node.join (fun x y => some (c x y)) a b
   meet c a b := Node.meet (fun x y => some (c x y)) a b
   restricts rel a b := Node.restricts rel a b
-  toArray n := n.foldl (fun acc i a => acc.push (i, a)) #[]
+  toArray n := n.fold (fun acc i a => acc.push (i, a)) #[]
   insert_ne_empty n i v := Node.isEmpty_insert n i v
   isEmpty_modify n i g := Node.isEmpty_alter_invariant n i (Option.map g) (fun o => by cases o <;> rfl)
   isEmpty_empty := rfl
@@ -94,6 +94,16 @@ def restricts (rel : α → α → Bool) (m₁ m₂ : NatMap α) : Bool := NatCo
 def toList (m : NatMap α) : List (Nat × α) := NatCollection.toList m
 /-- Build a map from `(key, value)` pairs (later pairs win on duplicate keys). -/
 def ofList (l : List (Nat × α)) : NatMap α := NatCollection.ofList l
+
+/-- Fold `f` over `(key, value)` entries in ascending key order, starting from `init`. -/
+def fold {β : Type w} (f : β → Nat → α → β) (init : β) (m : NatMap α) : β :=
+  NatCollection.fold f init m
+
+/-- Monadic fold over `(key, value)` entries in ascending key order, threading the accumulator
+through `mo`. The monadic companion of `fold` (recovered by instantiating `mo := Id`). -/
+def foldM {β : Type w} {mo : Type w → Type w'} [Monad mo] (f : β → Nat → α → mo β) (init : β)
+    (m : NatMap α) : mo β :=
+  NatCollection.foldM f init m
 
 -- Membership is on keys: `k ∈ m` reduces to the `Bool` `contains`, so it stays decidable (usable
 -- in `#guard` / `decide`); `k ∉ m` is `¬ k ∈ m`, available automatically.
@@ -206,6 +216,21 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 -- toList sorted by key irrespective of insertion order
 #guard (NatMap.empty.insert 3 30 |>.insert 1 10 |>.insert 2 20).toList == [(1, 10), (2, 20), (3, 30)]
 #guard (NatMap.ofList [(5, 50), (1000, 1)]).toList == [(5, 50), (1000, 1)]
+
+-- fold visits entries in ascending key order, regardless of insertion order or height
+#guard (NatMap.ofList [(3, 30), (1, 10), (2, 20)]).fold (fun acc k v => acc + k + v) 0 == 66
+#guard (NatMap.ofList [(1, 10), (2, 20)]).fold (fun acc k v => acc ++ [(k, v)]) [] == [(1, 10), (2, 20)]
+#guard (NatMap.empty : NatMap Nat).fold (fun acc _ v => acc + v) 0 == 0
+#guard (NatMap.ofList [(1, 10), (5000, 3)]).fold (fun acc k v => acc ++ [(k, v)]) [] == [(1, 10), (5000, 3)]  -- mixed heights
+
+-- foldM in `Id` reproduces `fold`; in a real monad it threads effects — `Except` short-circuits at
+-- the first odd value, and `StateM` records the ascending visit order (here across heights).
+#guard Id.run ((NatMap.ofList [(3, 30), (1, 10), (2, 20)]).foldM (fun acc k v => pure (acc + k + v)) 0) == 66
+#guard (match ((NatMap.ofList [(1, 10), (2, 7), (3, 30)]).foldM
+          (fun acc _ v => if v % 2 == 1 then throw v else pure (acc + v)) 0 : Except Nat Nat) with
+        | .error e => e | .ok _ => 0) == 7          -- stops at the first odd value
+#guard ((NatMap.ofList [(1, 10), (5000, 3)]).foldM (mo := StateM (List (Nat × Nat)))
+          (fun (_ : Unit) k v => modify (· ++ [(k, v)])) () |>.run []).2 == [(1, 10), (5000, 3)]
 
 -- map: applies the function to every value, preserving keys and structure (including across heights)
 #guard ((NatMap.ofList [(1, 10), (2, 20), (5000, 3)]).map (· + 1)).toList == [(1, 11), (2, 21), (5000, 4)]

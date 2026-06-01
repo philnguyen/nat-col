@@ -167,6 +167,16 @@ def toList (s : NatSet) : List Nat := (NatCollection.toList s).map Prod.fst
 /-- Build a set from a list of elements. -/
 def ofList (l : List Nat) : NatSet := l.foldl (fun s k => s.insert k) empty
 
+/-- Fold `f` over elements in ascending order, starting from `init`. -/
+def fold {β : Type w} (f : β → Nat → β) (init : β) (s : NatSet) : β :=
+  NatCollection.fold (fun acc k _ => f acc k) init s
+
+/-- Monadic fold over elements in ascending order, threading the accumulator through `m`. The
+monadic companion of `fold` (recovered by instantiating `m := Id`). -/
+def foldM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → m β) (init : β) (s : NatSet) :
+    m β :=
+  NatCollection.foldM (fun acc k _ => f acc k) init s
+
 end NatSet
 
 /-! ## Tests -/
@@ -201,6 +211,21 @@ section Tests
 -- ofList / toList round trip (deduplicated, sorted)
 #guard (NatSet.ofList [3, 1, 2, 1, 3]).toList == [1, 2, 3]
 #guard (NatSet.ofList [100, 2000, 30000]).size == 3
+
+-- fold visits elements in ascending order, regardless of insertion order or height
+#guard (NatSet.ofList [3, 1, 2]).fold (fun acc k => acc + k) 0 == 6
+#guard (NatSet.ofList [3, 1, 2]).fold (fun acc k => acc ++ [k]) [] == [1, 2, 3]
+#guard (∅ : NatSet).fold (fun acc k => acc + k) 0 == 0
+#guard (NatSet.ofList [1, 1000, 5]).fold (fun acc k => acc ++ [k]) [] == [1, 5, 1000]  -- mixed heights
+
+-- foldM in `Id` reproduces `fold`; in a real monad it threads effects — `Except` short-circuits at
+-- the first element ≥ 100, and `StateM` records the ascending visit order (here across heights).
+#guard Id.run ((NatSet.ofList [3, 1, 2]).foldM (fun acc k => pure (acc + k)) 0) == 6
+#guard (match ((NatSet.ofList [1, 200, 5, 300]).foldM
+          (fun acc k => if k ≥ 100 then throw k else pure (acc + k)) 0 : Except Nat Nat) with
+        | .error e => e | .ok _ => 0) == 200        -- stops at the first element ≥ 100
+#guard ((NatSet.ofList [1, 5, 1000]).foldM (m := StateM (List Nat))
+          (fun (_ : Unit) k => modify (· ++ [k])) () |>.run []).2 == [1, 5, 1000]
 
 -- union (via the `∪` notation)
 #guard ((NatSet.ofList [1, 2]) ∪ (NatSet.ofList [2, 3])).toList == [1, 2, 3]

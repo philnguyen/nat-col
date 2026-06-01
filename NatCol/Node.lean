@@ -144,10 +144,18 @@ def erase (n : Node α) (i : UInt32) : Node α := n.alter i (fun _ => none)
 def modify (n : Node α) (i : UInt32) (f : α → α) : Node α := n.alter i (Option.map f)
 
 /-- Fold over present slots in ascending slot order, exposing the slot index. -/
-def foldl {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node α) : β :=
+def fold {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node α) : β :=
   Nat.fold 32 (fun i _ (acc : β) =>
     let iu := UInt32.ofNat i
     if h : testBit n.positionsMask iu = true then f acc iu (n.get iu h) else acc) init
+
+/-- Monadic fold over present slots in ascending slot order, exposing the slot index. The monadic
+companion of `fold` (which is the `m := Id` instance), built on `Nat.foldM` over the 32 slots. -/
+def foldM {β : Type v} {m : Type v → Type w} [Monad m] (f : β → UInt32 → α → m β) (init : β)
+    (n : Node α) : m β :=
+  Nat.foldM 32 (fun i _ (acc : β) =>
+    let iu := UInt32.ofNat i
+    if h : testBit n.positionsMask iu = true then f acc iu (n.get iu h) else pure acc) init
 
 /-- Map a function over every stored child, preserving the slot structure: the slot mask and
 the array length are untouched, so only the element *type* changes (`α` to `β`). The compactness
@@ -302,8 +310,8 @@ private def nB : Node Nat := (Node.singleton 4 99).insert 7 70
 #guard !Node.restricts (fun x y => x < y) (Node.singleton 4 40) nA  -- 40 < 40 fails
 #guard Node.restricts (fun _ _ => true) Node.empty nA              -- empty restricts all
 
--- foldl visits slots ascending
-#guard nA.foldl (fun acc i a => acc ++ [(i.toNat, a)]) [] == [(1, 10), (4, 40), (31, 310)]
+-- fold visits slots ascending
+#guard nA.fold (fun acc i a => acc ++ [(i.toNat, a)]) [] == [(1, 10), (4, 40), (31, 310)]
 
 -- the `elements_compact` invariant is a field every node carries, so it is available on
 -- operation results too — here, on a `join` output — by construction, no side condition
