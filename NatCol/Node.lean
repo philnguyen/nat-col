@@ -158,75 +158,109 @@ popcount. Equal to `insert i a` (`insertChild_eq_insert`). -/
           = n.elements.insertIdx (arrayIndex n.positionsMask i) a hle from dif_pos hle,
         Array.size_insertIdx, n.elements_compact, hsb]⟩
 
+/-- Iterate `f acc i child` over the *present* slots of `n` (those of `m`), lowest first
+(`lowestSetIdx`/`clearLowest`), reading the child with `get?`/`Option.elim` (a function application,
+as `restrictsLoop` feeds `get?` into `optRel`). Only the `popCount m` present slots are visited —
+no full 0..31 scan. Terminates because `clearLowest` strictly decreases the mask. -/
+@[specialize] def foldLoop {β : Type v} (f : β → UInt32 → α → β) (n : Node α) (m : UInt32) (acc : β) : β :=
+  if _hm : m = 0 then acc
+  else foldLoop f n (clearLowest m)
+        ((n.get? (lowestSetIdx m)).elim acc (fun a => f acc (lowestSetIdx m) a))
+termination_by m.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
+
 /-- Fold over present slots in ascending slot order. -/
 @[specialize] def fold {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node α) : β :=
-  Nat.fold 32 (fun i _ (acc : β) =>
-    let iu := UInt32.ofNat i
-    if h : testBit n.positionsMask iu = true then f acc iu (n.get iu h) else acc) init
+  foldLoop f n n.positionsMask init
+
+/-- Monadic `foldLoop`: iterate `f acc i child` over the present slots of `n` (those of `mask`),
+lowest first, threading effects through `m`. The monadic companion of `foldLoop`. -/
+@[specialize] def foldMLoop {β : Type v} {m : Type v → Type w} [Monad m] (f : β → UInt32 → α → m β)
+    (n : Node α) (mask : UInt32) (acc : β) : m β :=
+  if _hm : mask = 0 then pure acc
+  else do
+    let acc' ← (n.get? (lowestSetIdx mask)).elim (pure acc) (fun a => f acc (lowestSetIdx mask) a)
+    foldMLoop f n (clearLowest mask) acc'
+termination_by mask.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt mask _hm)
 
 /-- Monadic fold over present slots in ascending slot order, exposing the slot index. The monadic
-companion of `fold` (which is the `m := Id` instance), built on `Nat.foldM` over the 32 slots. -/
-def foldM {β : Type v} {m : Type v → Type w} [Monad m] (f : β → UInt32 → α → m β) (init : β)
-    (n : Node α) : m β :=
-  Nat.foldM 32 (fun i _ (acc : β) =>
-    let iu := UInt32.ofNat i
-    if h : testBit n.positionsMask iu = true then f acc iu (n.get iu h) else pure acc) init
+companion of `fold` (which is the `m := Id` instance). -/
+@[specialize] def foldM {β : Type v} {m : Type v → Type w} [Monad m] (f : β → UInt32 → α → m β)
+    (init : β) (n : Node α) : m β :=
+  foldMLoop f n n.positionsMask init
 
-/-- Whether every present slot (slot index + child) satisfies `p`, short-circuiting: the scan
-stops at the first slot where `p` returns `false`. Same value as `&&`-folding `p` over `fold`, but
-without visiting the remaining slots; built on `Nat.allM` over the 32 slots (at `m := Id`). -/
-def all (p : UInt32 → α → Bool) (n : Node α) : Bool :=
-  Nat.allM (m := Id) 32 (fun i _ =>
-    let iu := UInt32.ofNat i
-    if h : testBit n.positionsMask iu = true then p iu (n.get iu h) else true)
+/-- `all` driver: `&&`-accumulate `p` over the present slots of `n` (those of `m`), lowest first.
+`&&` short-circuits the per-slot `p` once `acc` is `false`, and only the `popCount m` present slots
+are visited — no full 0..31 scan (the `restrictsLoop` shape). -/
+@[specialize] def allLoop (p : UInt32 → α → Bool) (n : Node α) (m : UInt32) (acc : Bool) : Bool :=
+  if _hm : m = 0 then acc
+  else allLoop p n (clearLowest m)
+        (acc && (n.get? (lowestSetIdx m)).elim true (fun a => p (lowestSetIdx m) a))
+termination_by m.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
 
-/-- Whether some present slot satisfies `p`, short-circuiting at the first slot where it returns
-`true`. The `any` companion of `all` (built on `Nat.anyM` over the 32 slots). -/
-def any (p : UInt32 → α → Bool) (n : Node α) : Bool :=
-  Nat.anyM (m := Id) 32 (fun i _ =>
-    let iu := UInt32.ofNat i
-    if h : testBit n.positionsMask iu = true then p iu (n.get iu h) else false)
+/-- Whether every present slot (slot index + child) satisfies `p`. `&&`-folds `p` over the present
+slots, short-circuiting the predicate once a slot fails. -/
+@[specialize] def all (p : UInt32 → α → Bool) (n : Node α) : Bool :=
+  allLoop p n n.positionsMask true
+
+/-- `any` driver: `||`-accumulate `p` over the present slots of `n` (those of `m`), lowest first.
+`||` short-circuits the per-slot `p` once `acc` is `true`; only present slots are visited. -/
+@[specialize] def anyLoop (p : UInt32 → α → Bool) (n : Node α) (m : UInt32) (acc : Bool) : Bool :=
+  if _hm : m = 0 then acc
+  else anyLoop p n (clearLowest m)
+        (acc || (n.get? (lowestSetIdx m)).elim false (fun a => p (lowestSetIdx m) a))
+termination_by m.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
+
+/-- Whether some present slot satisfies `p`. `||`-folds `p` over the present slots, short-circuiting
+the predicate once a slot holds. The `any` companion of `all`. -/
+@[specialize] def any (p : UInt32 → α → Bool) (n : Node α) : Bool :=
+  anyLoop p n n.positionsMask false
+
+/-- Monadic `all` driver: scan the present slots of `n` (those of `mask`), lowest first, running
+`p` on each child and short-circuiting (returning `pure false` without recursing) at the first slot
+where `p` returns `false` — later slots are then neither visited nor run. -/
+@[specialize] def allMLoop {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α)
+    (mask : UInt32) : m Bool :=
+  if _hm : mask = 0 then pure true
+  else do
+    let keep ← (n.get? (lowestSetIdx mask)).elim (pure true) (fun a => p (lowestSetIdx mask) a)
+    if keep then allMLoop p n (clearLowest mask) else pure false
+termination_by mask.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt mask _hm)
 
 /-- Monadic `all`: whether every present slot satisfies the monadic predicate `p`, threading `p`'s
 effects through `m` in ascending slot order and short-circuiting at the first slot where `p` returns
 `false` (later slots are then neither visited nor run). The monadic companion of `all` (its
-`m := Id` instance); built on `Nat.allM` over the 32 slots. Absent slots contribute `pure true`,
-so they run no effect. -/
-def allM {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α) : m Bool :=
-  Nat.allM 32 (fun i _ =>
-    let iu := UInt32.ofNat i
-    if h : testBit n.positionsMask iu = true then p iu (n.get iu h) else pure true)
+`m := Id` instance). -/
+@[specialize] def allM {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α) : m Bool :=
+  allMLoop p n n.positionsMask
+
+/-- Monadic `any` driver: scan the present slots of `n` (those of `mask`), lowest first, running
+`p` on each child and short-circuiting (returning `pure true` without recursing) at the first slot
+where `p` returns `true`. -/
+@[specialize] def anyMLoop {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α)
+    (mask : UInt32) : m Bool :=
+  if _hm : mask = 0 then pure false
+  else do
+    let found ← (n.get? (lowestSetIdx mask)).elim (pure false) (fun a => p (lowestSetIdx mask) a)
+    if found then pure true else anyMLoop p n (clearLowest mask)
+termination_by mask.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt mask _hm)
 
 /-- Monadic `any`: whether some present slot satisfies the monadic predicate `p`, short-circuiting
-at the first slot where it returns `true`. The `any` companion of `allM`; absent slots contribute
-`pure false`, running no effect. -/
-def anyM {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α) : m Bool :=
-  Nat.anyM 32 (fun i _ =>
-    let iu := UInt32.ofNat i
-    if h : testBit n.positionsMask iu = true then p iu (n.get iu h) else pure false)
+at the first slot where it returns `true`. The `any` companion of `allM`. -/
+@[specialize] def anyM {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α) : m Bool :=
+  anyMLoop p n n.positionsMask
 
 /-- Map a function over every stored child, preserving the slot structure: the slot mask and
 the array length are untouched, so only the element *type* changes (`α` to `β`). The compactness
 invariant is inherited from `n` because `Array.map` preserves size. This is the functorial
 action underlying `NatMap.map`. -/
-def map {β : Type v} (f : α → β) (n : Node α) : Node β :=
+@[inline] def map {β : Type v} (f : α → β) (n : Node α) : Node β :=
   ⟨n.positionsMask, n.elements.map f, by rw [Array.size_map]; exact n.elements_compact⟩
-
-/-- Filter-and-map over present slots: for each present slot `i` holding child `a`, keep
-`f i a` when it is `some` and drop the slot when it is `none`. Like `map`, but `f` is slot-aware
-and may remove slots. Built — as `join`/`meet` are — by ascending `insert` into an empty
-accumulator (pre-sized to `n`'s slot count, an upper bound on the survivors), so the result is
-compact by construction with no extra proof. -/
-def filterMap (f : UInt32 → α → Option α) (n : Node α) : Node α :=
-  let step := fun (acc : Node α) i =>
-    let iu := UInt32.ofNat i
-    match h : testBit n.positionsMask iu with
-    | true =>
-      match f iu (n.get iu h) with
-      | some y => acc.insert iu y
-      | none   => acc
-    | false => acc
-  Nat.fold 32 (fun i _ acc => step acc i) (Node.emptyWithCapacity (popCount n.positionsMask))
 
 /-- Iterate `step acc i` over the *present* slots `i` of `m`, lowest first, clearing each bit as
 it is consumed (`clearLowest`). Only the `popCount m` present slots are visited — no full 0..31
@@ -280,6 +314,26 @@ slots are visited; pre-sized to that mask's slot count, so the result is compact
 @[specialize] def meet (combine : α → α → Option α) (a b : Node α) : Node α :=
   mergeLoop (meetStep combine a b) (a.positionsMask &&& b.positionsMask)
     (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)))
+
+/-- One `filterMap` slot step: keep slot `i` of `n` when `f` maps its child to `some`, dropping it
+on `none` or when the slot is absent. The single-operand analogue of `meetStep` (it reads the
+original `n`, not `acc`); the `insert` appends because `mergeLoop` visits slots in ascending order. -/
+@[specialize] def filterMapStep (f : UInt32 → α → Option α) (n acc : Node α) (i : UInt32) : Node α :=
+  match h : testBit n.positionsMask i with
+  | true =>
+    match f i (n.get i h) with
+    | some y => acc.insert i y
+    | none   => acc
+  | false => acc
+
+/-- Filter-and-map over present slots: for each present slot `i` holding child `a`, keep `f i a`
+when it is `some` and drop the slot when it is `none`. Like `map`, but `f` is slot-aware and may
+remove slots. Built — as `join`/`meet` are — by stepping `filterMapStep` over the present slots of
+`n` (`mergeLoop`), so only the `popCount` present slots are visited (no 0..31 scan); pre-sized to
+that count (an upper bound on the survivors), so the result is compact by construction. -/
+def filterMap (f : UInt32 → α → Option α) (n : Node α) : Node α :=
+  mergeLoop (filterMapStep f n) n.positionsMask
+    (Node.emptyWithCapacity (popCount n.positionsMask))
 
 /-- AND-fold `optRel`'s per-slot verdict over the *present* slots of `m`, lowest first
 (`lowestSetIdx`/`clearLowest`). `&&` short-circuits the `optRel` call once `acc` is `false`, and
@@ -467,20 +521,8 @@ private theorem mem_insert {α} (n : Node α) (i : UInt32) (v x : α)
   · exact Or.inr h
   · exact Or.inl (hxa.trans (Option.some.inj ha).symm)
 
-/-- Generic `Nat.fold` invariant: if every step keeps all accumulator elements satisfying
-`P`, the final accumulator does too. -/
-private theorem fold_elements_forall {α} {P : α → Prop}
-    (step : Node α → Nat → Node α)
-    (hstep : ∀ acc i, (∀ z ∈ acc.elements, P z) → ∀ z ∈ (step acc i).elements, P z)
-    (n : Nat) (acc0 : Node α) (h0 : ∀ z ∈ acc0.elements, P z) :
-    ∀ z ∈ (Nat.fold n (fun i _ acc => step acc i) acc0).elements, P z := by
-  induction n with
-  | zero => exact h0
-  | succ k ih => rw [Nat.fold_succ]; exact hstep _ k ih
-
 /-- Every child of a `mergeLoop` result satisfies `P`, provided the seed's children do and each
-`step` preserves `P` over the elements. The `mergeLoop` analogue of `fold_elements_forall`; backs
-`join_forall`/`meet_forall`. -/
+`step` preserves `P` over the elements. Backs `join_forall`/`meet_forall`/`filterMap_forall`. -/
 private theorem mergeLoop_forall {α} {P : α → Prop} {step : Node α → UInt32 → Node α}
     (hstep : ∀ (acc : Node α) (i : UInt32), (∀ z ∈ acc.elements, P z) →
               ∀ z ∈ (step acc i).elements, P z)
@@ -553,9 +595,9 @@ theorem filterMap_forall {α} {P : α → Prop} {f : UInt32 → α → Option α
             f i (n.get i h) = some y → P y) :
     ∀ z ∈ (Node.filterMap f n).elements, P z := by
   unfold Node.filterMap
-  apply fold_elements_forall
+  apply mergeLoop_forall
   · intro acc i hacc z hz
-    dsimp only at hz ⊢
+    unfold filterMapStep at hz
     split at hz
     · rename_i hb
       split at hz
