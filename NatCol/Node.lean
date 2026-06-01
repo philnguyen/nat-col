@@ -206,47 +206,57 @@ def filterMap (f : UInt32 → α → Option α) (n : Node α) : Node α :=
     | false => acc
   Nat.fold 32 (fun i _ acc => step acc i) (Node.emptyWithCapacity (popCount n.positionsMask))
 
-/-- Union of two nodes. Slots in exactly one side are reused as-is; slots in both are
-merged with `combine` (a `none` result drops the slot).
+/-- Iterate `step acc i` over the *present* slots `i` of `m`, lowest first, clearing each bit as
+it is consumed (`clearLowest`). Only the `popCount m` present slots are visited — no full 0..31
+scan. Terminates because `clearLowest` strictly decreases the mask (`clearLowest_lt`). The driver
+for `join`/`meet`: `m` is the union/intersection of the operands' masks, so a slot absent on both
+sides is never touched. -/
+@[specialize] def mergeLoop (step : Node α → UInt32 → Node α) (m : UInt32) (acc : Node α) : Node α :=
+  if _hm : m = 0 then acc
+  else mergeLoop step (clearLowest m) (step acc (lowestSetIdx m))
+termination_by m.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
 
-The result is assembled by `insert`ing present slots into an empty accumulator in ascending
-order. Each `insert` of a fresh, larger slot appends to the element array (its compact index
-is the current size) — identical data to a plain `push` — but routes through the
-compactness-preserving `alter`, so the result is compact by construction with no extra proof.
-The accumulator is pre-sized to `popCount (a.positionsMask ||| b.positionsMask)`, the exact
-slot count of the union mask (an upper bound on the result, since `combine` may prune), so
-those appends never reallocate. -/
+/-- One `join` slot step: merge slot `i` of `a` and `b` into `acc`. Present on both ↦ `combine`
+(a `none` result prunes the slot); present on one ↦ copy that child; absent on both ↦ leave `acc`
+unchanged. The `insert` appends at the end because `mergeLoop` visits slots in ascending order. -/
+@[specialize] def joinStep (combine : α → α → Option α) (a b acc : Node α) (i : UInt32) : Node α :=
+  match ha : testBit a.positionsMask i, hb : testBit b.positionsMask i with
+  | true, true =>
+    match combine (a.get i ha) (b.get i hb) with
+    | some v => acc.insert i v
+    | none   => acc
+  | true, false => acc.insert i (a.get i ha)
+  | false, true => acc.insert i (b.get i hb)
+  | false, false => acc
+
+/-- Union of two nodes. Slots in exactly one side are reused as-is; slots in both are merged with
+`combine` (a `none` result drops the slot). Built by stepping `joinStep` over the present slots of
+the union mask `a.positionsMask ||| b.positionsMask` (via `mergeLoop`), so only present slots are
+visited; the accumulator is pre-sized to that mask's slot count and the ascending inserts append,
+so the result is compact by construction. -/
 @[specialize] def join (combine : α → α → Option α) (a b : Node α) : Node α :=
-  let step := fun (acc : Node α) i =>
-    let iu := UInt32.ofNat i
-    match ha : testBit a.positionsMask iu, hb : testBit b.positionsMask iu with
-    | true, true =>
-      match combine (a.get iu ha) (b.get iu hb) with
-      | some v => acc.insert iu v
-      | none   => acc
-    | true, false => acc.insert iu (a.get iu ha)
-    | false, true => acc.insert iu (b.get iu hb)
-    | false, false => acc
-  Nat.fold 32 (fun i _ acc => step acc i)
+  mergeLoop (joinStep combine a b) (a.positionsMask ||| b.positionsMask)
     (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask)))
 
-/-- Intersection of two nodes. Only slots present in both survive, merged with
-`combine`; a `none` result (empty intersection) drops the slot. As with `join`, the result is
-built by ascending `insert` into an empty accumulator, so it is compact by construction. The
-accumulator is pre-sized to `popCount (a.positionsMask &&& b.positionsMask)`, the slot count
-of the intersection mask (an upper bound on the result), so the inserts never reallocate. -/
+/-- One `meet` slot step: only slots present on *both* sides survive (merged with `combine`, a
+`none` result pruning); every other case drops the slot, leaving `acc`. -/
+@[specialize] def meetStep (combine : α → α → Option α) (a b acc : Node α) (i : UInt32) : Node α :=
+  match ha : testBit a.positionsMask i, hb : testBit b.positionsMask i with
+  | true, true =>
+    match combine (a.get i ha) (b.get i hb) with
+    | some v => acc.insert i v
+    | none   => acc
+  | true, false => acc
+  | false, true => acc
+  | false, false => acc
+
+/-- Intersection of two nodes. Only slots present in both survive, merged with `combine`; a `none`
+result (empty intersection) drops the slot. Built by stepping `meetStep` over the present slots of
+the intersection mask `a.positionsMask &&& b.positionsMask` (via `mergeLoop`), so only the shared
+slots are visited; pre-sized to that mask's slot count, so the result is compact by construction. -/
 @[specialize] def meet (combine : α → α → Option α) (a b : Node α) : Node α :=
-  let step := fun (acc : Node α) i =>
-    let iu := UInt32.ofNat i
-    match ha : testBit a.positionsMask iu, hb : testBit b.positionsMask iu with
-    | true, true =>
-      match combine (a.get iu ha) (b.get iu hb) with
-      | some v => acc.insert iu v
-      | none   => acc
-    | true, false => acc
-    | false, true => acc
-    | false, false => acc
-  Nat.fold 32 (fun i _ acc => step acc i)
+  mergeLoop (meetStep combine a b) (a.positionsMask &&& b.positionsMask)
     (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)))
 
 /-- `a` restricts `b`: every slot of `a` is present in `b`, and `rel` holds on every
@@ -270,32 +280,10 @@ def optJoin (combine : α → α → Option α) : Option α → Option α → Op
   | none,   some y => some y
   | none,   none   => none
 
-/-- The per-slot accumulator step of `Node.join`, named so the `get?` fold invariant can refer
-to it. Definitionally equal to the body of `Node.join`. -/
-def joinStepCore (combine : α → α → Option α) (a b : Node α) (acc : Node α) (i : Nat) : Node α :=
-  match h1 : testBit a.positionsMask (UInt32.ofNat i), h2 : testBit b.positionsMask (UInt32.ofNat i) with
-  | true, true => match combine (a.get (UInt32.ofNat i) h1) (b.get (UInt32.ofNat i) h2) with
-                  | some v => acc.insert (UInt32.ofNat i) v
-                  | none => acc
-  | true, false => acc.insert (UInt32.ofNat i) (a.get (UInt32.ofNat i) h1)
-  | false, true => acc.insert (UInt32.ofNat i) (b.get (UInt32.ofNat i) h2)
-  | false, false => acc
-
 /-- Value-level merge underlying `Node.meet`: present on *both* sides ↦ `combine`; otherwise drop. -/
 def optMeet (combine : α → α → Option α) : Option α → Option α → Option α
   | some x, some y => combine x y
   | _,      _      => none
-
-/-- The per-slot accumulator step of `Node.meet`, named so the `get?` fold invariant can refer
-to it. Definitionally equal to the body of `Node.meet`. -/
-def meetStepCore (combine : α → α → Option α) (a b : Node α) (acc : Node α) (i : Nat) : Node α :=
-  match h1 : testBit a.positionsMask (UInt32.ofNat i), h2 : testBit b.positionsMask (UInt32.ofNat i) with
-  | true, true => match combine (a.get (UInt32.ofNat i) h1) (b.get (UInt32.ofNat i) h2) with
-                  | some v => acc.insert (UInt32.ofNat i) v
-                  | none => acc
-  | true, false => acc
-  | false, true => acc
-  | false, false => acc
 
 end Node
 
@@ -461,6 +449,22 @@ private theorem fold_elements_forall {α} {P : α → Prop}
   | zero => exact h0
   | succ k ih => rw [Nat.fold_succ]; exact hstep _ k ih
 
+/-- Every child of a `mergeLoop` result satisfies `P`, provided the seed's children do and each
+`step` preserves `P` over the elements. The `mergeLoop` analogue of `fold_elements_forall`; backs
+`join_forall`/`meet_forall`. -/
+theorem mergeLoop_forall {α} {P : α → Prop} {step : Node α → UInt32 → Node α}
+    (hstep : ∀ (acc : Node α) (i : UInt32), (∀ z ∈ acc.elements, P z) →
+              ∀ z ∈ (step acc i).elements, P z)
+    (m : UInt32) (acc : Node α) (hacc : ∀ z ∈ acc.elements, P z) :
+    ∀ z ∈ (mergeLoop step m acc).elements, P z := by
+  by_cases hm : m = 0
+  · rw [mergeLoop, dif_pos hm]; exact hacc
+  · rw [mergeLoop, dif_neg hm]
+    exact mergeLoop_forall hstep (clearLowest m) (step acc (lowestSetIdx m))
+      (hstep acc (lowestSetIdx m) hacc)
+termination_by m.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m hm)
+
 /-- Every child of a `join` result satisfies `P`, provided both operands' children and all
 `combine` outputs do. -/
 theorem join_forall {α} {P : α → Prop} {combine : α → α → Option α} {a b : Node α}
@@ -468,9 +472,9 @@ theorem join_forall {α} {P : α → Prop} {combine : α → α → Option α} {
     (hPc : ∀ x ∈ a.elements, ∀ y ∈ b.elements, ∀ v, combine x y = some v → P v) :
     ∀ z ∈ (Node.join combine a b).elements, P z := by
   unfold Node.join
-  apply fold_elements_forall
+  apply mergeLoop_forall
   · intro acc i hacc z hz
-    dsimp only at hz ⊢
+    unfold joinStep at hz
     split at hz
     · rename_i ha hb
       split at hz
@@ -496,9 +500,9 @@ theorem meet_forall {α} {P : α → Prop} {combine : α → α → Option α} {
     (hPc : ∀ x ∈ a.elements, ∀ y ∈ b.elements, ∀ v, combine x y = some v → P v) :
     ∀ z ∈ (Node.meet combine a b).elements, P z := by
   unfold Node.meet
-  apply fold_elements_forall
+  apply mergeLoop_forall
   · intro acc i hacc z hz
-    dsimp only at hz ⊢
+    unfold meetStep at hz
     split at hz
     · rename_i ha hb
       split at hz
@@ -664,21 +668,9 @@ theorem restricts_self {α} (rel : α → α → Bool) (n : Node α)
       | (rename_i ha _; rw [Bool.true_and]; exact hrel _ (n.get_mem _ ha))
       | rfl
 
-/-- `Nat.fold` congruence: equal seeds and pointwise-equal steps give equal results. Backs
-`join_comm`, where the two folds differ only in their (definitionally pruning) per-slot steps
-and a commuted capacity hint. -/
-private theorem fold_step_congr {β : Type v} (stepf stepg : β → Nat → β) (initf initg : β)
-    (hinit : initf = initg) (hstep : ∀ acc i, stepf acc i = stepg acc i) (n : Nat) :
-    Nat.fold n (fun i _ acc => stepf acc i) initf
-      = Nat.fold n (fun i _ acc => stepg acc i) initg := by
-  subst hinit
-  induction n with
-  | zero => rfl
-  | succ k ih => rw [Nat.fold_succ, Nat.fold_succ, ih, hstep]
-
 /-- `Nat.fold` congruence requiring step agreement only on the indices actually visited
-(`i < n`). Backs `join_assoc`, where the two folds' steps agree only on in-range slots
-(`UInt32.ofNat i < 32`). -/
+(`i < n`). Backs `Node.ext`, whose element-array extraction folds agree only on in-range
+slots (`UInt32.ofNat i < 32`). -/
 private theorem fold_step_congr_lt {β : Type v} (stepf stepg : β → Nat → β) (initf initg : β)
     (hinit : initf = initg) (n : Nat) (hstep : ∀ acc i, i < n → stepf acc i = stepg acc i) :
     Nat.fold n (fun i _ acc => stepf acc i) initf
@@ -689,40 +681,6 @@ private theorem fold_step_congr_lt {β : Type v} (stepf stepg : β → Nat → �
   | succ k ih =>
     rw [Nat.fold_succ, Nat.fold_succ, ih (fun acc i hi => hstep acc i (Nat.lt_succ_of_lt hi)),
         hstep _ k (Nat.lt_succ_self k)]
-
-/-- `join` commutes when the combine is flipped: merging `a` into `b` with `f` equals merging
-`b` into `a` with `f`'s arguments swapped. The two folds run over the same slots (`|||` is
-commutative, so the capacity seeds match); on each slot the present/absent cases line up and
-the both-present case agrees by `hfg`. -/
-theorem join_comm {α} {f g : α → α → Option α} (a b : Node α)
-    (hfg : ∀ x y, f x y = g y x) :
-    Node.join f a b = Node.join g b a := by
-  simp only [Node.join]
-  refine fold_step_congr _ _ _ _ ?_ ?_ 32
-  · -- the capacity seeds agree because `|||` is commutative
-    rw [show a.positionsMask ||| b.positionsMask = b.positionsMask ||| a.positionsMask from by
-      bv_decide]
-  · -- per slot: scan the four present/absent cases; the both-present one closes by `hfg`
-    intro acc i
-    dsimp only
-    split <;> symm <;> split <;> simp_all
-
-/-- `meet` commutes when the combine is flipped: intersecting `a` with `b` using `f` equals
-intersecting `b` with `a` with `f`'s arguments swapped. The two folds run over the same slots
-(`&&&` is commutative, so the capacity seeds match); on each slot only the both-present case
-contributes, and it agrees by `hfg` (the other three drop the slot regardless). -/
-theorem meet_comm {α} {f g : α → α → Option α} (a b : Node α)
-    (hfg : ∀ x y, f x y = g y x) :
-    Node.meet f a b = Node.meet g b a := by
-  simp only [Node.meet]
-  refine fold_step_congr _ _ _ _ ?_ ?_ 32
-  · -- the capacity seeds agree because `&&&` is commutative
-    rw [show a.positionsMask &&& b.positionsMask = b.positionsMask &&& a.positionsMask from by
-      bv_decide]
-  · -- per slot: scan the four present/absent cases; the both-present one closes by `hfg`
-    intro acc i
-    dsimp only
-    split <;> symm <;> split <;> simp_all
 
 /-! ### `get?` characterization and node extensionality
 
@@ -1116,149 +1074,118 @@ theorem get?_insert (n : Node α) (i : UInt32) (v : α) (j : UInt32) (hi : i < 3
               Array.getElem?_insertIdx_of_lt hsize (arrayIndex_lt_of_lt _ j i hj hi hbj hlt)]
       · rw [if_neg hbj, if_neg hbj]
 
-theorem join_eq_fold (combine : α → α → Option α) (a b : Node α) :
-    Node.join combine a b
-      = Nat.fold 32 (fun i _ acc => joinStepCore combine a b acc i)
-          (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask))) := rfl
+/-- `get?` of a `mergeLoop` result, given the step characterized at the slot it visits (`hself`,
+which the fresh accumulator validates) and off it (`hother`). The loop invariant: visiting the
+present slots of `m` fills each with `G`, leaving every other slot at the accumulator's value. The
+single proof both `get?_join` and `get?_meet` are built on. -/
+theorem get?_mergeLoop {α} {step : Node α → UInt32 → Node α} {G : UInt32 → Option α}
+    (hself : ∀ (acc : Node α) (i : UInt32), i < 32 → acc.get? i = none → (step acc i).get? i = G i)
+    (hother : ∀ (acc : Node α) (i j : UInt32), i < 32 → j < 32 → j ≠ i →
+                (step acc i).get? j = acc.get? j)
+    (m : UInt32) (acc : Node α) (j : UInt32) (hj : j < 32)
+    (hfresh : ∀ s, s < 32 → testBit m s = true → acc.get? s = none) :
+    (mergeLoop step m acc).get? j = if testBit m j = true then G j else acc.get? j := by
+  by_cases hm : m = 0
+  · rw [mergeLoop, dif_pos hm, hm, testBit_zero, if_neg (show ¬((false : Bool) = true) from by decide)]
+  · rw [mergeLoop, dif_neg hm]
+    have hi_lt : lowestSetIdx m < 32 := lowestSetIdx_lt m hm
+    have hi_mem : testBit m (lowestSetIdx m) = true := testBit_lowestSetIdx m hm
+    have hacc'_fresh : ∀ s, s < 32 → testBit (clearLowest m) s = true →
+        (step acc (lowestSetIdx m)).get? s = none := by
+      intro s hs hsmem
+      have hs_ne : s ≠ lowestSetIdx m := by
+        intro hsi; rw [hsi, testBit_clearLowest_self m hm] at hsmem; exact absurd hsmem (by simp)
+      rw [hother acc (lowestSetIdx m) s hi_lt hs hs_ne]
+      exact hfresh s hs (testBit_of_clearLowest m s hsmem)
+    rw [get?_mergeLoop hself hother (clearLowest m) (step acc (lowestSetIdx m)) j hj hacc'_fresh]
+    by_cases hji : j = lowestSetIdx m
+    · have hcl : testBit (clearLowest m) j = false := by rw [hji]; exact testBit_clearLowest_self m hm
+      have hmm : testBit m j = true := by rw [hji]; exact hi_mem
+      rw [hcl, hmm, if_neg (show ¬((false : Bool) = true) from by decide),
+          if_pos (show ((true : Bool) = true) from rfl), hji]
+      exact hself acc (lowestSetIdx m) hi_lt (hfresh (lowestSetIdx m) hi_lt hi_mem)
+    · rw [testBit_clearLowest_of_ne m j hj hji, hother acc (lowestSetIdx m) j hi_lt hj hji]
+termination_by m.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m hm)
 
-/-- `get?` of one join step at a *fresh* accumulator slot: the visited slot `i` gets the merged
-value `optJoin combine (a? i) (b? i)`, every other slot is unchanged. `hfresh` (slot `i` absent in
-`acc`) is what the fold supplies — it processes slots in increasing order. -/
-theorem joinStepCore_get? (combine : α → α → Option α) (a b acc : Node α) (i : Nat) (j : UInt32)
-    (hi : (UInt32.ofNat i) < 32) (hj : j < 32) (hfresh : acc.get? (UInt32.ofNat i) = none) :
-    (joinStepCore combine a b acc i).get? j
-      = if j = UInt32.ofNat i then optJoin combine (a.get? (UInt32.ofNat i)) (b.get? (UInt32.ofNat i))
-        else acc.get? j := by
-  unfold joinStepCore
+/-- `get?` of `joinStep` at the slot it visits: the merged value `optJoin combine (a? i) (b? i)`,
+provided the accumulator is fresh there. The `hself` obligation of `get?_mergeLoop` for `join`. -/
+theorem joinStep_get?_self (combine : α → α → Option α) (a b acc : Node α) (i : UInt32)
+    (hi : i < 32) (hfresh : acc.get? i = none) :
+    (joinStep combine a b acc i).get? i = optJoin combine (a.get? i) (b.get? i) := by
+  unfold joinStep
   split
   · rename_i h1 h2
-    rw [show a.get? (UInt32.ofNat i) = some (a.get (UInt32.ofNat i) h1) from by
-          unfold Node.get?; rw [dif_pos h1],
-        show b.get? (UInt32.ofNat i) = some (b.get (UInt32.ofNat i) h2) from by
-          unfold Node.get?; rw [dif_pos h2]]
+    rw [show a.get? i = some (a.get i h1) from by unfold Node.get?; rw [dif_pos h1],
+        show b.get? i = some (b.get i h2) from by unfold Node.get?; rw [dif_pos h2]]
+    simp only [optJoin]
     split
-    · rename_i v hv
-      by_cases hjk : j = UInt32.ofNat i
-      · rw [get?_insert _ _ _ _ hi hj, if_pos hjk, if_pos hjk]; simp only [optJoin]; rw [hv]
-      · rw [get?_insert _ _ _ _ hi hj, if_neg hjk, if_neg hjk]
-    · rename_i hv
-      by_cases hjk : j = UInt32.ofNat i
-      · rw [if_pos hjk, hjk, hfresh]; simp only [optJoin]; rw [hv]
-      · rw [if_neg hjk]
+    · rename_i v hv; rw [get?_insert _ _ _ _ hi hi, if_pos rfl, hv]
+    · rename_i hv; rw [hfresh, hv]
   · rename_i h1 h2
-    rw [show a.get? (UInt32.ofNat i) = some (a.get (UInt32.ofNat i) h1) from by
-          unfold Node.get?; rw [dif_pos h1],
-        show b.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h2])]]
-    simp only [optJoin]
-    by_cases hjk : j = UInt32.ofNat i
-    · rw [get?_insert _ _ _ _ hi hj, if_pos hjk]
-    · rw [get?_insert _ _ _ _ hi hj, if_neg hjk]
+    rw [show a.get? i = some (a.get i h1) from by unfold Node.get?; rw [dif_pos h1],
+        show b.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h2])]]
+    simp only [optJoin]; rw [get?_insert _ _ _ _ hi hi, if_pos rfl]
   · rename_i h1 h2
-    rw [show a.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h1])],
-        show b.get? (UInt32.ofNat i) = some (b.get (UInt32.ofNat i) h2) from by
-          unfold Node.get?; rw [dif_pos h2]]
-    simp only [optJoin]
-    by_cases hjk : j = UInt32.ofNat i
-    · rw [get?_insert _ _ _ _ hi hj, if_pos hjk]
-    · rw [get?_insert _ _ _ _ hi hj, if_neg hjk]
+    rw [show a.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h1])],
+        show b.get? i = some (b.get i h2) from by unfold Node.get?; rw [dif_pos h2]]
+    simp only [optJoin]; rw [get?_insert _ _ _ _ hi hi, if_pos rfl]
   · rename_i h1 h2
-    rw [show a.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h1])],
-        show b.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h2])]]
-    by_cases hjk : j = UInt32.ofNat i
-    · rw [if_pos hjk, hjk, hfresh]; simp only [optJoin]
-    · rw [if_neg hjk]
+    rw [show a.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h1])],
+        show b.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h2])]]
+    simp only [optJoin]; exact hfresh
 
-/-- `get?` of a `Node.join`: a value-level merge of the two lookups. A `Nat.fold` invariant —
-after processing slots `0..m`, slot `j < m` holds `optJoin combine (a? j) (b? j)`, each step
-filling the fresh slot `m` (`joinStepCore_get?`). -/
+/-- `get?` of `joinStep` off the slot it visits: unchanged from `acc`. The `hother` obligation of
+`get?_mergeLoop` for `join` (no freshness needed). -/
+theorem joinStep_get?_other (combine : α → α → Option α) (a b acc : Node α) (i j : UInt32)
+    (hi : i < 32) (hj : j < 32) (hne : j ≠ i) :
+    (joinStep combine a b acc i).get? j = acc.get? j := by
+  unfold joinStep
+  split
+  · rename_i h1 h2
+    split
+    · rename_i v hv; rw [get?_insert _ _ _ _ hi hj, if_neg hne]
+    · rfl
+  · rename_i h1 h2; rw [get?_insert _ _ _ _ hi hj, if_neg hne]
+  · rename_i h1 h2; rw [get?_insert _ _ _ _ hi hj, if_neg hne]
+  · rfl
+
+/-- `get?` of a `Node.join`: a value-level merge of the two lookups. Specializes the generic
+`get?_mergeLoop` invariant to `join` (step `joinStep`, mask the union `a ||| b`), then reads off
+the result: a slot in the union mask gets `optJoin`, and a slot outside it is `none` on both sides
+(the empty accumulator and the value-level merge of two absent lookups). -/
 theorem get?_join (combine : α → α → Option α) (a b : Node α) (j : UInt32) (hj : j < 32) :
     (Node.join combine a b).get? j = optJoin combine (a.get? j) (b.get? j) := by
-  have hjn : j.toNat < 32 := by
-    have h := UInt32.lt_iff_toNat_lt.mp hj; rwa [show (32 : UInt32).toNat = 32 from by decide] at h
-  rw [join_eq_fold]
-  suffices H : ∀ m, m ≤ 32 → ∀ (j' : UInt32), j' < 32 →
-      (Nat.fold m (fun i _ acc => joinStepCore combine a b acc i)
-          (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask)))).get? j'
-        = if j'.toNat < m then optJoin combine (a.get? j') (b.get? j') else none by
-    rw [H 32 (Nat.le_refl _) j hj, if_pos hjn]
-  intro m
-  induction m with
-  | zero =>
-    intro _ j' _
-    rw [Nat.fold_zero, if_neg (by omega)]
+  unfold Node.join
+  rw [get?_mergeLoop
+        (fun acc i hi hfr => joinStep_get?_self combine a b acc i hi hfr)
+        (fun acc i j' hi hj' hne => joinStep_get?_other combine a b acc i j' hi hj' hne)
+        (a.positionsMask ||| b.positionsMask)
+        (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask))) j hj
+        (fun s _ _ => by
+          unfold Node.get?; rw [dif_neg (by simp [Node.emptyWithCapacity, testBit_zero])])]
+  by_cases hjm : testBit (a.positionsMask ||| b.positionsMask) j = true
+  · rw [if_pos hjm]
+  · rw [if_neg hjm]
+    rw [testBit_or, Bool.or_eq_true, not_or] at hjm
+    obtain ⟨hna, hnb⟩ := hjm
+    rw [show a.get? j = none from by unfold Node.get?; rw [dif_neg hna],
+        show b.get? j = none from by unfold Node.get?; rw [dif_neg hnb]]
+    show (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask)) : Node α).get? j = none
     unfold Node.get?; rw [dif_neg (by simp [Node.emptyWithCapacity, testBit_zero])]
-  | succ k ih =>
-    intro hk j' hj'
-    have hk' : k ≤ 32 := Nat.le_of_succ_le hk
-    have hks : k < 32 := hk
-    have hiun : (UInt32.ofNat k).toNat = k :=
-      UInt32.toNat_ofNat_of_lt' (Nat.lt_of_lt_of_le hks (by decide))
-    have hiu : (UInt32.ofNat k) < 32 := by
-      rw [UInt32.lt_iff_toNat_lt, hiun, show (32 : UInt32).toNat = 32 from by decide]; exact hks
-    have hfresh : (Nat.fold k (fun i _ acc => joinStepCore combine a b acc i)
-        (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask)))).get?
-          (UInt32.ofNat k) = none := by
-      rw [ih hk' (UInt32.ofNat k) hiu, if_neg (by omega)]
-    rw [Nat.fold_succ, joinStepCore_get? combine a b _ k j' hiu hj' hfresh, ih hk' j' hj']
-    by_cases hjk : j' = UInt32.ofNat k
-    · rw [if_pos hjk, hjk, if_pos (by omega)]
-    · rw [if_neg hjk]
-      have hjne : j'.toNat ≠ k := fun h => hjk (by rw [← hiun] at h; exact UInt32.toNat_inj.mp h)
-      by_cases hlt : j'.toNat < k
-      · rw [if_pos hlt, if_pos (by omega)]
-      · rw [if_neg hlt, if_neg (by omega)]
 
-/-- One join step expressed via `optJoin`: it inserts the merged value (or leaves `acc` when the
-merge prunes). The bridge from `Node.join`'s mask-driven `match` to the value-level `optJoin`.
-States the result with `Option.elim` (not `match`) so `split` targets `joinStepCore`'s matcher. -/
-theorem joinStepCore_eq (combine : α → α → Option α) (a b acc : Node α) (i : Nat) :
-    joinStepCore combine a b acc i
-      = (optJoin combine (a.get? (UInt32.ofNat i)) (b.get? (UInt32.ofNat i))).elim acc
-          (fun v => acc.insert (UInt32.ofNat i) v) := by
-  unfold joinStepCore
-  split
-  · rename_i h1 h2
-    rw [show a.get? (UInt32.ofNat i) = some (a.get (UInt32.ofNat i) h1) from by
-          unfold Node.get?; rw [dif_pos h1],
-        show b.get? (UInt32.ofNat i) = some (b.get (UInt32.ofNat i) h2) from by
-          unfold Node.get?; rw [dif_pos h2]]
-    simp only [optJoin]
-    cases combine (a.get (UInt32.ofNat i) h1) (b.get (UInt32.ofNat i) h2) <;> rfl
-  · rename_i h1 h2
-    rw [show a.get? (UInt32.ofNat i) = some (a.get (UInt32.ofNat i) h1) from by
-          unfold Node.get?; rw [dif_pos h1],
-        show b.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h2])]]
-    rfl
-  · rename_i h1 h2
-    rw [show a.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h1])],
-        show b.get? (UInt32.ofNat i) = some (b.get (UInt32.ofNat i) h2) from by
-          unfold Node.get?; rw [dif_pos h2]]
-    rfl
-  · rename_i h1 h2
-    rw [show a.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h1])],
-        show b.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h2])]]
-    rfl
-
-/-- Associativity of `Node.join` for a combine that merges associatively at every slot. The two
-sides are `Nat.fold`s over the same 32 slots; by `get?_join` their per-slot inserts agree (the
-hypothesis `hassoc` is exactly the value-level associativity at each slot), so `fold_step_congr`
-closes it — no node extensionality required. -/
+/-- Associativity of `Node.join` for a combine that merges associatively at every slot. Both sides
+agree at every `get?` slot: `get?_join` reduces each to the nested value-level merge `optJoin`, and
+`hassoc` is exactly its associativity per slot; `Node.ext` then concludes. -/
 theorem join_assoc (combine : α → α → Option α) (a b d : Node α)
     (hassoc : ∀ s, s < 32 → optJoin combine (optJoin combine (a.get? s) (b.get? s)) (d.get? s)
                           = optJoin combine (a.get? s) (optJoin combine (b.get? s) (d.get? s))) :
     Node.join combine (Node.join combine a b) d = Node.join combine a (Node.join combine b d) := by
-  rw [join_eq_fold combine (Node.join combine a b) d, join_eq_fold combine a (Node.join combine b d)]
-  refine fold_step_congr_lt _ _ _ _ ?_ 32 ?_
-  · -- capacity seeds are just allocation hints; both equal the empty node as values
-    unfold Node.emptyWithCapacity
-    simp only [Array.emptyWithCapacity_eq]
-  · intro acc i hi32
-    have hi : (UInt32.ofNat i) < 32 := by
-      rw [UInt32.lt_iff_toNat_lt, UInt32.toNat_ofNat_of_lt' (Nat.lt_of_lt_of_le hi32 (by decide)),
-          show (32 : UInt32).toNat = 32 from by decide]; exact hi32
-    rw [joinStepCore_eq combine (Node.join combine a b) d acc i,
-        joinStepCore_eq combine a (Node.join combine b d) acc i,
-        get?_join combine a b _ hi, get?_join combine b d _ hi, hassoc (UInt32.ofNat i) hi]
+  apply Node.ext
+  intro i hi
+  rw [get?_join combine (Node.join combine a b) d i hi, get?_join combine a b i hi,
+      get?_join combine a (Node.join combine b d) i hi, get?_join combine b d i hi]
+  exact hassoc i hi
 
 /-- Joining (with a total, never-pruning combine) onto a non-empty node stays non-empty: the
 present slot of `a` survives in the result (`get?_join`). Backs the leaf `isEmpty_join` law for
@@ -1285,100 +1212,106 @@ theorem optJoin_someC_assoc (c : α → α → α) (hc : ∀ x y z, c (c x y) z 
   rcases oa with _ | x <;> rcases ob with _ | y <;> rcases od with _ | z <;> simp only [optJoin]
   rw [hc]
 
-/-! ### `get?` characterization of `meet`
+/-! ### `get?` characterization of `meet`, and commutativity
 
 The `meet` analogue of the `join` `get?` block above. `optMeet` is the value-level intersection:
 a slot survives only if present on *both* sides (and the `combine` does not prune it). `get?_meet`
-reads off a `meet` result slot-by-slot, backing the `meet`-associativity proof. -/
+reads off a `meet` result slot-by-slot via the same `get?_mergeLoop` invariant. Commutativity of
+both operations then falls out of `Node.ext` + `get?_join`/`get?_meet`. -/
 
-
-theorem meet_eq_fold (combine : α → α → Option α) (a b : Node α) :
-    Node.meet combine a b
-      = Nat.fold 32 (fun i _ acc => meetStepCore combine a b acc i)
-          (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask))) := rfl
-
-/-- `get?` of one meet step at a *fresh* accumulator slot: the visited slot `i` gets the merged
-value `optMeet combine (a? i) (b? i)`, every other slot is unchanged. `hfresh` (slot `i` absent in
-`acc`) is what the fold supplies — it processes slots in increasing order. -/
-theorem meetStepCore_get? (combine : α → α → Option α) (a b acc : Node α) (i : Nat) (j : UInt32)
-    (hi : (UInt32.ofNat i) < 32) (hj : j < 32) (hfresh : acc.get? (UInt32.ofNat i) = none) :
-    (meetStepCore combine a b acc i).get? j
-      = if j = UInt32.ofNat i then optMeet combine (a.get? (UInt32.ofNat i)) (b.get? (UInt32.ofNat i))
-        else acc.get? j := by
-  unfold meetStepCore
+/-- `get?` of `meetStep` at the slot it visits: `optMeet combine (a? i) (b? i)` (the slot survives
+only if present on both sides), provided the accumulator is fresh there. The `hself` obligation of
+`get?_mergeLoop` for `meet`. -/
+theorem meetStep_get?_self (combine : α → α → Option α) (a b acc : Node α) (i : UInt32)
+    (hi : i < 32) (hfresh : acc.get? i = none) :
+    (meetStep combine a b acc i).get? i = optMeet combine (a.get? i) (b.get? i) := by
+  unfold meetStep
   split
   · rename_i h1 h2
-    rw [show a.get? (UInt32.ofNat i) = some (a.get (UInt32.ofNat i) h1) from by
-          unfold Node.get?; rw [dif_pos h1],
-        show b.get? (UInt32.ofNat i) = some (b.get (UInt32.ofNat i) h2) from by
-          unfold Node.get?; rw [dif_pos h2]]
+    rw [show a.get? i = some (a.get i h1) from by unfold Node.get?; rw [dif_pos h1],
+        show b.get? i = some (b.get i h2) from by unfold Node.get?; rw [dif_pos h2]]
+    simp only [optMeet]
     split
-    · rename_i v hv
-      by_cases hjk : j = UInt32.ofNat i
-      · rw [get?_insert _ _ _ _ hi hj, if_pos hjk, if_pos hjk]; simp only [optMeet]; rw [hv]
-      · rw [get?_insert _ _ _ _ hi hj, if_neg hjk, if_neg hjk]
-    · rename_i hv
-      by_cases hjk : j = UInt32.ofNat i
-      · rw [if_pos hjk, hjk, hfresh]; simp only [optMeet]; rw [hv]
-      · rw [if_neg hjk]
+    · rename_i v hv; rw [get?_insert _ _ _ _ hi hi, if_pos rfl, hv]
+    · rename_i hv; rw [hfresh, hv]
   · rename_i h1 h2
-    -- slot present only in `a`: dropped, so `acc` is unchanged and the merged value is `none`
-    rw [show b.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h2])]]
-    by_cases hjk : j = UInt32.ofNat i
-    · rw [if_pos hjk, hjk, hfresh]; cases a.get? (UInt32.ofNat i) <;> rfl
-    · rw [if_neg hjk]
+    rw [show b.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h2])], hfresh]
+    cases a.get? i <;> rfl
   · rename_i h1 h2
-    -- slot present only in `b`: dropped
-    rw [show a.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h1])]]
-    by_cases hjk : j = UInt32.ofNat i
-    · rw [if_pos hjk, hjk, hfresh]; simp only [optMeet]
-    · rw [if_neg hjk]
+    rw [show a.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h1])], hfresh]
+    simp only [optMeet]
   · rename_i h1 h2
-    -- slot absent in both: dropped
-    rw [show a.get? (UInt32.ofNat i) = none from by unfold Node.get?; rw [dif_neg (by simp [h1])]]
-    by_cases hjk : j = UInt32.ofNat i
-    · rw [if_pos hjk, hjk, hfresh]; simp only [optMeet]
-    · rw [if_neg hjk]
+    rw [show a.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h1])], hfresh]
+    simp only [optMeet]
 
-/-- `get?` of a `Node.meet`: a value-level intersection of the two lookups. A `Nat.fold` invariant —
-after processing slots `0..m`, slot `j < m` holds `optMeet combine (a? j) (b? j)`, each step
-filling the fresh slot `m` (`meetStepCore_get?`). -/
+/-- `get?` of `meetStep` off the slot it visits: unchanged from `acc`. The `hother` obligation of
+`get?_mergeLoop` for `meet`. -/
+theorem meetStep_get?_other (combine : α → α → Option α) (a b acc : Node α) (i j : UInt32)
+    (hi : i < 32) (hj : j < 32) (hne : j ≠ i) :
+    (meetStep combine a b acc i).get? j = acc.get? j := by
+  unfold meetStep
+  split
+  · rename_i h1 h2
+    split
+    · rename_i v hv; rw [get?_insert _ _ _ _ hi hj, if_neg hne]
+    · rfl
+  · rfl
+  · rfl
+  · rfl
+
+/-- `get?` of a `Node.meet`: a value-level intersection of the two lookups. Specializes
+`get?_mergeLoop` to `meet` (step `meetStep`, mask the intersection `a &&& b`); a slot outside the
+intersection mask is absent on at least one side, so `optMeet` there is `none`. -/
 theorem get?_meet (combine : α → α → Option α) (a b : Node α) (j : UInt32) (hj : j < 32) :
     (Node.meet combine a b).get? j = optMeet combine (a.get? j) (b.get? j) := by
-  have hjn : j.toNat < 32 := by
-    have h := UInt32.lt_iff_toNat_lt.mp hj; rwa [show (32 : UInt32).toNat = 32 from by decide] at h
-  rw [meet_eq_fold]
-  suffices H : ∀ m, m ≤ 32 → ∀ (j' : UInt32), j' < 32 →
-      (Nat.fold m (fun i _ acc => meetStepCore combine a b acc i)
-          (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)))).get? j'
-        = if j'.toNat < m then optMeet combine (a.get? j') (b.get? j') else none by
-    rw [H 32 (Nat.le_refl _) j hj, if_pos hjn]
-  intro m
-  induction m with
-  | zero =>
-    intro _ j' _
-    rw [Nat.fold_zero, if_neg (by omega)]
-    unfold Node.get?; rw [dif_neg (by simp [Node.emptyWithCapacity, testBit_zero])]
-  | succ k ih =>
-    intro hk j' hj'
-    have hk' : k ≤ 32 := Nat.le_of_succ_le hk
-    have hks : k < 32 := hk
-    have hiun : (UInt32.ofNat k).toNat = k :=
-      UInt32.toNat_ofNat_of_lt' (Nat.lt_of_lt_of_le hks (by decide))
-    have hiu : (UInt32.ofNat k) < 32 := by
-      rw [UInt32.lt_iff_toNat_lt, hiun, show (32 : UInt32).toNat = 32 from by decide]; exact hks
-    have hfresh : (Nat.fold k (fun i _ acc => meetStepCore combine a b acc i)
-        (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)))).get?
-          (UInt32.ofNat k) = none := by
-      rw [ih hk' (UInt32.ofNat k) hiu, if_neg (by omega)]
-    rw [Nat.fold_succ, meetStepCore_get? combine a b _ k j' hiu hj' hfresh, ih hk' j' hj']
-    by_cases hjk : j' = UInt32.ofNat k
-    · rw [if_pos hjk, hjk, if_pos (by omega)]
-    · rw [if_neg hjk]
-      have hjne : j'.toNat ≠ k := fun h => hjk (by rw [← hiun] at h; exact UInt32.toNat_inj.mp h)
-      by_cases hlt : j'.toNat < k
-      · rw [if_pos hlt, if_pos (by omega)]
-      · rw [if_neg hlt, if_neg (by omega)]
+  unfold Node.meet
+  rw [get?_mergeLoop
+        (fun acc i hi hfr => meetStep_get?_self combine a b acc i hi hfr)
+        (fun acc i j' hi hj' hne => meetStep_get?_other combine a b acc i j' hi hj' hne)
+        (a.positionsMask &&& b.positionsMask)
+        (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask))) j hj
+        (fun s _ _ => by
+          unfold Node.get?; rw [dif_neg (by simp [Node.emptyWithCapacity, testBit_zero])])]
+  by_cases hjm : testBit (a.positionsMask &&& b.positionsMask) j = true
+  · rw [if_pos hjm]
+  · rw [if_neg hjm]
+    rw [show (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)) : Node α).get? j
+          = none from by
+          unfold Node.get?; rw [dif_neg (by simp [Node.emptyWithCapacity, testBit_zero])]]
+    have hfb : (testBit a.positionsMask j && testBit b.positionsMask j) = false := by
+      have : testBit (a.positionsMask &&& b.positionsMask) j = false := by
+        cases h : testBit (a.positionsMask &&& b.positionsMask) j with
+        | true => exact absurd h hjm
+        | false => rfl
+      rwa [testBit_and] at this
+    cases ha : a.get? j with
+    | none => simp [optMeet]
+    | some x =>
+      cases hb : b.get? j with
+      | none => simp [optMeet]
+      | some y =>
+        exfalso
+        have hta : testBit a.positionsMask j = true := by rw [testBit_eq_isSome_get?, ha]; rfl
+        have htb : testBit b.positionsMask j = true := by rw [testBit_eq_isSome_get?, hb]; rfl
+        rw [hta, htb] at hfb; simp at hfb
+
+/-- `join` commutes when the combine is flipped: merging `a` into `b` with `f` equals merging `b`
+into `a` with `f`'s arguments swapped. Both sides agree at every `get?` slot (`get?_join` reduces
+each to `optJoin`, which `hfg` flips), so `Node.ext` concludes. -/
+theorem join_comm {α} {f g : α → α → Option α} (a b : Node α) (hfg : ∀ x y, f x y = g y x) :
+    Node.join f a b = Node.join g b a := by
+  apply Node.ext
+  intro i hi
+  rw [get?_join f a b i hi, get?_join g b a i hi]
+  cases a.get? i <;> cases b.get? i <;> simp only [optJoin] <;> first | rfl | exact hfg _ _
+
+/-- `meet` commutes when the combine is flipped (the `meet` analogue of `join_comm`). -/
+theorem meet_comm {α} {f g : α → α → Option α} (a b : Node α) (hfg : ∀ x y, f x y = g y x) :
+    Node.meet f a b = Node.meet g b a := by
+  apply Node.ext
+  intro i hi
+  rw [get?_meet f a b i hi, get?_meet g b a i hi]
+  cases a.get? i <;> cases b.get? i <;> simp only [optMeet] <;> first | rfl | exact hfg _ _
 
 /-- A node with all slots absent (`get? = none` everywhere on in-range slots) is empty. The
 contrapositive of `exists_get?_of_isEmpty_false`. -/

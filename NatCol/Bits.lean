@@ -96,6 +96,23 @@ decreasing_by omega
 #guard requiredHeight 1048575 == 3   -- 32^4 - 1
 #guard requiredHeight 1048576 == 4   -- 32^4
 
+/-- Index of the lowest set bit of `m` (count of trailing zeros). The lowest set bit is isolated
+by `m &&& (0 - m)` (a power of two); subtracting one yields a mask of exactly that many low bits,
+whose population count is the bit's index. Only meaningful for `m ≠ 0`. Used to enumerate a node's
+present slots in ascending order without scanning all 32. -/
+@[inline] def lowestSetIdx (m : UInt32) : UInt32 := popCountAux ((m &&& (0 - m)) - 1)
+
+/-- Clear the lowest set bit of `m`. Standard `m &&& (m - 1)` trick; pairs with `lowestSetIdx`
+to step through present slots. -/
+@[inline] def clearLowest (m : UInt32) : UInt32 := m &&& (m - 1)
+
+#guard lowestSetIdx 0b10110 == 1
+#guard lowestSetIdx 0b1000 == 3
+#guard lowestSetIdx 1 == 0
+#guard lowestSetIdx 0x80000000 == 31
+#guard clearLowest 0b10110 == 0b10100
+#guard clearLowest 1 == 0
+
 ----------------------------------------------------------------------------------------------------
 -- Theorems
 ----------------------------------------------------------------------------------------------------
@@ -114,6 +131,41 @@ private theorem popCountAux_toNat_le (x : UInt32) : (popCountAux x).toNat ≤ 32
   rwa [UInt32.le_iff_toNat_le, UInt32.toNat_ofNat] at h
 
 private theorem popCount_le (x : UInt32) : popCount x ≤ 32 := popCountAux_toNat_le x
+
+/-! ### Lemmas backing the present-slot bit-scan (`lowestSetIdx`/`clearLowest`)
+
+These drive the `Node.join`/`meet` merge loop, which steps through present slots via the lowest
+set bit instead of scanning all 32. Each is a fixed-width fact about `UInt32`, discharged by
+`bv_decide` (the SWAR `popCountAux` inside `lowestSetIdx` is itself just shifts/masks/one multiply,
+which `bv_decide` bit-blasts). -/
+
+/-- Clearing the lowest set bit strictly decreases the value — the merge loop's termination. -/
+theorem clearLowest_lt (m : UInt32) (hm : m ≠ 0) : clearLowest m < m := by
+  unfold clearLowest; bv_decide
+
+/-- The lowest-set-bit index is a valid slot (`< 32`) when `m` is nonzero. -/
+theorem lowestSetIdx_lt (m : UInt32) (hm : m ≠ 0) : lowestSetIdx m < 32 := by
+  unfold lowestSetIdx popCountAux; bv_decide
+
+/-- The lowest-set-bit index does name a set bit when `m` is nonzero. -/
+theorem testBit_lowestSetIdx (m : UInt32) (hm : m ≠ 0) : testBit m (lowestSetIdx m) = true := by
+  unfold testBit lowestSetIdx popCountAux; bv_decide
+
+/-- `clearLowest` clears the lowest-set-bit slot. -/
+theorem testBit_clearLowest_self (m : UInt32) (hm : m ≠ 0) :
+    testBit (clearLowest m) (lowestSetIdx m) = false := by
+  unfold testBit clearLowest lowestSetIdx popCountAux; bv_decide
+
+/-- `clearLowest` leaves every (in-range) slot other than the lowest-set-bit one untouched. The
+`s < 32` guard rules out `UInt32`'s mod-32 shift aliasing; all real slots are 5-bit `chunk`s. -/
+theorem testBit_clearLowest_of_ne (m s : UInt32) (hs : s < 32) (h : s ≠ lowestSetIdx m) :
+    testBit (clearLowest m) s = testBit m s := by
+  unfold testBit clearLowest lowestSetIdx popCountAux at *; bv_decide
+
+/-- `clearLowest` only ever clears bits: a slot set in `clearLowest m` was set in `m`. -/
+theorem testBit_of_clearLowest (m s : UInt32) (h : testBit (clearLowest m) s = true) :
+    testBit m s = true := by
+  unfold testBit clearLowest at *; bv_decide
 
 /-- Setting an unset bit raises the population count by one. -/
 theorem popCount_setBit (m i : UInt32) (h : testBit m i = false) :
