@@ -281,19 +281,25 @@ slots are visited; pre-sized to that mask's slot count, so the result is compact
   mergeLoop (meetStep combine a b) (a.positionsMask &&& b.positionsMask)
     (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)))
 
-/-- `a` restricts `b`: every slot of `a` is present in `b`, and `rel` holds on every
-shared child. -/
+/-- AND-fold `optRel`'s per-slot verdict over the *present* slots of `m`, lowest first
+(`lowestSetIdx`/`clearLowest`). `&&` short-circuits the `optRel` call once `acc` is `false`, and
+only the `popCount m` present slots are visited — no full 0..31 scan. Terminates because
+`clearLowest` strictly decreases the mask. The driver for `restricts`: `m` is the left operand's
+mask, so a slot absent on the left (where `restricts` is vacuously fine) is never touched. -/
+@[specialize] def restrictsLoop (rel : α → α → Bool) (a b : Node α) (m : UInt32) (acc : Bool) : Bool :=
+  if _hm : m = 0 then acc
+  else restrictsLoop rel a b (clearLowest m)
+        (acc && optRel rel (a.get? (lowestSetIdx m)) (b.get? (lowestSetIdx m)))
+termination_by m.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
+
+/-- `a` restricts `b`: every slot of `a` is present in `b`, and `rel` holds on every shared child.
+The mask guard `a.mask &&& b.mask = a.mask` is the O(1) "domain subset" fast reject; the loop then
+checks `optRel` on each of `a`'s present slots — the only slots where `restricts` is non-vacuous —
+visiting just `popCount a.mask` of them rather than scanning all 32. -/
 def restricts (rel : α → α → Bool) (a b : Node α) : Bool :=
   if (a.positionsMask &&& b.positionsMask) != a.positionsMask then false
-  else
-    let step := fun (ok : Bool) i =>
-      let iu := UInt32.ofNat i
-      match ha : testBit a.positionsMask iu, hb : testBit b.positionsMask iu with
-      | true, true => ok && rel (a.get iu ha) (b.get iu hb)
-      | true, false => ok
-      | false, true => ok
-      | false, false => ok
-    Nat.fold 32 (fun i _ ok => step ok i) true
+  else restrictsLoop rel a b a.positionsMask true
 
 /-- Value-level merge underlying `Node.join`: present on both sides ↦ `combine`; on one ↦ copy. -/
 def optJoin (combine : α → α → Option α) : Option α → Option α → Option α
@@ -658,38 +664,6 @@ theorem eq_empty_of_isEmpty {α} (n : Node α) (h : n.isEmpty = true) : n = Node
   subst he
   rfl
 
-/-- A `Nat.fold` whose every step preserves `true` stays `true`. Backs `restricts_self`'s
-32-slot scan (each slot keeps the running "ok" flag `true`). -/
-private theorem fold_const_true (step : Bool → Nat → Bool)
-    (hstep : ∀ ok i, ok = true → step ok i = true) (m : Nat) :
-    Nat.fold m (fun i _ ok => step ok i) true = true := by
-  induction m with
-  | zero => rfl
-  | succ k ih => rw [Nat.fold_succ]; exact hstep _ k ih
-
-/-- `restricts` is reflexive when `rel` is reflexive on the stored children: every slot of a
-node is trivially present in itself, and `rel` holds on each coinciding child. -/
-theorem restricts_self {α} (rel : α → α → Bool) (n : Node α)
-    (hrel : ∀ x ∈ n.elements, rel x x = true) :
-    Node.restricts rel n n = true := by
-  unfold Node.restricts
-  split
-  · -- the mask-subset guard can't fire: `m &&& m = m`
-    rename_i hc
-    have : n.positionsMask &&& n.positionsMask = n.positionsMask := by bv_decide
-    simp_all
-  · -- every slot keeps the running flag true: only a present slot is checked, and `rel`
-    -- holds there on the (single) coinciding child
-    apply fold_const_true
-    intro ok i hok
-    subst hok
-    -- expose the per-slot `match` (hidden under the `let iu`), then scan its arms: the only
-    -- non-trivial one is "present in both", closed by `rel`-reflexivity on the shared child
-    extract_lets iu
-    split <;> first
-      | (rename_i ha _; rw [Bool.true_and]; exact hrel _ (n.get_mem _ ha))
-      | rfl
-
 /-- `Nat.fold` congruence requiring step agreement only on the indices actually visited
 (`i < n`). Backs `Node.ext`, whose element-array extraction folds agree only on in-range
 slots (`UInt32.ofNat i < 32`). -/
@@ -897,64 +871,55 @@ theorem get?_map {β : Type v} (f : α → β) (n : Node α) (i : UInt32) :
     rw [get?_eq_none_of_testBit n i hb, get?_eq_none_of_testBit (n.map f) i hb]
     simp
 
-/-- The `restricts` fold (over slots `0..n-1`) is `true` exactly when `rel` holds on every slot
-present on *both* sides. This is only the "values match" half of `restricts`; the "domain subset"
-half is the separate mask guard. Stated over `Nat` slots (`UInt32.ofNat i`), matching `Nat.fold`. -/
-private theorem restricts_fold_iff {α} (rel : α → α → Bool) (a b : Node α) : (n : Nat) →
-    ((Nat.fold n (fun i _ ok =>
-        match _ha : testBit a.positionsMask (UInt32.ofNat i), _hb : testBit b.positionsMask (UInt32.ofNat i) with
-        | true, true => ok && rel (a.get (UInt32.ofNat i) _ha) (b.get (UInt32.ofNat i) _hb)
-        | true, false => ok
-        | false, true => ok
-        | false, false => ok) true) = true)
-      ↔ (∀ i, i < n → ∀ x y, a.get? (UInt32.ofNat i) = some x → b.get? (UInt32.ofNat i) = some y → rel x y = true)
-  | 0 => by simp
-  | n + 1 => by
-      rw [Nat.fold_succ]
-      have ih := restricts_fold_iff rel a b n
-      split
-      · -- both present at slot `n`: the step ANDs in `rel`'s verdict on that shared slot
-        rename_i hca hcb
-        rw [Bool.and_eq_true, ih]
-        constructor
-        · rintro ⟨hfold, hrel⟩ i hi x y hgx hgy
-          rcases Nat.lt_succ_iff_lt_or_eq.mp hi with hlt | heq
-          · exact hfold i hlt x y hgx hgy
-          · subst heq
-            rw [get?_eq_some_get a _ hca] at hgx
-            rw [get?_eq_some_get b _ hcb] at hgy
-            simp only [Option.some.injEq] at hgx hgy
-            subst hgx; subst hgy; exact hrel
-        · intro h
-          exact ⟨fun i hi x y hgx hgy => h i (Nat.lt_succ_of_lt hi) x y hgx hgy,
-                 h n (Nat.lt_succ_self n) _ _ (get?_eq_some_get a _ hca) (get?_eq_some_get b _ hcb)⟩
-      · -- left present, right absent: shared values cannot occur at slot `n`, step keeps `ok`
-        rename_i hca hcb
-        rw [ih]
-        constructor
-        · intro hfold i hi x y hgx hgy
-          rcases Nat.lt_succ_iff_lt_or_eq.mp hi with hlt | heq
-          · exact hfold i hlt x y hgx hgy
-          · subst heq; rw [get?_eq_none_of_testBit b _ hcb] at hgy; exact absurd hgy (by simp)
-        · intro h i hi x y hgx hgy; exact h i (Nat.lt_succ_of_lt hi) x y hgx hgy
-      · -- left absent: step keeps `ok`
-        rename_i hca hcb
-        rw [ih]
-        constructor
-        · intro hfold i hi x y hgx hgy
-          rcases Nat.lt_succ_iff_lt_or_eq.mp hi with hlt | heq
-          · exact hfold i hlt x y hgx hgy
-          · subst heq; rw [get?_eq_none_of_testBit a _ hca] at hgx; exact absurd hgx (by simp)
-        · intro h i hi x y hgx hgy; exact h i (Nat.lt_succ_of_lt hi) x y hgx hgy
-      · -- left absent: step keeps `ok`
-        rename_i hca hcb
-        rw [ih]
-        constructor
-        · intro hfold i hi x y hgx hgy
-          rcases Nat.lt_succ_iff_lt_or_eq.mp hi with hlt | heq
-          · exact hfold i hlt x y hgx hgy
-          · subst heq; rw [get?_eq_none_of_testBit a _ hca] at hgx; exact absurd hgx (by simp)
-        · intro h i hi x y hgx hgy; exact h i (Nat.lt_succ_of_lt hi) x y hgx hgy
+/-- **`restrictsLoop` characterization**: the loop AND-folds `optRel`'s per-slot verdict over the
+present slots of `m`, so it is `true` exactly when the seed `acc` is and `optRel rel` relates the
+two nodes' `get?` readings at every present slot of `m`. Proved by well-founded recursion on `m`
+— the present-slot bit-scan analogue of the old `restricts_fold_iff`. -/
+theorem restrictsLoop_iff {α} (rel : α → α → Bool) (a b : Node α) (m : UInt32) (acc : Bool) :
+    restrictsLoop rel a b m acc = true ↔
+      (acc = true ∧ ∀ i : UInt32, i < 32 → testBit m i = true →
+        optRel rel (a.get? i) (b.get? i) = true) := by
+  by_cases hm : m = 0
+  · subst hm
+    rw [restrictsLoop, dif_pos rfl]
+    constructor
+    · exact fun h => ⟨h, fun i _ hbit => by rw [testBit_zero] at hbit; exact absurd hbit (by simp)⟩
+    · exact fun h => h.1
+  · rw [restrictsLoop, dif_neg hm]
+    have hi_lt : lowestSetIdx m < 32 := lowestSetIdx_lt m hm
+    have hi_mem : testBit m (lowestSetIdx m) = true := testBit_lowestSetIdx m hm
+    rw [restrictsLoop_iff rel a b (clearLowest m)
+          (acc && optRel rel (a.get? (lowestSetIdx m)) (b.get? (lowestSetIdx m)))]
+    constructor
+    · rintro ⟨hand, hrest⟩
+      rw [Bool.and_eq_true] at hand
+      refine ⟨hand.1, fun i hi hbit => ?_⟩
+      by_cases hji : i = lowestSetIdx m
+      · subst hji; exact hand.2
+      · exact hrest i hi (by rw [testBit_clearLowest_of_ne m i hi hji]; exact hbit)
+    · rintro ⟨hacc, hall⟩
+      refine ⟨by rw [Bool.and_eq_true]; exact ⟨hacc, hall (lowestSetIdx m) hi_lt hi_mem⟩,
+              fun i hi hbit => hall i hi (testBit_of_clearLowest m i hbit)⟩
+termination_by m.toNat
+decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m hm)
+
+/-- `restricts` is reflexive when `rel` is reflexive on the stored children: every present slot of
+a node trivially coincides with itself, where `rel`-reflexivity discharges the `optRel` check; the
+mask-subset guard `m &&& m = m` never fires. -/
+theorem restricts_self {α} (rel : α → α → Bool) (n : Node α)
+    (hrel : ∀ x ∈ n.elements, rel x x = true) :
+    Node.restricts rel n n = true := by
+  unfold Node.restricts
+  split
+  · -- the mask-subset guard can't fire: `m &&& m = m`
+    rename_i hc
+    have : n.positionsMask &&& n.positionsMask = n.positionsMask := by bv_decide
+    simp_all
+  · rw [restrictsLoop_iff]
+    refine ⟨rfl, fun i _ hbit => ?_⟩
+    rw [get?_eq_some_get n i hbit]
+    show rel (n.get i hbit) (n.get i hbit) = true
+    exact hrel _ (n.get_mem i hbit)
 
 /-- **`restricts` characterization**: a node restricts another exactly when, slot by slot, the
 left's value forces a related right value (`optRel`). The mask-subset guard is the "present on
@@ -991,38 +956,21 @@ theorem restricts_iff {α} (rel : α → α → Bool) (a b : Node α) :
       cases hgb : b.get? iu with
       | some y => rw [testBit_eq_isSome_get?, hgb]; rfl
       | none => rw [hgb] at hoptiu; simp [optRel] at hoptiu
-  · -- guard did not fire: masks are in subset position; the fold checks `rel` on every shared slot
-    rename_i hguard
-    have hM : a.positionsMask &&& b.positionsMask = a.positionsMask := by
-      have : ¬ (a.positionsMask &&& b.positionsMask ≠ a.positionsMask) := by simpa [bne] using hguard
-      exact Classical.not_not.mp this
-    have hD := hMD.mp hM
-    refine Iff.trans (restricts_fold_iff rel a b 32) ?_
+  · -- guard did not fire: masks are in subset position; the loop checks `optRel` on every present
+    -- slot of `a` — the only slots where `restricts` is non-vacuous
+    rw [restrictsLoop_iff]
     constructor
-    · -- the fold's "rel on shared" + the mask subset `M` give the full `optRel` reading
-      intro hR iu hiu
+    · -- the loop's "optRel on a's present slots" extends to all keys: an absent left slot is vacuous
+      rintro ⟨_, hloop⟩ iu hiu
       cases hga : a.get? iu with
       | none => rfl
       | some x =>
         have haiu : testBit a.positionsMask iu = true := by rw [testBit_eq_isSome_get?, hga]; rfl
-        have hbiu : testBit b.positionsMask iu = true := hD iu hiu haiu
-        obtain ⟨y, hgb⟩ : ∃ y, b.get? iu = some y := by
-          rw [← Option.isSome_iff_exists, ← testBit_eq_isSome_get?]; exact hbiu
-        rw [hgb]
-        show rel x y = true
-        have hn : iu.toNat < 32 := by
-          rw [UInt32.lt_iff_toNat_lt, show (32 : UInt32).toNat = 32 from by decide] at hiu; exact hiu
-        refine hR iu.toNat hn x y ?_ ?_
-        · rw [UInt32.ofNat_toNat]; exact hga
-        · rw [UInt32.ofNat_toNat]; exact hgb
-    · intro hO i hi x y hgx hgy
-      have hiu : (UInt32.ofNat i) < 32 := by
-        rw [UInt32.lt_iff_toNat_lt, UInt32.toNat_ofNat_of_lt' (Nat.lt_of_lt_of_le hi (by decide)),
-            show (32 : UInt32).toNat = 32 from by decide]
-        exact hi
-      have hoi := hO (UInt32.ofNat i) hiu
-      rw [hgx, hgy] at hoi
-      exact hoi
+        have h := hloop iu hiu haiu
+        rw [hga] at h
+        exact h
+    · intro hO
+      exact ⟨rfl, fun iu hiu _ => hO iu hiu⟩
 
 /-- `get?` as a (proof-free) `getElem?` on the compact array. Lets `get?` lemmas reason about
 the underlying `Array` operations without carrying `Node.get`'s in-bounds proof. -/
