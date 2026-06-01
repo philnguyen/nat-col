@@ -136,6 +136,28 @@ def erase (n : Node α) (i : UInt32) : Node α := n.alter i (fun _ => none)
 
 def modify (n : Node α) (i : UInt32) (f : α → α) : Node α := n.alter i (Option.map f)
 
+/-- Overwrite the child at a *present* slot `i` with `a`. The closure-free fast path of
+`insert i a` for a known-present slot: it skips re-testing the bit and re-reading/​boxing the old
+child (`set!` preserves both mask and size, regardless of the slot). Equal to `insert i a`
+(`setChild_eq_insert`). -/
+@[inline] def setChild (n : Node α) (i : UInt32) (a : α) : Node α :=
+  ⟨n.positionsMask, n.elements.set! (arrayIndex n.positionsMask i) a, by
+    simp only [Array.set!, Array.size_setIfInBounds]; exact n.elements_compact⟩
+
+/-- Splice `a` into a known-*absent* slot `i`: set the bit and `insertIdx!` at the compact index.
+The closure-free fast path of `insert i a` for an absent slot — it skips the redundant slot re-test
+and the `none` callback. The `testBit … = false` proof is what makes the new size match the raised
+popcount. Equal to `insert i a` (`insertChild_eq_insert`). -/
+@[inline] def insertChild (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = false) (a : α) :
+    Node α :=
+  ⟨setBit n.positionsMask i, n.elements.insertIdx! (arrayIndex n.positionsMask i) a, by
+    have hle : arrayIndex n.positionsMask i ≤ n.elements.size := by
+      rw [n.elements_compact]; exact arrayIndex_le n.positionsMask i
+    have hsb := popCount_setBit n.positionsMask i h
+    rw [show n.elements.insertIdx! (arrayIndex n.positionsMask i) a
+          = n.elements.insertIdx (arrayIndex n.positionsMask i) a hle from dif_pos hle,
+        Array.size_insertIdx, n.elements_compact, hsb]⟩
+
 /-- Fold over present slots in ascending slot order. -/
 @[specialize] def fold {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node α) : β :=
   Nat.fold 32 (fun i _ (acc : β) =>
@@ -1366,6 +1388,25 @@ reuse `get?_insert` for `alter`-built nodes whose callback never prunes. -/
 theorem alter_eq_insert (n : Node α) (i : UInt32) (f : Option α → Option α) (w : α)
     (h : f (n.get? i) = some w) : n.alter i f = n.insert i w :=
   alter_congr n i f (fun _ => some w) (by rw [h])
+
+/-- The present-slot fast path `setChild` agrees with `insert`: at a present slot `insert`
+overwrites in place, which is exactly the `set!` `setChild` performs. Lets `Tree.insertImpl`
+reuse all of `insert`'s characterizations. -/
+theorem setChild_eq_insert (n : Node α) (i : UInt32) (a : α)
+    (hp : testBit n.positionsMask i = true) : n.setChild i a = n.insert i a := by
+  unfold insert alter setChild
+  split
+  · rfl
+  · rename_i hpres; rw [hp] at hpres; contradiction
+
+/-- The absent-slot fast path `insertChild` agrees with `insert`: at an absent slot `insert`
+splices a fresh value at the compact index, exactly what `insertChild` does. -/
+theorem insertChild_eq_insert (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = false)
+    (a : α) : n.insertChild i h a = n.insert i a := by
+  unfold insert alter insertChild
+  split
+  · rename_i hpres; rw [h] at hpres; contradiction
+  · rfl
 
 /-- `get?` of an `alter` whose callback yields a value: slot `i` reads that value, every other slot
 is unchanged (a corollary of `alter_eq_insert` + `get?_insert`). -/

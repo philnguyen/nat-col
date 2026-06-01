@@ -93,8 +93,9 @@ are unaffected. -/
       (Tree.Full_singleton (requiredHeight k) k v)
   | false =>
     let H := max c.height (requiredHeight k)
-    normalizeAux H (Tree.insert k v H (c.liftTo H (Nat.le_max_left _ _)))
-      (Tree.Full_insert H k v _ (Full_liftTo c H (Nat.le_max_left _ _) hemp))
+    normalizeAux H (Tree.insertImpl k v H (c.liftTo H (Nat.le_max_left _ _)))
+      (by rw [Tree.insertImpl_eq_insert]
+          exact Tree.Full_insert H k v _ (Full_liftTo c H (Nat.le_max_left _ _) hemp))
 
 /-- Erase key `k`. -/
 @[specialize] def erase (c : NatCollection L) (k : Nat) : NatCollection L :=
@@ -837,7 +838,7 @@ theorem get?_insert (c : NatCollection L) (k : Nat) (v : V) (j : Nat) :
               fun hall => hjk (eq_of_chunk_eq (requiredHeight k) j k (by omega) (Nat.le_refl _) hall))]
   · rename_i hemp
     simp only []
-    rw [get?_normalizeAux]
+    rw [get?_normalizeAux, Tree.insertImpl_eq_insert]
     by_cases hjk : j = k
     · rw [if_pos hjk,
           if_neg (show ¬ requiredHeight j > max c.height (requiredHeight k) by rw [hjk]; omega),

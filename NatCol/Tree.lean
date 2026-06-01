@@ -189,6 +189,19 @@ termination_by h => h
       | none => some (singleton k v h)
 termination_by h => h
 
+/-- Closure-free `insert`, equal to it (`insertImpl_eq_insert`) but cheaper to run: the node case
+matches the present-bit once and updates in place via `Node.setChild`/`insertChild`, avoiding the
+`Node.alter` `Option → Option` callback (which boxes the old child only to discard it). This is the
+version the collection layer runs; `insert` stays the proof-facing specification. -/
+@[specialize] def insertImpl (k : Nat) (v : V) : (h : Nat) → Tree L h → Tree L h
+  | 0, l => LeafOps.insert l (chunk k 0) v
+  | h + 1, n =>
+    if hp : testBit n.positionsMask (chunk k (h + 1)) = true then
+      n.setChild (chunk k (h + 1)) (insertImpl k v h (n.get (chunk k (h + 1)) hp))
+    else
+      n.insertChild (chunk k (h + 1)) (by simpa using hp) (singleton k v h)
+termination_by h => h
+
 /-- Erase key `k`, pruning subtrees that become empty (keeps the tree canonical below
 the top level). -/
 @[specialize] def erase (k : Nat) : (h : Nat) → Tree L h → Tree L h
@@ -1059,6 +1072,28 @@ theorem get?_insert (k : Nat) (v : V) (j : Nat) : (h : Nat) → (t : Tree L h) �
               rw [if_neg hall, if_neg hneg]
           · rw [if_neg hcj, ← get?_succ j h n,
                 if_neg (fun hbig => hcj (hbig (h+1) (Nat.le_refl _)))]
+
+/-- `insertImpl` computes the same tree as `insert` at every height: the leaf cases are identical,
+and at a node the `setChild`/`insertChild` fast paths each coincide with the `Node.alter` the spec
+performs (`Node.setChild_eq_insert`/`insertChild_eq_insert`, collapsed to `alter` via
+`Node.alter_eq_insert`). Lets the collection layer run `insertImpl` while keeping every `insert`
+characterization (`get?_insert`, `Full_insert`, `isEmpty_insert`) verbatim. -/
+theorem insertImpl_eq_insert (k : Nat) (v : V) : (h : Nat) → (t : Tree L h) →
+    Tree.insertImpl k v h t = Tree.insert k v h t
+  | 0, _ => by simp only [Tree.insertImpl, Tree.insert]
+  | h + 1, n => by
+      simp only [Tree.insertImpl, Tree.insert]
+      by_cases hp : testBit n.positionsMask (chunk k (h + 1)) = true
+      · rw [dif_pos hp, insertImpl_eq_insert k v h (n.get (chunk k (h + 1)) hp),
+            Node.setChild_eq_insert n (chunk k (h + 1)) _ hp]
+        refine (Node.alter_eq_insert n (chunk k (h + 1)) _ _ ?_).symm
+        rw [show Node.get? n (chunk k (h + 1)) = some (n.get (chunk k (h + 1)) hp) from by
+              simp only [Node.get?, dif_pos hp]]
+      · rw [dif_neg hp,
+            Node.insertChild_eq_insert n (chunk k (h + 1)) (by simpa using hp) (Tree.singleton k v h)]
+        refine (Node.alter_eq_insert n (chunk k (h + 1)) _ _ ?_).symm
+        rw [show Node.get? n (chunk k (h + 1)) = none from by
+              simp only [Node.get?, dif_neg hp]]
 
 /-- `get?` of a lift: a key in range reads the original tree; a key needing more height than the
 slot-0 spine provides reads `none`. -/
