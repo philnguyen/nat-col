@@ -903,6 +903,7 @@ array length, which slots are present) untouched. These are the building blocks 
     (n.map f).isEmpty = n.isEmpty := rfl
 
 /-- Mapping the identity is the identity. -/
+@[simp, grind =]
 theorem map_id (n : Node α) : n.map id = n := by
   obtain ⟨m, e, hc⟩ := n
   simp only [Node.map, Array.map_id]

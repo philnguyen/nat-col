@@ -739,6 +739,7 @@ theorem join_meet_distrib (combineJoin combineMeet : α → α → α)
   NatCollection.join_meet_distrib combineJoin combineMeet hidem habs1 habs2 hdist a b e
 
 /-- **Functor identity law**: mapping `id` returns the map unchanged. -/
+@[simp, grind =]
 theorem map_id {α : Type u} (m : NatMap α) : NatMap.map id m = m := by
   obtain ⟨h, t, wf⟩ := m
   exact mk_eq (treeMap_id h t)
