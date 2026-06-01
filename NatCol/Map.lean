@@ -103,6 +103,76 @@ instance (k : Nat) (m : NatMap α) : Decidable (k ∈ m) :=
 
 end NatMap
 
+/-! ### `map`: the functorial action on values
+
+`NatMap.map f` rewrites every stored value with `f`, leaving the trie's shape — heights, masks,
+which keys are present — untouched, so only the value type changes (`α` to `β`). `treeMap` is the
+height-indexed recursion that does the rewrite, applying `Node.map` at every level. Because the
+shape is preserved, the canonical-shape invariant carries over by construction; these
+preservation lemmas live in the Implementation section because `NatMap.map` (a `def`) needs them.
+
+`treeMap` recurses by passing itself to `Node.map` (a higher-order call), so it compiles by
+well-founded recursion: its defining equations are propositional, unfolded below via
+`simp only [treeMap]`. -/
+
+/-- Map `f` over every value of a height-`h` map-trie, preserving the `Node` masks at every
+level. Only leaf values change type, from `α` to `β`. -/
+def treeMap {α β : Type u} (f : α → β) : (h : Nat) → Tree (Node α) h → Tree (Node β) h
+  | 0, leaf => leaf.map f
+  | _ + 1, node => node.map (treeMap f _)
+termination_by h => h
+
+/-- `treeMap` preserves emptiness at every height (each node's mask is untouched). -/
+theorem treeMap_isEmpty {α β : Type u} (f : α → β) :
+    (h : Nat) → (t : Tree (Node α) h) → Tree.isEmpty h (treeMap f h t) = Tree.isEmpty h t
+  | 0, leaf => by
+      show Node.isEmpty (treeMap f 0 leaf) = Node.isEmpty leaf
+      rw [show treeMap f 0 leaf = leaf.map f from by simp only [treeMap]]
+      exact Node.isEmpty_map f leaf
+  | h + 1, node => by
+      show Node.isEmpty (treeMap f (h + 1) node) = Node.isEmpty node
+      rw [show treeMap f (h + 1) node = node.map (treeMap f h) from by simp only [treeMap]]
+      exact Node.isEmpty_map (treeMap f h) node
+
+/-- `treeMap` preserves the "no empty subtree" invariant (`Full`): a mapped child is non-empty
+iff the original was (`treeMap_isEmpty`), and stays `Full` by induction. -/
+theorem treeMap_Full {α β : Type u} (f : α → β) :
+    (h : Nat) → (t : Tree (Node α) h) → Tree.Full h t → Tree.Full h (treeMap f h t)
+  | 0, _, _ => trivial
+  | h + 1, node, hfull => by
+      intro c hc
+      rw [show treeMap f (h + 1) node = node.map (treeMap f h) from by simp only [treeMap]] at hc
+      simp only [Node.map, Array.mem_map] at hc
+      obtain ⟨c0, hc0mem, rfl⟩ := hc
+      obtain ⟨hne, hfc0⟩ := hfull c0 hc0mem
+      refine ⟨?_, treeMap_Full f h c0 hfc0⟩
+      rw [treeMap_isEmpty]
+      exact hne
+termination_by h => h
+
+/-- `treeMap` preserves height-minimality (`TopProper`): the top node's mask is untouched. -/
+theorem treeMap_TopProper {α β : Type u} (f : α → β) :
+    (h : Nat) → (t : Tree (Node α) h) → Tree.TopProper h t → Tree.TopProper h (treeMap f h t)
+  | 0, _, _ => trivial
+  | h + 1, node, htp => by
+      show 2 ≤ (treeMap f (h + 1) node).positionsMask
+      rw [show treeMap f (h + 1) node = node.map (treeMap f h) from by simp only [treeMap],
+          Node.map_positionsMask]
+      exact htp
+
+/-- `treeMap` preserves the full canonical-shape invariant. -/
+theorem treeMap_Canonical {α β : Type u} (f : α → β) (h : Nat) (t : Tree (Node α) h)
+    (hcan : Tree.Canonical h t) : Tree.Canonical h (treeMap f h t) :=
+  ⟨treeMap_Full f h t hcan.1, treeMap_TopProper f h t hcan.2⟩
+
+/-- Map a function over every value of a `NatMap`, keeping keys and structure. This is the
+functorial action `f <$> m` (see the `Functor`/`LawfulFunctor` instances). -/
+def NatMap.map {α β : Type u} (f : α → β) (m : NatMap α) : NatMap β :=
+  ⟨m.height, treeMap f m.height m.tree, treeMap_Canonical f m.height m.tree m.wf⟩
+
+instance : Functor NatMap where
+  map := NatMap.map
+
 /-! ## Tests -/
 
 section Tests
@@ -136,6 +206,15 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 -- toList sorted by key irrespective of insertion order
 #guard (NatMap.empty.insert 3 30 |>.insert 1 10 |>.insert 2 20).toList == [(1, 10), (2, 20), (3, 30)]
 #guard (NatMap.ofList [(5, 50), (1000, 1)]).toList == [(5, 50), (1000, 1)]
+
+-- map: applies the function to every value, preserving keys and structure (including across heights)
+#guard ((NatMap.ofList [(1, 10), (2, 20), (5000, 3)]).map (· + 1)).toList == [(1, 11), (2, 21), (5000, 4)]
+#guard (NatMap.empty.map (· + 1) : NatMap Nat) = NatMap.empty
+#guard ((NatMap.ofList [(1, 5), (2, 7)]).map (· * 2)).get? 2 == some 14
+#guard ((NatMap.ofList [(1, 5), (2, 7)]).map (fun _ => true)).toList == [(1, true), (2, true)]  -- changes value type
+-- the `Functor` instance: `<$>` is `NatMap.map`
+#guard ((· * 2) <$> NatMap.ofList [(1, 5), (2, 7)]).get? 1 == some 10
+#guard (id <$> NatMap.ofList [(1, 5), (2, 7)] : NatMap Nat) = NatMap.ofList [(1, 5), (2, 7)]
 
 -- join: collisions combined (sum), others copied through
 #guard ((NatMap.ofList [(1, 10), (2, 20)]).join (· + ·) (NatMap.ofList [(2, 2), (3, 3)])).toList
@@ -228,6 +307,62 @@ end Tests
 ----------------------------------------------------------------------------------------------------
 -- Theorems
 ----------------------------------------------------------------------------------------------------
+
+/-! ### `treeMap` is functorial
+
+The leaf-level functor laws (`Node.map_id`/`map_comp`/`get?_map`) lift through `treeMap` by
+induction on the height; the higher levels are just `Node.map` of the recursive call, so each law
+reduces to its `Node` counterpart with the inductive hypothesis supplied (via `funext`) as the
+mapping function. These then transfer verbatim to `NatMap.map`, whose result keeps the same
+height — so two `map`s are equal once their trees are (`mk_eq`). -/
+
+/-- Mapping the identity over a map-trie is the identity. -/
+theorem treeMap_id {α : Type u} : (h : Nat) → (t : Tree (Node α) h) → treeMap id h t = t
+  | 0, leaf => by simp only [treeMap]; exact Node.map_id leaf
+  | h + 1, node => by
+      have ih : treeMap id h = (id : Tree (Node α) h → Tree (Node α) h) := funext (treeMap_id h)
+      rw [show treeMap id (h + 1) node = node.map (treeMap id h) from by simp only [treeMap]]
+      rw [ih]
+      exact Node.map_id node
+termination_by h => h
+
+/-- Mapping a composition is the composition of maps. -/
+theorem treeMap_comp {α β γ : Type u} (f : α → β) (g : β → γ) :
+    (h : Nat) → (t : Tree (Node α) h) → treeMap (g ∘ f) h t = treeMap g h (treeMap f h t)
+  | 0, leaf => by simp only [treeMap]; exact Node.map_comp f g leaf
+  | h + 1, node => by
+      have ih : treeMap (g ∘ f) h = (fun t => treeMap g h (treeMap f h t)) :=
+        funext (treeMap_comp f g h)
+      rw [show treeMap (g ∘ f) (h + 1) node = node.map (treeMap (g ∘ f) h) from by simp only [treeMap],
+          ih,
+          show treeMap g (h + 1) (treeMap f (h + 1) node)
+              = (node.map (treeMap f h)).map (treeMap g h) from by simp only [treeMap]]
+      exact Node.map_comp (treeMap f h) (treeMap g h) node
+termination_by h => h
+
+/-- `get?` reads a mapped trie pointwise: looking up a key applies `f` to whatever was there. -/
+theorem treeMap_get? {α β : Type u} (f : α → β) :
+    (h : Nat) → (t : Tree (Node α) h) → (k : Nat) →
+      Tree.get? k h (treeMap f h t) = (Tree.get? k h t).map f
+  | 0, leaf, k => by
+      simp only [treeMap, Tree.get?]
+      exact Node.get?_map f leaf (chunk k 0)
+  | h + 1, node, k => by
+      rw [show treeMap f (h + 1) node = node.map (treeMap f h) from by simp only [treeMap],
+          Tree.get?_succ, Tree.get?_succ, Node.get?_map]
+      cases Node.get? node (chunk k (h + 1)) with
+      | none => rfl
+      | some child =>
+          show Tree.get? k h (treeMap f h child) = (Tree.get? k h child).map f
+          exact treeMap_get? f h child k
+termination_by h => h
+
+/-- Two collections with the same height are equal once their trees are (the canonical-shape
+proof is irrelevant). Lets the `NatMap` functor laws conclude from the `treeMap` laws. -/
+private theorem mk_eq {α : Type u} {h : Nat} {t₁ t₂ : Tree (Node α) h} (heq : t₁ = t₂)
+    {w₁ : Tree.Canonical h t₁} {w₂ : Tree.Canonical h t₂} :
+    (⟨h, t₁, w₁⟩ : NatCollection (Node α)) = ⟨h, t₂, w₂⟩ := by
+  subst heq; rfl
 
 namespace NatMap
 
@@ -487,6 +622,28 @@ theorem join_meet_distrib (combineJoin combineMeet : α → α → α)
       = (a.join combineJoin b).meet combineMeet (a.join combineJoin e) :=
   NatCollection.join_meet_distrib combineJoin combineMeet hidem habs1 habs2 hdist a b e
 
+/-- **Functor identity law**: mapping `id` returns the map unchanged. -/
+theorem map_id {α : Type u} (m : NatMap α) : NatMap.map id m = m := by
+  obtain ⟨h, t, wf⟩ := m
+  exact mk_eq (treeMap_id h t)
+
+/-- **Functor composition law**: mapping a composition is the composition of maps. -/
+theorem map_comp {α β γ : Type u} (f : α → β) (g : β → γ) (m : NatMap α) :
+    NatMap.map (g ∘ f) m = NatMap.map g (NatMap.map f m) := by
+  obtain ⟨h, t, wf⟩ := m
+  exact mk_eq (treeMap_comp f g h t)
+
+/-- Looking up a key in a mapped map applies `f` to the value (the `get?` spec of `map`). -/
+theorem get?_map {α β : Type u} (f : α → β) (m : NatMap α) (k : Nat) :
+    (m.map f).get? k = (m.get? k).map f := by
+  show (if requiredHeight k > m.height then none
+        else Tree.get? k m.height (treeMap f m.height m.tree))
+     = (if requiredHeight k > m.height then none else Tree.get? k m.height m.tree).map f
+  by_cases hk : requiredHeight k > m.height
+  · simp [hk]
+  · rw [if_neg hk, if_neg hk]
+    exact treeMap_get? f m.height m.tree k
+
 end NatMap
 
 -- restricts transitivity as a theorem, for any preorder `rel` (here left abstract)
@@ -546,5 +703,21 @@ example (cj cm : Nat → Nat → Nat)
     (hd : ∀ x y z, cj x (cm y z) = cm (cj x y) (cj x z)) (a b e : NatMap Nat) :
     a.join cj (b.meet cm e) = (a.join cj b).meet cm (a.join cj e) :=
   NatMap.join_meet_distrib cj cm hi h1 h2 hd a b e
+
+/-- `NatMap` is a lawful functor: `map` satisfies the identity and composition laws (and the
+default `mapConst` agrees with `map ∘ const`). The proofs come straight from the structural
+`NatMap.map_id`/`map_comp`, since `map` only rewrites values and preserves the trie shape. -/
+instance : LawfulFunctor NatMap where
+  map_const := rfl
+  id_map := NatMap.map_id
+  comp_map := fun g h x => NatMap.map_comp g h x
+
+-- the functor laws, stated through `<$>`
+example : LawfulFunctor NatMap := inferInstance
+example (m : NatMap Nat) : id <$> m = m := id_map m
+example (g h : Nat → Nat) (m : NatMap Nat) : (h ∘ g) <$> m = h <$> g <$> m := comp_map g h m
+-- `get?` commutes with `map`: looking up a key in `f <$> m` applies `f` to the value
+example (f : Nat → Nat) (m : NatMap Nat) (k : Nat) : (m.map f).get? k = (m.get? k).map f :=
+  NatMap.get?_map f m k
 
 end NatCol

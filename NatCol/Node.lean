@@ -149,6 +149,13 @@ def foldl {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node 
     let iu := UInt32.ofNat i
     if h : testBit n.positionsMask iu = true then f acc iu (n.get iu h) else acc) init
 
+/-- Map a function over every stored child, preserving the slot structure: the slot mask and
+the array length are untouched, so only the element *type* changes (`α` to `β`). The compactness
+invariant is inherited from `n` because `Array.map` preserves size. This is the functorial
+action underlying `NatMap.map`. -/
+def map {β : Type v} (f : α → β) (n : Node α) : Node β :=
+  ⟨n.positionsMask, n.elements.map f, by rw [Array.size_map]; exact n.elements_compact⟩
+
 /-- Union of two nodes. Slots in exactly one side are reused as-is; slots in both are
 merged with `combine` (a `none` result drops the slot).
 
@@ -800,6 +807,46 @@ theorem get?_eq_some_get (n : Node α) (i : UInt32) (h : testBit n.positionsMask
 /-- An absent slot reads `none`. -/
 theorem get?_eq_none_of_testBit (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = false) :
     n.get? i = none := by rw [Node.get?, dif_neg (by rw [h]; simp)]
+
+/-! ### `map`: the functorial action on values
+
+`map f` rewrites every stored child with `f`, leaving the slot structure (`positionsMask`,
+array length, which slots are present) untouched. These are the building blocks for the `NatMap`
+`Functor`/`LawfulFunctor` instance: the mask facts feed canonical-shape preservation, and
+`map_id`/`map_comp`/`get?_map` are the functor laws at the leaf level. -/
+
+/-- `map` preserves the slot mask (it only rewrites values). -/
+@[simp] theorem map_positionsMask {β : Type v} (f : α → β) (n : Node α) :
+    (n.map f).positionsMask = n.positionsMask := rfl
+
+/-- `map` preserves emptiness (the mask is unchanged). -/
+@[simp] theorem isEmpty_map {β : Type v} (f : α → β) (n : Node α) :
+    (n.map f).isEmpty = n.isEmpty := rfl
+
+/-- Mapping the identity is the identity. -/
+theorem map_id (n : Node α) : n.map id = n := by
+  obtain ⟨m, e, hc⟩ := n
+  simp only [Node.map, Array.map_id]
+
+/-- Mapping a composition is the composition of maps. -/
+theorem map_comp {β γ : Type v} (f : α → β) (g : β → γ) (n : Node α) :
+    n.map (g ∘ f) = (n.map f).map g := by
+  obtain ⟨m, e, hc⟩ := n
+  simp only [Node.map, Array.map_map]
+
+/-- `get?` reads a `map` pointwise: looking up a slot applies `f` to whatever was there. -/
+theorem get?_map {β : Type v} (f : α → β) (n : Node α) (i : UInt32) :
+    (n.map f).get? i = (n.get? i).map f := by
+  cases hb : testBit n.positionsMask i with
+  | true =>
+    rw [get?_eq_some_get n i hb, get?_eq_some_get (n.map f) i hb]
+    show some ((n.map f).get i hb) = some (f (n.get i hb))
+    congr 1
+    show (n.elements.map f)[arrayIndex n.positionsMask i]'_ = f (n.elements[arrayIndex n.positionsMask i]'_)
+    rw [Array.getElem_map]
+  | false =>
+    rw [get?_eq_none_of_testBit n i hb, get?_eq_none_of_testBit (n.map f) i hb]
+    simp
 
 /-- The `restricts` fold (over slots `0..n-1`) is `true` exactly when `rel` holds on every slot
 present on *both* sides. This is only the "values match" half of `restricts`; the "domain subset"
