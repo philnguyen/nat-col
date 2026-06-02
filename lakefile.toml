@@ -8,3 +8,7 @@ name = "NatCol"
 [[lean_exe]]
 name = "nat-bench"
 root = "Bench"
+
+[[lean_exe]]
+name = "pat-bench"
+root = "PatBench"
