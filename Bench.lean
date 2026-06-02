@@ -6,13 +6,17 @@ For each *domain* of inputs
   * `sequential` — `0, 1, …, N-1`
   * `shuffled`   — a fixed seeded shuffle of `0 … N-1` (so values stay "small")
   * `random`     — `N` values in `[0, 2⁶³)`
-we time three *operations*
+we time four *operations*
   * `insertion`  — build the set from the value list (report its size)
   * `lookup`     — sum the elements found while probing every value (report the sum)
   * `union`      — turn the values into singletons, then fold them pairwise into one set
+  * `subset`     — build two equal sets from the values, then check `s ⊆ t` (report 1/0)
 
 `Std.HashSet` ships a `union`; `PersistentHashSet` does not, so we synthesize one
-with `fold` (per the design note).
+with `fold` (per the design note). Neither ships a `subset`, so we synthesize those
+from `all`/`contains` and `fold`/`contains` respectively — matching `NatSet.subset`,
+each is `O(|s|)` membership checks. The two sets are equal, so the answer is always
+`true` and every element is traversed (the full-work case, no early bail-out).
 
 Each (data structure × domain × operation) cell runs in its *own* freshly spawned
 worker process: the driver (run with no args, or a single `N` to override the
@@ -138,6 +142,11 @@ private def psSize (s : PSet) : Nat := s.fold (fun n _ => n + 1) 0
 /-- `PersistentHashSet` has no `union`, so synthesize one with `fold` (design note). -/
 private def psUnion (a b : PSet) : PSet := b.fold (·.insert ·) a
 
+/-- `PersistentHashSet` has no `subset`/`all`, so synthesize `a ⊆ b` with `fold`: every
+element of `a` is in `b`. (`fold` visits all of `a`; `&&` only short-circuits the membership
+check, not the traversal — fine here, where every probe succeeds.) -/
+private def psSubset (a b : PSet) : Bool := a.fold (fun acc x => acc && b.contains x) true
+
 /-- One pairwise-union pass: `[a,b,c,d] → [a∪b, c∪d]`, `[a,b,c] → [a∪b, c]`. -/
 private def unionPass {α : Type u} (u : α → α → α) : List α → List α
   | a :: b :: rest => u a b :: unionPass u rest
@@ -179,6 +188,21 @@ def unionPHashSet (data : List Nat) : IO Sample := do
   let singles ← forceIO (fun _ => data.map (emptyPSet.insert ·))
   measure (fun _ => unionAll psUnion emptyPSet singles) psSize
 
+-- subset: two equal sets built in setup (untimed, forced); time `s ⊆ t`; check = 1 if ⊆ else 0
+private def boolCheck (b : Bool) : Nat := if b then 1 else 0
+def subsetNatSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => NatSet.ofList data)
+  let t ← forceIO (fun _ => NatSet.ofList data)
+  measure (fun _ => s.subset t) boolCheck
+def subsetHashSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => data.foldl (·.insert ·) emptyHSet)
+  let t ← forceIO (fun _ => data.foldl (·.insert ·) emptyHSet)
+  measure (fun _ => s.all t.contains) boolCheck
+def subsetPHashSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => data.foldl (·.insert ·) emptyPSet)
+  let t ← forceIO (fun _ => data.foldl (·.insert ·) emptyPSet)
+  measure (fun _ => psSubset s t) boolCheck
+
 def runOne (struct domain op : String) (n : Nat) : IO Sample := do
   let data := mkData domain n
   match op, struct with
@@ -191,6 +215,9 @@ def runOne (struct domain op : String) (n : Nat) : IO Sample := do
   | "union", "natset" => unionNatSet data
   | "union", "hashset" => unionHashSet data
   | "union", "phashset" => unionPHashSet data
+  | "subset", "natset" => subsetNatSet data
+  | "subset", "hashset" => subsetHashSet data
+  | "subset", "phashset" => subsetPHashSet data
   | _, _ => throw <| IO.userError s!"unknown benchmark: op={op} struct={struct}"
 
 /-! ## Worker / driver plumbing -/
@@ -201,9 +228,9 @@ def structs : List (String × String) :=
 /-- The three input domains. -/
 def domains : List (String × String) :=
   [("seq", "sequential"), ("shuffled", "shuffled"), ("random", "random 0..2⁶³")]
-/-- The three operations. -/
+/-- The four operations. -/
 def ops : List (String × String) :=
-  [("insert", "insertion"), ("lookup", "lookup"), ("union", "union")]
+  [("insert", "insertion"), ("lookup", "lookup"), ("union", "union"), ("subset", "subset")]
 
 /-- Format nanoseconds as milliseconds with two decimals, using integer math. -/
 def fmtMs (nanos : Nat) : String :=

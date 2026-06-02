@@ -103,6 +103,7 @@ For each domain, measure each operation, printing a final size/sum as a cross-ch
 - "insertion": build the set from the value list (report its size)
 - "lookup": sum the elements found over the list (report the sum)
 - "union": turn the values into singletons, then union consecutive sets until one remains (report its size)
+- "subset": build two equal sets from the values, then check `s ⊆ t` — always true, so every element is traversed (report 1/0). `HashSet`/`PersistentHashSet` lack `subset`; synthesize it from `all`/`fold` + `contains`.
 
 Be careful not to measure the time it takes to set up the data (e.g. the initial list).
 

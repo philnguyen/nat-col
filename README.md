@@ -141,10 +141,12 @@ failed example fails the build. There is no separate test target.
 
 `nat-bench` ([`Bench.lean`](Bench.lean)) compares `NatSet` against Lean's `Std.HashSet Nat` and
 `Lean.PersistentHashSet Nat` across three input *domains* (`sequential`, `shuffled`, `random`) and
-three *operations* (`insertion`, `lookup`, `union`). Each `(structure × domain × operation)` cell
-runs in its **own freshly-spawned worker process** so wall-clock time and resident-memory growth are
-measured against a clean baseline; input generation is deterministic, and a reported size/sum
-cross-checks that the structures agree.
+four *operations* (`insertion`, `lookup`, `union`, `subset`). Each `(structure × domain × operation)`
+cell runs in its **own freshly-spawned worker process** so wall-clock time and resident-memory growth
+are measured against a clean baseline; input generation is deterministic, and a reported size/sum
+cross-checks that the structures agree. `subset` builds two equal sets and checks `s ⊆ t` (always
+`true`, so every element is traversed); neither hash structure ships a `subset`, so they synthesize
+one from `all`/`fold` + `contains`, matching `NatSet.subset` at `O(|s|)` membership checks.
 
 ### Sample results
 
@@ -158,12 +160,15 @@ the size/sum cross-check agreed across all three structures on every row.
 | sequential / insertion | 92.11 | 21.40 | 27.56 |
 | sequential / lookup | 16.94 | 14.05 | 31.28 |
 | sequential / union | **133.06** | 620.45 | 533.20 |
+| sequential / subset | **0.96** | 34.70 | 62.92 |
 | shuffled / insertion | 139.61 | 46.51 | 48.01 |
 | shuffled / lookup | **19.18** | 57.43 | 47.36 |
 | shuffled / union | **429.61** | 894.56 | 864.65 |
+| shuffled / subset | **0.78** | 166.39 | 75.08 |
 | random 0..2⁶³ / insertion | 720.80 | 68.04 | 74.41 |
 | random 0..2⁶³ / lookup | 1142.31 | 252.76 | 321.21 |
 | random 0..2⁶³ / union | 1129.48 | 909.63 | 707.17 |
+| random 0..2⁶³ / subset | 2212.61 | **155.90** | 237.26 |
 
 **Memory — resident-set growth (KB)**
 
@@ -172,18 +177,25 @@ the size/sum cross-check agreed across all three structures on every row.
 | sequential / insertion | **64** | 28 784 | 4 256 |
 | sequential / lookup | 64 | 64 | 32 |
 | sequential / union | **39 232** | 89 872 | 74 928 |
+| sequential / subset | 64 | 32 | 64 |
 | shuffled / insertion | **64** | 28 784 | 5 680 |
 | shuffled / lookup | 64 | 64 | 64 |
 | shuffled / union | 76 384 | 89 840 | 70 320 |
+| shuffled / subset | 0 | 32 | 64 |
 | random 0..2⁶³ / insertion | 473 616 | 28 784 | 30 336 |
 | random 0..2⁶³ / lookup | 80 | 112 | 64 |
 | random 0..2⁶³ / union | 74 944 | 90 352 | 101 808 |
+| random 0..2⁶³ / subset | 48 | 32 | 32 |
 
 Reading it: `NatSet` is strongest on **dense, "small" key domains** (`sequential`/`shuffled`) — it
 wins `union` outright and inserts with negligible resident growth, since dense keys share trie
-spines and the leaves carry no boxed payload. On **sparse `random` keys** it pays for the deep, mostly
-one-child spines (slower lookups, heavier insertion memory), where the hash structures hold up
-better. Numbers will vary run to run and across machines.
+spines and the leaves carry no boxed payload. `subset` makes the gap starkest: on dense keys it
+finishes in **under a millisecond** (35–200× ahead), because equal tries compare their present-masks
+in lockstep with no per-element hashing, whereas the hash structures must probe every element. On
+**sparse `random` keys** it pays for the deep, mostly one-child spines — slower lookups, a ~2.2 s
+`subset` walk, heavier insertion memory — where the hash structures hold up better. (`subset`, like
+`lookup`, is read-only, so its resident growth is noise across the board.) Numbers will vary run to
+run and across machines.
 
 ## Status
 
