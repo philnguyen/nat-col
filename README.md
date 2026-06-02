@@ -197,6 +197,21 @@ in lockstep with no per-element hashing, whereas the hash structures must probe 
 `lookup`, is read-only, so its resident growth is noise across the board.) Numbers will vary run to
 run and across machines.
 
+## Relation to Gödel hashing
+
+A close cousin in spirit is [Gödel hashing](https://matt.might.net/papers/liang2014godel.pdf)
+(Liang & Might, 2014), which encodes a finite set as a single integer — the product of one distinct
+prime per element — so that union becomes `lcm`, intersection `gcd`, subset divisibility, and
+equality numeric equality. Both schemes are **canonical** (equal sets share one representation) and
+both realise the *same* distributive lattice; Gödel hashing simply maps into the divisibility
+lattice `(ℕ, gcd, lcm)` and inherits its laws from number theory, where nat-col builds the lattice
+on a trie and proves the laws in Lean. The difference is regime: Gödel hashing is wonderfully terse
+and ideal for memoising small, dense universes (its home turf of static analysis), but the encoding
+integer grows with every element, needs an element→prime oracle, and can only be read back out by
+*factoring* it — so cardinality, enumeration, and arbitrary-valued maps are costly or out of reach.
+nat-col keeps keys as trie paths instead, trading that arithmetic elegance for cheap enumeration,
+real `NatMap`s over arbitrary values, `O(key length)` incremental updates, and large, sparse keys.
+
 ## Status
 
 The trie core, `NatSet`/`NatMap`, their lattice operations, and the laws above are implemented and
