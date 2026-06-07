@@ -119,6 +119,110 @@ decreasing_by
   have := Array.sizeOf_lt_of_mem hc
   omega
 
+-- Set union — three mutually-recursive pieces, total via a shared lexicographic measure on combined
+-- subtree size. `mergeChild` is split out of `mergeKids` only to keep the latter's body shallow: a
+-- deeply-nested `let` under a well-founded recursion trips the kernel's deep-recursion check. The
+-- `+1` on `mergeKids`'s measure orders its (equal-size) hand-off to `mergeChild` as a strict
+-- decrease; `mergeKids`'s own recursion shrinks the leftover mask `rem` in the second component.
+set_option linter.unusedVariables false in
+mutual
+/-- Union driver: merge matching `tip`/`bin` shapes in place, `join` mismatched prefixes under a
+fresh branch, and combine two aligned `bin`s child-by-child through `mergeKids`. -/
+def unionU : PTree → PTree → PTree
+  | .nil, t => t
+  | s, .nil => s
+  | .tip p1 b1, .tip p2 b2 =>
+    if p1 == p2 then .tip p1 (b1 ||| b2)
+    else join (someKey (.tip p1 b1)) (.tip p1 b1) (someKey (.tip p2 b2)) (.tip p2 b2)
+  | .tip p1 b1, .bin bp bl bm bk =>
+      if prefixAbove (someKey (.tip p1 b1)) bl == bp then
+        if testBit bm (chunk (someKey (.tip p1 b1)) bl) then
+          if h : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size then
+            .bin bp bl bm (bk.setIfInBounds (arrayIndex bm (chunk (someKey (.tip p1 b1)) bl))
+              (unionU (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h) (.tip p1 b1)))
+          else .bin bp bl bm bk
+        else .bin bp bl (setBit bm (chunk (someKey (.tip p1 b1)) bl))
+          (bk.insertIdx! (arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)) (.tip p1 b1))
+      else join (someKey (.bin bp bl bm bk)) (.bin bp bl bm bk) (someKey (.tip p1 b1)) (.tip p1 b1)
+  | .bin bp bl bm bk, .tip p2 b2 =>
+      if prefixAbove (someKey (.tip p2 b2)) bl == bp then
+        if testBit bm (chunk (someKey (.tip p2 b2)) bl) then
+          if h : arrayIndex bm (chunk (someKey (.tip p2 b2)) bl) < bk.size then
+            .bin bp bl bm (bk.setIfInBounds (arrayIndex bm (chunk (someKey (.tip p2 b2)) bl))
+              (unionU (bk[arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)]'h) (.tip p2 b2)))
+          else .bin bp bl bm bk
+        else .bin bp bl (setBit bm (chunk (someKey (.tip p2 b2)) bl))
+          (bk.insertIdx! (arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)) (.tip p2 b2))
+      else join (someKey (.bin bp bl bm bk)) (.bin bp bl bm bk) (someKey (.tip p2 b2)) (.tip p2 b2)
+  | .bin p1 l1 m1 k1, .bin p2 l2 m2 k2 =>
+    if l1 == l2 && p1 == p2 then
+      .bin p1 l1 (m1 ||| m2) (mergeKids m1 k1 m2 k2 (m1 ||| m2) #[])
+    else if l1 == l2 then
+      join (someKey (.bin p1 l1 m1 k1)) (.bin p1 l1 m1 k1) (someKey (.bin p2 l2 m2 k2)) (.bin p2 l2 m2 k2)
+    else if l2 < l1 then
+      if prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 == p1 then
+        if testBit m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) then
+          if h : arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) < k1.size then
+            .bin p1 l1 m1 (k1.setIfInBounds (arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1))
+              (unionU (k1[arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)]'h) (.bin p2 l2 m2 k2)))
+          else .bin p1 l1 m1 k1
+        else .bin p1 l1 (setBit m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1))
+          (k1.insertIdx! (arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)) (.bin p2 l2 m2 k2))
+      else join (someKey (.bin p1 l1 m1 k1)) (.bin p1 l1 m1 k1) (someKey (.bin p2 l2 m2 k2)) (.bin p2 l2 m2 k2)
+    else
+      if prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 == p2 then
+        if testBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) then
+          if h : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size then
+            .bin p2 l2 m2 (k2.setIfInBounds (arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2))
+              (unionU (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h) (.bin p1 l1 m1 k1)))
+          else .bin p2 l2 m2 k2
+        else .bin p2 l2 (setBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2))
+          (k2.insertIdx! (arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)) (.bin p1 l1 m1 k1))
+      else join (someKey (.bin p2 l2 m2 k2)) (.bin p2 l2 m2 k2) (someKey (.bin p1 l1 m1 k1)) (.bin p1 l1 m1 k1)
+termination_by s t => (sizeOf s + sizeOf t, 0)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h); omega)
+
+/-- The merged child at one mask position `i`: present in both operands → recurse with `unionU`;
+present in just one → carry that side over. -/
+def mergeChild (m1 : UInt32) (k1 : Array PTree) (m2 : UInt32) (k2 : Array PTree) (i : UInt32) : PTree :=
+  if testBit m1 i then
+    if testBit m2 i then
+      if h1 : arrayIndex m1 i < k1.size then
+        if h2 : arrayIndex m2 i < k2.size then
+          unionU (k1[arrayIndex m1 i]'h1) (k2[arrayIndex m2 i]'h2)
+        else k1[arrayIndex m1 i]'h1
+      else .nil
+    else if h1 : arrayIndex m1 i < k1.size then k1[arrayIndex m1 i]'h1 else .nil
+  else if h2 : arrayIndex m2 i < k2.size then k2[arrayIndex m2 i]'h2 else .nil
+termination_by (sizeOf k1 + sizeOf k2, 0)
+decreasing_by
+  all_goals simp_wf
+  all_goals (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h1)
+             have := Array.sizeOf_lt_of_mem (Array.getElem_mem h2); omega)
+
+/-- Fold over the leftover union mask `rem`, appending each present position's `mergeChild` to
+`acc` (one bit per step, lowest first). -/
+def mergeKids (m1 : UInt32) (k1 : Array PTree) (m2 : UInt32) (k2 : Array PTree)
+    (rem : UInt32) (acc : Array PTree) : Array PTree :=
+  if hrem : rem == 0 then acc
+  else
+    mergeKids m1 k1 m2 k2 (clearLowest rem) (acc.push (mergeChild m1 k1 m2 k2 (lowestSetIdx rem)))
+termination_by (sizeOf k1 + sizeOf k2 + 1, rem.toNat)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have : (clearLowest rem).toNat < rem.toNat :=
+         UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem (by simp_all)); omega)
+end
+
+/-- Set union `a ∪ b`. -/
+@[inline] def union (a b : PTree) : PTree := unionU a b
+
 /-- `{0,…}` from a list, by repeated insertion. -/
 def ofList (ks : List Nat) : PTree := ks.foldl (fun s k => s.insert k) .nil
 
@@ -141,6 +245,19 @@ private def sparseK : List Nat :=
   (ofList sparseK).contains k == (NatSet.ofList sparseK).contains k
 -- idempotent re-insert
 #guard ((empty.insert 42).insert 42).size == 1
+
+private def evenK : List Nat := (List.range 400).map (2 * ·)
+private def oddK : List Nat := (List.range 400).map (2 * · + 1)
+
+-- union sizes agree with `NatSet.union` across dense/overlapping/sparse mixes
+#guard ((ofList evenK).union (ofList oddK)).size == (NatSet.ofList (evenK ++ oddK)).size
+#guard ((ofList sparseK).union (ofList (List.range 50))).size == (NatSet.ofList (sparseK ++ List.range 50)).size
+#guard ((ofList sparseK).union (ofList sparseK)).size == (ofList sparseK).size       -- idempotent
+#guard ((ofList (List.range 500)).union (ofList ((List.range 500).map (· + 250)))).size == 750
+#guard ((ofList sparseK).union (ofList evenK)).size == (NatSet.ofList (sparseK ++ evenK)).size
+-- membership after union agrees with NatSet
+#guard (sparseK ++ List.range 50).all fun k =>
+  ((ofList sparseK).union (ofList (List.range 50))).contains k == true
 
 end PTree
 end NatCol
