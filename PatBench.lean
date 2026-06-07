@@ -168,16 +168,48 @@ partial def mergeKids (m1 : UInt32) (k1 : Array PSet) (m2 : UInt32) (k2 : Array 
 
 end
 
-/-- Apply `f` to every key in the set, folding through `init` (order unspecified). -/
-partial def foldKeys {β : Type} (f : β → Nat → β) : β → PSet → β
-  | init, .nil => init
-  | init, .tip pfx bits => tipFold f pfx bits init
-  | init, .bin _ _ _ kids => kids.foldl (fun acc c => foldKeys f acc c) init
-where
-  /-- Fold the keys of one `tip` by bit-scanning its bitset. -/
-  tipFold {β : Type} (f : β → Nat → β) (pfx : UInt64) (bits : UInt32) (init : β) : β :=
-    if bits == 0 then init
-    else tipFold f pfx (clearLowest bits) (f init (((pfx <<< 5) ||| (lowestSetIdx bits).toUInt64).toNat))
+mutual
+
+/-- Structural subset test `a ⊆ b` — a Patricia walk that aligns the two trees by branch level
+and short-circuits on the masks (the analogue of `NatSet.subset`'s structural test, replacing a
+naive O(|a|) per-key membership walk). Mirrors `Data.IntSet.isSubsetOf`: route the smaller-span
+operand into the larger, compare bitsets at the leaves, and bail the moment a slot is missing. -/
+partial def subsetU : PSet → PSet → Bool
+  | .nil, _ => true
+  | _, .nil => false
+  -- two leaves: same prefix and `a`'s bits are a subset of `b`'s
+  | .tip p1 b1, .tip p2 b2 => p1 == p2 && (b1 &&& b2) == b1
+  -- a leaf vs a branch: the leaf must fall under `b`'s prefix and route into one present child
+  | .tip p1 b1, .bin r2 l2 m2 k2 =>
+    let ka := (p1 <<< 5) ||| (lowestSetIdx b1).toUInt64
+    let c := chunkAt ka l2
+    prefixAbove ka l2 == prefixAbove r2 l2
+      && testBit m2 c && subsetU (.tip p1 b1) (k2[arrayIndex m2 c]!)
+  -- a branch spans ≥2 leaf-prefixes, so it can never sit inside a single leaf
+  | .bin .., .tip .. => false
+  | .bin r1 l1 m1 k1, .bin r2 l2 m2 k2 =>
+    if l1 == l2 then
+      -- same branch level: equal prefix, `a`'s slots ⊆ `b`'s, and every shared child recurses
+      prefixAbove r1 l1 == prefixAbove r2 l2
+        && (m1 &&& m2) == m1 && subsetKids m1 k1 m2 k2 m1
+    else if l1 < l2 then
+      -- `a` branches lower (narrower span) than `b`: it must fit within one child of `b`
+      let c := chunkAt r1 l2
+      prefixAbove r1 l2 == prefixAbove r2 l2
+        && testBit m2 c && subsetU (.bin r1 l1 m1 k1) (k2[arrayIndex m2 c]!)
+    else false   -- `a` branches higher (wider span) than `b` ⇒ `a` has keys outside `b`
+
+/-- For two equal-level, equal-prefix bins with `m1 ⊆ m2` already checked, confirm every
+`a`-child is a subset of the aligned `b`-child, bit-scanning the shared mask `rem` (= `m1`) in
+ascending slot order and short-circuiting on the first failure. -/
+partial def subsetKids (m1 : UInt32) (k1 : Array PSet) (m2 : UInt32) (k2 : Array PSet)
+    (rem : UInt32) : Bool :=
+  if rem == 0 then true
+  else
+    let c := lowestSetIdx rem
+    subsetU (k1[arrayIndex m1 c]!) (k2[arrayIndex m2 c]!) && subsetKids m1 k1 m2 k2 (clearLowest rem)
+
+end
 
 ----------------------------------------------------------------------------------------------------
 -- Public API (matching `NatSet`)
@@ -195,8 +227,8 @@ partial def PSet.size : PSet → Nat
 
 def PSet.ofList (ks : List Nat) : PSet := ks.foldl (·.insert ·) .nil
 
-/-- `a ⊆ b`: every key of `a` is in `b` (O(|a|) membership checks, matching `NatSet.subset`). -/
-def PSet.subset (a b : PSet) : Bool := foldKeys (fun acc k => acc && b.contains k) true a
+/-- `a ⊆ b`: every key of `a` is in `b`, via the structural Patricia walk `subsetU`. -/
+def PSet.subset (a b : PSet) : Bool := subsetU a b
 
 ----------------------------------------------------------------------------------------------------
 -- Validation: `PSet` must agree with the verified `NatSet`
@@ -225,10 +257,18 @@ private def odds : List Nat := (List.range 500).map (2 * · + 1)
 -- idempotent insert / union
 #guard ((PSet.empty.insert 42).insert 42).size == 1
 #guard ((PSet.ofList sparseKeys).union (PSet.ofList sparseKeys)).size == (PSet.ofList sparseKeys).size
--- subset
-#guard (PSet.ofList sparseKeys).subset (PSet.ofList sparseKeys)
+-- subset: the new structural Patricia walk must agree with `NatSet.subset` on every pair
+private def subsetCorpus : List (List Nat) :=
+  [seqKeys, sparseKeys, evens, odds, List.range 500, [], [42], [7, 1000000], seqKeys ++ sparseKeys]
+private def subsetAgrees (a b : List Nat) : Bool :=
+  (PSet.ofList a).subset (PSet.ofList b) == (NatSet.ofList a).subset (NatSet.ofList b)
+#guard subsetCorpus.all fun a => subsetCorpus.all fun b => subsetAgrees a b
+-- explicit anchors: the dense cells the old O(|a|) walk was slow on, proper-subset both ways, empties
+#guard (PSet.ofList seqKeys).subset (PSet.ofList seqKeys)                 -- dense reflexive (the regression cell)
+#guard (PSet.ofList (List.range 500)).subset (PSet.ofList seqKeys)        -- dense proper ⊆ → true
+#guard !(PSet.ofList seqKeys).subset (PSet.ofList (List.range 500))       -- dense proper ⊋ → false
 #guard (PSet.ofList evens).subset ((PSet.ofList evens).union (PSet.ofList odds))
-#guard !(PSet.ofList sparseKeys).subset (PSet.ofList seqKeys)
+#guard PSet.empty.subset (PSet.ofList sparseKeys) && !(PSet.ofList sparseKeys).subset PSet.empty
 
 ----------------------------------------------------------------------------------------------------
 -- Benchmark harness (a focused copy of `Bench.lean`'s — NatSet vs PSet only)
