@@ -522,5 +522,186 @@ private def subsetCorpus : List (List Nat) :=
 #guard (meetSet (ofSet [0, 32]) (ofSet [0, 64])).contains 0
 #guard (meetSet (ofSet [0, 32]) (ofSet [64, 96])).size == 0           -- finalize collapses to nil
 
+----------------------------------------------------------------------------------------------------
+-- Theorems
+--
+-- The denotational layer. Two views, tied by `contains_eq_isSome`:
+--  * `get? : Nat → PTree L → Option V` is the value denotation (a map's semantics); the lattice
+--    laws route through its `get?_*` seams.
+--  * `contains : Nat → PTree L → Bool` is key-presence (a set's semantics, the `isSome` shadow);
+--    well-formedness and routing are stated on it, since alignment is about which keys exist and
+--    where they route, not their values.
+-- `WF` captures the canonical shape the operations maintain. The `*_nil/_tip/_bin` lemmas are the
+-- structural rewrites every membership proof opens with, mirroring `Tree`'s `get?_*` seams over the
+-- height-erased Patricia shape.
+----------------------------------------------------------------------------------------------------
+
+/-- The empty collection contains nothing. -/
+theorem contains_nil (k : Nat) : contains k (.nil : PTree L) = false := by rw [contains]
+
+/-- Lookup in the empty collection is `none`. -/
+theorem get?_nil (k : Nat) : get? k (.nil : PTree L) = none := by rw [get?]
+
+/-- Membership on a `tip`: the prefix must match and the leaf must hold the bottom chunk. -/
+theorem contains_tip (j pfx : Nat) (leaf : L) :
+    contains j (.tip pfx leaf) = (j >>> 5 == pfx && LeafOps.contains leaf (chunk j 0)) := by
+  rw [contains]
+
+/-- Lookup on a `tip`: read the leaf at the bottom chunk when the prefix matches. -/
+theorem get?_tip (j pfx : Nat) (leaf : L) :
+    get? j (.tip pfx leaf) = (if j >>> 5 == pfx then LeafOps.get? leaf (chunk j 0) else none) := by
+  rw [get?]
+
+/-- Membership on a `bin` factors through `childAt`: route by the level's chunk, then recurse.
+Holds unconditionally — an absent slot and an out-of-range index both read `nil`, which contains
+nothing — so it is the structural rewrite every `bin` membership proof opens with. -/
+theorem contains_bin (k pfx level : Nat) (mask : UInt32) (kids : Array (PTree L)) :
+    contains k (.bin pfx level mask kids)
+      = (testBit mask (chunk k level) && contains k (childAt mask kids (chunk k level))) := by
+  rw [contains]; simp only [childAt]
+  by_cases hb : testBit mask (chunk k level) = true
+  · rw [if_pos hb, hb, Bool.true_and]
+    by_cases hidx : arrayIndex mask (chunk k level) < kids.size
+    · rw [dif_pos hidx, Array.getElem?_eq_getElem hidx, Option.getD_some]
+    · rw [dif_neg hidx, Array.getElem?_eq_none (Nat.le_of_not_lt hidx), Option.getD_none,
+          contains_nil]
+  · rw [if_neg hb]
+    simp only [Bool.not_eq_true] at hb
+    rw [hb, Bool.false_and]
+
+/-- Lookup on a `bin` factors through `childAt` (the `get?` analogue of `contains_bin`). -/
+theorem get?_bin (k pfx level : Nat) (mask : UInt32) (kids : Array (PTree L)) :
+    get? k (.bin pfx level mask kids)
+      = (if testBit mask (chunk k level) then get? k (childAt mask kids (chunk k level)) else none) := by
+  rw [get?]; simp only [childAt]
+  by_cases hb : testBit mask (chunk k level) = true
+  · rw [if_pos hb, if_pos hb]
+    by_cases hidx : arrayIndex mask (chunk k level) < kids.size
+    · rw [dif_pos hidx, Array.getElem?_eq_getElem hidx, Option.getD_some]
+    · rw [dif_neg hidx, Array.getElem?_eq_none (Nat.le_of_not_lt hidx), Option.getD_none, get?_nil]
+  · rw [if_neg hb, if_neg hb]
+
+/-- `contains` is the `isSome` shadow of `get?`: the key-presence fast path matches the value
+denotation. The bridge that lets the set recover its `contains`-membership laws from the generic
+`get?` laws. -/
+theorem contains_eq_isSome (k : Nat) (t : PTree L) : contains k t = (get? k t).isSome := by
+  induction t using contains.induct (k := k) with
+  | case1 => simp [contains_nil, get?_nil]
+  | case2 pfx leaf =>
+    rw [contains_tip, get?_tip]
+    by_cases hp : (k >>> 5 == pfx) = true
+    · rw [if_pos hp, hp, Bool.true_and, LeafOps.contains_eq_isSome]
+    · simp only [Bool.not_eq_true] at hp
+      simp [hp]
+  | case3 pfx level mask kids hb hidx ih =>
+    rw [contains_bin, get?_bin, if_pos hb, hb, Bool.true_and, childAt,
+        Array.getElem?_eq_getElem hidx, Option.getD_some]
+    exact ih
+  | case4 pfx level mask kids hb hidx =>
+    rw [contains_bin, get?_bin, if_pos hb, hb, Bool.true_and, childAt,
+        Array.getElem?_eq_none (Nat.le_of_not_lt hidx), Option.getD_none]
+    simp [contains_nil, get?_nil]
+  | case5 pfx level mask kids hb =>
+    simp only [Bool.not_eq_true] at hb
+    rw [contains_bin, get?_bin, hb, Bool.false_and]
+    simp
+
+/-- Every key a subtree holds hangs under slot `c` at level `l` and shares prefix `p`. The routing
+content of `WF`'s `bin` clause, named so the merge proofs (`join`/`insert`/`union`) can carry it. -/
+def AlignedAt (l : Nat) (c : UInt32) (p : Nat) (t : PTree L) : Prop :=
+  ∀ k, contains k t = true → chunk k l = c ∧ prefixAbove k l = p
+
+/-- Well-formedness: the canonical-shape invariant `contains` relies on.
+* a `tip` carries a non-empty leaf;
+* a `bin pfx level mask kids` branches at `level ≥ 1`, stores its present children compactly
+  (`kids.size = popCount mask`), is path-compression-minimal (`≥ 2` children), every child is WF
+  and non-empty (`≠ nil`), and — the routing invariant (`AlignedAt`) — every key a present child
+  holds agrees with the slot it hangs under and the branch prefix. -/
+def WF : PTree L → Prop
+  | .nil => True
+  | .tip _ leaf => LeafOps.isEmpty leaf = false
+  | .bin pfx level mask kids =>
+      0 < level
+      ∧ kids.size = popCount mask
+      ∧ 2 ≤ popCount mask
+      ∧ (∀ c ∈ kids, WF c)
+      ∧ (∀ c ∈ kids, c ≠ .nil)
+      ∧ (∀ c, c < 32 → testBit mask c = true → AlignedAt level c pfx (childAt mask kids c))
+termination_by t => sizeOf t
+decreasing_by
+  simp_wf
+  rename_i hc
+  have := Array.sizeOf_lt_of_mem hc
+  omega
+
+/-- The empty collection is well-formed. -/
+theorem WF_empty : WF (empty : PTree L) := by rw [empty, WF]; trivial
+
+/-- A singleton is well-formed (one non-empty `tip`). -/
+theorem WF_singleton (k : Nat) (v : V) : WF (singleton k v : PTree L) := by
+  rw [singleton, WF]; exact LeafOps.insert_ne_empty _ _ _
+
+/-- `k >>> 5` is `k / 32` — the high bits a `tip` stores as its prefix. -/
+private theorem shiftRight5_eq (k : Nat) : k >>> 5 = k / 32 := by rw [Nat.shiftRight_eq_div_pow]
+
+/-- A key's bottom chunk is its residue mod 32. -/
+private theorem chunk0_eq (k : Nat) : chunk k 0 = UInt32.ofNat (k % 32) := by
+  unfold chunk
+  congr 1
+  rw [Nat.mul_zero, Nat.shiftRight_zero, show (31 : Nat) = 2 ^ 5 - 1 from rfl,
+      Nat.and_two_pow_sub_one_eq_mod]
+
+/-- A `Nat` is pinned by its high bits (`>>> 5`) and bottom chunk: the prefix/chunk split a `tip`
+stores is lossless. Backs `contains_singleton`. -/
+private theorem key_eq_iff (k j : Nat) :
+    k = j ↔ (k >>> 5 = j >>> 5 ∧ chunk k 0 = chunk j 0) := by
+  refine ⟨fun h => h ▸ ⟨rfl, rfl⟩, fun ⟨hdiv, hmod⟩ => ?_⟩
+  rw [shiftRight5_eq, shiftRight5_eq] at hdiv
+  rw [chunk0_eq, chunk0_eq] at hmod
+  have hm : k % 32 = j % 32 := by
+    have hk : k % 32 < UInt32.size := Nat.lt_trans (Nat.mod_lt _ (by decide)) (by decide)
+    have hj : j % 32 < UInt32.size := Nat.lt_trans (Nat.mod_lt _ (by decide)) (by decide)
+    have := congrArg UInt32.toNat hmod
+    rwa [UInt32.toNat_ofNat_of_lt' hk, UInt32.toNat_ofNat_of_lt' hj] at this
+  omega
+
+/-- The leaf of a singleton holds exactly the inserted slot. -/
+private theorem leaf_contains_singleton (i j : UInt32) (v : V) (hi : i < 32) (hj : j < 32) :
+    LeafOps.contains (LeafOps.insert (LeafOps.empty : L) i v) j = (j == i) := by
+  rw [LeafOps.contains_eq_isSome, LeafOps.get?_insert LeafOps.empty i j v hi hj]
+  by_cases h : j = i
+  · rw [if_pos h, h]; simp
+  · rw [if_neg h, LeafOps.get?_empty, beq_eq_false_iff_ne.mpr h]; rfl
+
+/-- Membership in a singleton is key equality — the `get?_singleton` seam for the set. -/
+theorem contains_singleton (k j : Nat) (v : V) : contains k (singleton j v : PTree L) = true ↔ k = j := by
+  rw [singleton, contains_tip,
+      leaf_contains_singleton (chunk j 0) (chunk k 0) v (chunk_lt _ _) (chunk_lt _ _),
+      Bool.and_eq_true, beq_iff_eq, beq_iff_eq, key_eq_iff k j]
+
+/-! ### Non-emptiness
+
+The canonical invariant `WF` forbids `nil` children (a `nil` child at a present slot would carry no
+keys, so it could be dropped without changing membership — exactly what would break `ext`). These
+structural facts let the merge/insert proofs discharge that clause: the operations never produce a
+`nil`. -/
+
+/-- A singleton is a `tip`, never empty. -/
+theorem singleton_ne_nil (k : Nat) (v : V) : (singleton k v : PTree L) ≠ .nil := by
+  simp [singleton]
+
+/-- `insert` always yields a `tip` or a `bin`, never `nil`. -/
+theorem insert_ne_nil (k : Nat) (v : V) (t : PTree L) : insert k v t ≠ .nil := by
+  cases t <;> simp only [insert] <;> (repeat' split) <;> simp [join, singleton]
+
+/-- Union with a non-empty operand is non-empty: every non-`nil` shape feeds a `tip`/`bin`/`join`
+result. -/
+theorem unionU_ne_nil_of_left (c : V → V → V) (a b : PTree L) (h : a ≠ .nil) :
+    unionU c a b ≠ .nil := by
+  cases a with
+  | nil => exact absurd rfl h
+  | tip p1 b1 => cases b <;> simp only [unionU] <;> (repeat' split) <;> simp [join]
+  | bin p1 l1 m1 k1 => cases b <;> simp only [unionU] <;> (repeat' split) <;> simp [join]
+
 end PTree
 end NatCol
