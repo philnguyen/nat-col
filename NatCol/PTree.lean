@@ -294,12 +294,21 @@ theorem contains_bin (k pfx level : Nat) (mask : UInt32) (kids : Array PTree) :
     simp only [Bool.not_eq_true] at hb
     rw [hb, Bool.false_and]
 
+/-- Membership on a `tip`: the prefix must match and the bottom chunk's bit must be set. -/
+theorem contains_tip (j pfx : Nat) (bits : UInt32) :
+    contains j (.tip pfx bits) = (j >>> 5 == pfx && testBit bits (chunk j 0)) := by rw [contains]
+
+/-- Every key a subtree holds hangs under slot `c` at level `l` and shares prefix `p`. The routing
+content of `WF`'s `bin` clause, named so the merge proofs (`join`/`insert`/`union`) can carry it. -/
+def AlignedAt (l : Nat) (c : UInt32) (p : Nat) (t : PTree) : Prop :=
+  ∀ k, contains k t = true → chunk k l = c ∧ prefixAbove k l = p
+
 /-- Well-formedness: the canonical-shape invariant `contains` relies on.
 * a `tip` carries a non-empty bitset;
 * a `bin pfx level mask kids` branches at `level ≥ 1`, stores its present children compactly
   (`kids.size = popCount mask`), is path-compression-minimal (`≥ 2` children), every child is WF,
-  and — the routing invariant — every key a present child holds agrees with the slot it hangs under
-  (`chunk k level = c`) and the branch prefix (`prefixAbove k level = pfx`). -/
+  and — the routing invariant (`AlignedAt`) — every key a present child holds agrees with the slot
+  it hangs under (`chunk k level = c`) and the branch prefix (`prefixAbove k level = pfx`). -/
 def WF : PTree → Prop
   | .nil => True
   | .tip _ bits => bits ≠ 0
@@ -308,9 +317,7 @@ def WF : PTree → Prop
       ∧ kids.size = popCount mask
       ∧ 2 ≤ popCount mask
       ∧ (∀ c ∈ kids, WF c)
-      ∧ (∀ c, c < 32 → testBit mask c = true →
-            ∀ k, contains k (childAt mask kids c) = true →
-               chunk k level = c ∧ prefixAbove k level = pfx)
+      ∧ (∀ c, c < 32 → testBit mask c = true → AlignedAt level c pfx (childAt mask kids c))
 termination_by t => sizeOf t
 decreasing_by
   simp_wf
@@ -354,6 +361,135 @@ theorem contains_singleton (k j : Nat) : contains k (singleton j) = true ↔ k =
   rw [singleton, contains, testBit_setBit 0 (chunk j 0) (chunk k 0) (chunk_lt _ _) (chunk_lt _ _),
       testBit_zero, Bool.false_or, Bool.and_eq_true, beq_iff_eq, beq_iff_eq, key_eq_iff k j]
   exact ⟨fun ⟨h1, h2⟩ => ⟨h1, h2.symm⟩, fun ⟨h1, h2⟩ => ⟨h1, h2.symm⟩⟩
+
+/-! ### The `join` seams
+
+`join ka a kb b` builds a fresh 2-slot `bin` over two subtrees with divergent prefixes. The two
+slots `ca = chunk ka l`, `cb = chunk kb l` are distinct, so membership splits cleanly. These are the
+`get?_join` analogues for the prefix-divergent case of `insert`/`union`; both are stated on the
+constructed `bin` and parametrized by the slot alignments, keeping the `branchLevel` arithmetic at
+the call sites. -/
+
+private theorem arrayIndex_zero (i : UInt32) : arrayIndex 0 i = 0 := by
+  unfold arrayIndex
+  rw [show ((0 : UInt32) &&& lowerMask i) = 0 from by bv_decide]; rfl
+
+private theorem arrayIndex_self_setBit0 (i : UInt32) : arrayIndex (setBit 0 i) i = 0 := by
+  rw [arrayIndex_setBit_self, arrayIndex_zero]
+
+private theorem testBit_setBit0_ne (i j : UInt32) (hi : i < 32) (hj : j < 32) (h : i ≠ j) :
+    testBit (setBit 0 i) j = false := by
+  rw [testBit_setBit 0 i j hi hj, testBit_zero, Bool.false_or, beq_eq_false_iff_ne.mpr h]
+
+private theorem uint32_not_lt_of_gt {a b : UInt32} (h : a > b) : ¬ a < b := by
+  intro h2
+  have := UInt32.lt_iff_toNat_lt.mp h
+  have := UInt32.lt_iff_toNat_lt.mp h2
+  omega
+
+/-- The slot-`ca` child of a join is its first operand. -/
+private theorem childAt_join_ca (ca cb : UInt32) (a b : PTree)
+    (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb) :
+    childAt (setBit (setBit 0 ca) cb) (if ca < cb then #[a, b] else #[b, a]) ca = a := by
+  unfold childAt
+  rcases lt_or_gt_uint32 hne with hlt | hgt
+  · rw [if_pos hlt, arrayIndex_setBit_of_le (setBit 0 ca) cb ca hcb hca (uint32_le_of_lt hlt),
+        arrayIndex_self_setBit0]
+    rfl
+  · rw [if_neg (uint32_not_lt_of_gt hgt),
+        arrayIndex_setBit_of_gt (setBit 0 ca) cb ca hcb hca hgt (testBit_setBit0_ne ca cb hca hcb hne),
+        arrayIndex_self_setBit0]
+    rfl
+
+/-- The slot-`cb` child of a join is its second operand. -/
+private theorem childAt_join_cb (ca cb : UInt32) (a b : PTree)
+    (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb) :
+    childAt (setBit (setBit 0 ca) cb) (if ca < cb then #[a, b] else #[b, a]) cb = b := by
+  unfold childAt
+  rcases lt_or_gt_uint32 hne with hlt | hgt
+  · rw [if_pos hlt, arrayIndex_setBit_self,
+        arrayIndex_setBit_of_gt 0 ca cb hca hcb hlt (testBit_zero ca), arrayIndex_zero]
+    rfl
+  · rw [if_neg (uint32_not_lt_of_gt hgt), arrayIndex_setBit_self,
+        arrayIndex_setBit_of_le 0 ca cb hca hcb (uint32_le_of_lt hgt), arrayIndex_zero]
+    rfl
+
+private theorem testBit_join_mask (ca cb s : UInt32) (hca : ca < 32) (hcb : cb < 32) (hs : s < 32) :
+    testBit (setBit (setBit 0 ca) cb) s = ((ca == s) || (cb == s)) := by
+  rw [testBit_setBit (setBit 0 ca) cb s hcb hs, testBit_setBit 0 ca s hca hs, testBit_zero,
+      Bool.false_or, Bool.or_comm]
+
+private theorem popCount_join_mask (ca cb : UInt32) (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb) :
+    popCount (setBit (setBit 0 ca) cb) = 2 := by
+  rw [popCount_setBit _ _ (testBit_setBit0_ne ca cb hca hcb hne),
+      popCount_setBit _ _ (testBit_zero ca)]
+  rfl
+
+private theorem mem_pair {c x y : PTree} (h : c ∈ (#[x, y] : Array PTree)) : c = x ∨ c = y := by
+  simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at h
+  exact h
+
+/-- Membership in a `join` of two slot-aligned subtrees is membership in either. The `get?_join`
+seam for a prefix-divergent insert/union: the two subtrees route to distinct slots, so no key can
+sit in both. -/
+theorem contains_join (j p l : Nat) (ca cb : UInt32) (a b : PTree)
+    (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb)
+    (ha : AlignedAt l ca p a) (hb : AlignedAt l cb p b) :
+    contains j (.bin p l (setBit (setBit 0 ca) cb) (if ca < cb then #[a, b] else #[b, a]))
+      = (contains j a || contains j b) := by
+  rw [contains_bin, testBit_join_mask ca cb (chunk j l) hca hcb (chunk_lt j l)]
+  by_cases hjca : chunk j l = ca
+  · rw [hjca, beq_self_eq_true, Bool.true_or, Bool.true_and,
+        childAt_join_ca ca cb a b hca hcb hne]
+    have hjb : contains j b = false := by
+      cases hcon : contains j b with
+      | true => have := (hb j hcon).1; rw [hjca] at this; exact absurd this hne
+      | false => rfl
+    rw [hjb, Bool.or_false]
+  · by_cases hjcb : chunk j l = cb
+    · rw [hjcb, beq_self_eq_true, Bool.or_true, Bool.true_and,
+          childAt_join_cb ca cb a b hca hcb hne]
+      have hja : contains j a = false := by
+        cases hcon : contains j a with
+        | true => have := (ha j hcon).1; rw [hjcb] at this; exact absurd this.symm hne
+        | false => rfl
+      rw [hja, Bool.false_or]
+    · rw [beq_eq_false_iff_ne.mpr (fun h => hjca h.symm),
+          beq_eq_false_iff_ne.mpr (fun h => hjcb h.symm), Bool.or_false, Bool.false_and]
+      have hja : contains j a = false := by
+        cases hcon : contains j a with
+        | true => exact absurd (ha j hcon).1 hjca
+        | false => rfl
+      have hjb : contains j b = false := by
+        cases hcon : contains j b with
+        | true => exact absurd (hb j hcon).1 hjcb
+        | false => rfl
+      rw [hja, hjb, Bool.or_false]
+
+/-- A `join` of two well-formed, slot-aligned subtrees is well-formed. The `bin` it builds is
+2-child path-compression-minimal by construction, and its routing invariant is exactly the two
+alignments. -/
+theorem WF_join (p l : Nat) (ca cb : UInt32) (a b : PTree)
+    (hl : 0 < l) (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb)
+    (ha : AlignedAt l ca p a) (hb : AlignedAt l cb p b) (hwa : WF a) (hwb : WF b) :
+    WF (.bin p l (setBit (setBit 0 ca) cb) (if ca < cb then #[a, b] else #[b, a])) := by
+  rw [WF]
+  refine ⟨hl, ?_, ?_, ?_, ?_⟩
+  · rw [popCount_join_mask ca cb hca hcb hne]; split <;> rfl
+  · rw [popCount_join_mask ca cb hca hcb hne]; exact Nat.le_refl 2
+  · intro c hc
+    have hcab : c = a ∨ c = b := by
+      split at hc
+      · exact mem_pair hc
+      · exact (mem_pair hc).symm
+    rcases hcab with rfl | rfl
+    · exact hwa
+    · exact hwb
+  · intro s hs hts
+    rw [testBit_join_mask ca cb s hca hcb hs, Bool.or_eq_true, beq_iff_eq, beq_iff_eq] at hts
+    rcases hts with hsa | hsb
+    · subst hsa; rw [childAt_join_ca ca cb a b hca hcb hne]; exact ha
+    · subst hsb; rw [childAt_join_cb ca cb a b hca hcb hne]; exact hb
 
 end PTree
 end NatCol
