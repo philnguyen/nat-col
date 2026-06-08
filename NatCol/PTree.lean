@@ -491,5 +491,96 @@ theorem WF_join (p l : Nat) (ca cb : UInt32) (a b : PTree)
     · subst hsa; rw [childAt_join_ca ca cb a b hca hcb hne]; exact ha
     · subst hsb; rw [childAt_join_cb ca cb a b hca hcb hne]; exact hb
 
+/-! ### Alignment: a well-formed tree's keys share a high prefix
+
+The `join` seams above need their operands `AlignedAt` a common level. These lemmas supply that: a
+non-empty subtree's keys all agree above its own branch level, so it is aligned at every level
+strictly above. This is what lets a prefix-divergent `insert`/`union` slot an existing subtree
+under a fresh branch. -/
+
+/-- A low part below `2^n` does not survive a right shift by `n`: `(p <<< n ||| j) >>> n = p`. The
+bit-level core of the `someKey` high-bit facts. -/
+private theorem shiftLeft_lor_shiftRight (p j n : Nat) (hj : j < 2 ^ n) :
+    (p <<< n ||| j) >>> n = p := by
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [Nat.testBit_shiftRight, Nat.testBit_or, Nat.testBit_shiftLeft]
+  have hjf : Nat.testBit j (n + i) = false :=
+    Nat.testBit_lt_two_pow (Nat.lt_of_lt_of_le hj (Nat.pow_le_pow_right (by decide) (by omega)))
+  rw [hjf, Bool.or_false]
+  simp [Nat.add_sub_cancel_left]
+
+/-- Agreement on a right shift propagates to any larger shift (the higher bits are a suffix). -/
+private theorem shiftRight_mono_eq {k m a b : Nat} (h : k >>> a = m >>> a) (hab : a ≤ b) :
+    k >>> b = m >>> b := by
+  obtain ⟨d, rfl⟩ := Nat.exists_eq_add_of_le hab
+  rw [Nat.shiftRight_add, Nat.shiftRight_add, h]
+
+private theorem chunk_eq_of_shiftRight_eq {k m l : Nat} (h : k >>> (5 * l) = m >>> (5 * l)) :
+    chunk k l = chunk m l := by unfold chunk; rw [h]
+
+private theorem prefixAbove_eq_of_shiftRight_eq {k m l : Nat}
+    (h : k >>> (5 * (l + 1)) = m >>> (5 * (l + 1))) : prefixAbove k l = prefixAbove m l := by
+  unfold prefixAbove; exact h
+
+/-- A non-empty `tip`'s representative key carries the prefix `pfx` above the bottom chunk. -/
+private theorem someKey_tip_shiftRight5 (pfx : Nat) (bits : UInt32) (hb : bits ≠ 0) :
+    someKey (.tip pfx bits) >>> 5 = pfx := by
+  show ((pfx <<< 5) ||| (lowestSetIdx bits).toNat) >>> 5 = pfx
+  apply shiftLeft_lor_shiftRight
+  have h := UInt32.lt_iff_toNat_lt.mp (lowestSetIdx_lt bits hb)
+  rw [show (32 : UInt32).toNat = 32 from by decide] at h
+  exact h
+
+/-- A `bin`'s representative key carries the branch prefix `pfx` above `level`. -/
+private theorem someKey_bin_prefixAbove (pfx level : Nat) (mask : UInt32) (kids : Array PTree)
+    (hm : mask ≠ 0) : prefixAbove (someKey (.bin pfx level mask kids)) level = pfx := by
+  show ((pfx <<< (5 * (level + 1))) ||| ((lowestSetIdx mask).toNat <<< (5 * level)))
+        >>> (5 * (level + 1)) = pfx
+  apply shiftLeft_lor_shiftRight
+  have hlsi : (lowestSetIdx mask).toNat < 32 := by
+    have h := UInt32.lt_iff_toNat_lt.mp (lowestSetIdx_lt mask hm)
+    rwa [show (32 : UInt32).toNat = 32 from by decide] at h
+  rw [Nat.shiftLeft_eq, show 5 * (level + 1) = 5 * level + 5 from by omega, Nat.pow_add]
+  calc (lowestSetIdx mask).toNat * 2 ^ (5 * level)
+      < 32 * 2 ^ (5 * level) :=
+        Nat.mul_lt_mul_of_pos_right hlsi (Nat.pow_pos (by decide))
+    _ = 2 ^ (5 * level) * 2 ^ 5 := by rw [Nat.mul_comm]
+
+/-- A non-empty `tip` is aligned at every level `≥ 1`: all its keys agree with the representative
+above the bottom chunk. -/
+theorem aligned_tip (pfx : Nat) (bits : UInt32) (hb : bits ≠ 0) (l : Nat) (hl : 0 < l) :
+    AlignedAt l (chunk (someKey (.tip pfx bits)) l) (prefixAbove (someKey (.tip pfx bits)) l)
+      (.tip pfx bits) := by
+  intro k hk
+  rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hk
+  have hk5 : k >>> 5 = someKey (.tip pfx bits) >>> 5 := by
+    rw [someKey_tip_shiftRight5 pfx bits hb]; exact hk.1
+  exact ⟨chunk_eq_of_shiftRight_eq (shiftRight_mono_eq hk5 (by omega)),
+         prefixAbove_eq_of_shiftRight_eq (shiftRight_mono_eq hk5 (by omega))⟩
+
+/-- A well-formed `bin` is aligned at every level strictly above its own: all its keys share the
+branch prefix `pfx`, hence agree above `level`. -/
+theorem aligned_bin (pfx level : Nat) (mask : UInt32) (kids : Array PTree)
+    (hwf : WF (.bin pfx level mask kids)) (l : Nat) (hl : level < l) :
+    AlignedAt l (chunk (someKey (.bin pfx level mask kids)) l)
+      (prefixAbove (someKey (.bin pfx level mask kids)) l) (.bin pfx level mask kids) := by
+  rw [WF] at hwf
+  obtain ⟨_, _, hpc, _, hrout⟩ := hwf
+  have hm : mask ≠ 0 := by
+    intro h; rw [h, show popCount 0 = 0 from rfl] at hpc; omega
+  intro k hk
+  rw [contains_bin, Bool.and_eq_true] at hk
+  obtain ⟨htb, hcc⟩ := hk
+  have hkp : prefixAbove k level = pfx :=
+    (hrout (chunk k level) (chunk_lt _ _) htb k hcc).2
+  have hsp : prefixAbove (someKey (.bin pfx level mask kids)) level = pfx :=
+    someKey_bin_prefixAbove pfx level mask kids hm
+  have hkey : k >>> (5 * (level + 1)) = someKey (.bin pfx level mask kids) >>> (5 * (level + 1)) := by
+    show prefixAbove k level = prefixAbove (someKey (.bin pfx level mask kids)) level
+    rw [hkp, hsp]
+  exact ⟨chunk_eq_of_shiftRight_eq (shiftRight_mono_eq hkey (by omega)),
+         prefixAbove_eq_of_shiftRight_eq (shiftRight_mono_eq hkey (by omega))⟩
+
 end PTree
 end NatCol
