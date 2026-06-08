@@ -259,5 +259,101 @@ private def oddK : List Nat := (List.range 400).map (2 * · + 1)
 #guard (sparseK ++ List.range 50).all fun k =>
   ((ofList sparseK).union (ofList (List.range 50))).contains k == true
 
+----------------------------------------------------------------------------------------------------
+-- Theorems
+--
+-- The denotational layer: membership (`contains`) is the set's semantics, and a well-formedness
+-- predicate `WF` captures the canonical shape the operations maintain and the membership proofs
+-- rely on. The `contains_*` lemmas are the seams the (eventual) lattice/order suite routes through,
+-- mirroring `Tree`'s `get?_*` seams but over the height-erased Patricia shape.
+----------------------------------------------------------------------------------------------------
+
+/-- Total child accessor: the subtree a `bin`'s mask routes slot `c` to, `nil` when the slot is
+absent (or the compact index is out of range). Gives every membership/merge proof one total
+accessor in place of the raw `dite` bounds juggling. -/
+@[inline] def childAt (mask : UInt32) (kids : Array PTree) (c : UInt32) : PTree :=
+  (kids[arrayIndex mask c]?).getD .nil
+
+/-- The empty set contains nothing. -/
+theorem contains_nil (k : Nat) : contains k .nil = false := by rw [contains]
+
+/-- Membership on a `bin` factors through `childAt`: route by the level's chunk, then recurse.
+Holds unconditionally — an absent slot and an out-of-range index both read `nil`, which contains
+nothing — so it is the structural rewrite every `bin` membership proof opens with. -/
+theorem contains_bin (k pfx level : Nat) (mask : UInt32) (kids : Array PTree) :
+    contains k (.bin pfx level mask kids)
+      = (testBit mask (chunk k level) && contains k (childAt mask kids (chunk k level))) := by
+  rw [contains]; simp only [childAt]
+  by_cases hb : testBit mask (chunk k level) = true
+  · rw [if_pos hb, hb, Bool.true_and]
+    by_cases hidx : arrayIndex mask (chunk k level) < kids.size
+    · rw [dif_pos hidx, Array.getElem?_eq_getElem hidx, Option.getD_some]
+    · rw [dif_neg hidx, Array.getElem?_eq_none (Nat.le_of_not_lt hidx), Option.getD_none,
+          contains_nil]
+  · rw [if_neg hb]
+    simp only [Bool.not_eq_true] at hb
+    rw [hb, Bool.false_and]
+
+/-- Well-formedness: the canonical-shape invariant `contains` relies on.
+* a `tip` carries a non-empty bitset;
+* a `bin pfx level mask kids` branches at `level ≥ 1`, stores its present children compactly
+  (`kids.size = popCount mask`), is path-compression-minimal (`≥ 2` children), every child is WF,
+  and — the routing invariant — every key a present child holds agrees with the slot it hangs under
+  (`chunk k level = c`) and the branch prefix (`prefixAbove k level = pfx`). -/
+def WF : PTree → Prop
+  | .nil => True
+  | .tip _ bits => bits ≠ 0
+  | .bin pfx level mask kids =>
+      0 < level
+      ∧ kids.size = popCount mask
+      ∧ 2 ≤ popCount mask
+      ∧ (∀ c ∈ kids, WF c)
+      ∧ (∀ c, c < 32 → testBit mask c = true →
+            ∀ k, contains k (childAt mask kids c) = true →
+               chunk k level = c ∧ prefixAbove k level = pfx)
+termination_by t => sizeOf t
+decreasing_by
+  simp_wf
+  rename_i hc
+  have := Array.sizeOf_lt_of_mem hc
+  omega
+
+/-- The empty set is well-formed. -/
+theorem WF_empty : WF empty := by rw [empty, WF]; trivial
+
+/-- A singleton is well-formed (one non-empty `tip`). -/
+theorem WF_singleton (k : Nat) : WF (singleton k) := by
+  rw [singleton, WF]; exact setBit_ne_zero 0 (chunk k 0)
+
+/-- `k >>> 5` is `k / 32` — the high bits a `tip` stores as its prefix. -/
+private theorem shiftRight5_eq (k : Nat) : k >>> 5 = k / 32 := by rw [Nat.shiftRight_eq_div_pow]
+
+/-- A key's bottom chunk is its residue mod 32. -/
+private theorem chunk0_eq (k : Nat) : chunk k 0 = UInt32.ofNat (k % 32) := by
+  unfold chunk
+  congr 1
+  rw [Nat.mul_zero, Nat.shiftRight_zero, show (31 : Nat) = 2 ^ 5 - 1 from rfl,
+      Nat.and_two_pow_sub_one_eq_mod]
+
+/-- A `Nat` is pinned by its high bits (`>>> 5`) and bottom chunk: the prefix/chunk split a `tip`
+stores is lossless. Backs `contains_singleton`. -/
+private theorem key_eq_iff (k j : Nat) :
+    k = j ↔ (k >>> 5 = j >>> 5 ∧ chunk k 0 = chunk j 0) := by
+  refine ⟨fun h => h ▸ ⟨rfl, rfl⟩, fun ⟨hdiv, hmod⟩ => ?_⟩
+  rw [shiftRight5_eq, shiftRight5_eq] at hdiv
+  rw [chunk0_eq, chunk0_eq] at hmod
+  have hm : k % 32 = j % 32 := by
+    have hk : k % 32 < UInt32.size := Nat.lt_trans (Nat.mod_lt _ (by decide)) (by decide)
+    have hj : j % 32 < UInt32.size := Nat.lt_trans (Nat.mod_lt _ (by decide)) (by decide)
+    have := congrArg UInt32.toNat hmod
+    rwa [UInt32.toNat_ofNat_of_lt' hk, UInt32.toNat_ofNat_of_lt' hj] at this
+  omega
+
+/-- Membership in a singleton is key equality — the `get?_singleton` seam for the set. -/
+theorem contains_singleton (k j : Nat) : contains k (singleton j) = true ↔ k = j := by
+  rw [singleton, contains, testBit_setBit 0 (chunk j 0) (chunk k 0) (chunk_lt _ _) (chunk_lt _ _),
+      testBit_zero, Bool.false_or, Bool.and_eq_true, beq_iff_eq, beq_iff_eq, key_eq_iff k j]
+  exact ⟨fun ⟨h1, h2⟩ => ⟨h1, h2.symm⟩, fun ⟨h1, h2⟩ => ⟨h1, h2.symm⟩⟩
+
 end PTree
 end NatCol
