@@ -3507,6 +3507,54 @@ theorem empty_union (a : PTree) (hwa : WF a) : union empty a = a := by
   rw [contains_union j empty a WF_empty hwa]
   simp only [empty, contains_nil, Bool.false_or]
 
+/-- Intersection is commutative. -/
+theorem meet_comm (a b : PTree) (hwa : WF a) (hwb : WF b) : meet a b = meet b a := by
+  refine ext _ _ (WF_meet a b hwa hwb) (WF_meet b a hwb hwa) (fun j => ?_)
+  rw [contains_meet j a b hwa hwb, contains_meet j b a hwb hwa, Bool.and_comm]
+
+/-- Intersection is associative. -/
+theorem meet_assoc (a b c : PTree) (hwa : WF a) (hwb : WF b) (hwc : WF c) :
+    meet (meet a b) c = meet a (meet b c) := by
+  refine ext _ _ (WF_meet _ c (WF_meet a b hwa hwb) hwc)
+    (WF_meet a _ hwa (WF_meet b c hwb hwc)) (fun j => ?_)
+  rw [contains_meet j _ c (WF_meet a b hwa hwb) hwc, contains_meet j a b hwa hwb,
+      contains_meet j a _ hwa (WF_meet b c hwb hwc), contains_meet j b c hwb hwc, Bool.and_assoc]
+
+/-- Intersection is idempotent. -/
+theorem meet_self (a : PTree) (hwa : WF a) : meet a a = a := by
+  refine ext _ _ (WF_meet a a hwa hwa) hwa (fun j => ?_)
+  rw [contains_meet j a a hwa hwa, Bool.and_self]
+
+/-- `empty` is a right annihilator for intersection. -/
+theorem meet_empty (a : PTree) (hwa : WF a) : meet a empty = empty := by
+  refine ext _ _ (WF_meet a empty hwa WF_empty) WF_empty (fun j => ?_)
+  rw [contains_meet j a empty hwa WF_empty]
+  simp only [empty, contains_nil, Bool.and_false]
+
+/-- `empty` is a left annihilator for intersection. -/
+theorem empty_meet (a : PTree) (hwa : WF a) : meet empty a = empty := by
+  refine ext _ _ (WF_meet empty a WF_empty hwa) WF_empty (fun j => ?_)
+  rw [contains_meet j empty a WF_empty hwa]
+  simp only [empty, contains_nil, Bool.false_and]
+
+/-- Intersection distributes over union. -/
+theorem meet_union_distrib (a b c : PTree) (hwa : WF a) (hwb : WF b) (hwc : WF c) :
+    meet a (union b c) = union (meet a b) (meet a c) := by
+  refine ext _ _ (WF_meet a _ hwa (WF_union b c hwb hwc))
+    (WF_union _ _ (WF_meet a b hwa hwb) (WF_meet a c hwa hwc)) (fun j => ?_)
+  rw [contains_meet j a _ hwa (WF_union b c hwb hwc), contains_union j b c hwb hwc,
+      contains_union j _ _ (WF_meet a b hwa hwb) (WF_meet a c hwa hwc),
+      contains_meet j a b hwa hwb, contains_meet j a c hwa hwc, Bool.and_or_distrib_left]
+
+/-- Union distributes over intersection. -/
+theorem union_meet_distrib (a b c : PTree) (hwa : WF a) (hwb : WF b) (hwc : WF c) :
+    union a (meet b c) = meet (union a b) (union a c) := by
+  refine ext _ _ (WF_union a _ hwa (WF_meet b c hwb hwc))
+    (WF_meet _ _ (WF_union a b hwa hwb) (WF_union a c hwa hwc)) (fun j => ?_)
+  rw [contains_union j a _ hwa (WF_meet b c hwb hwc), contains_meet j b c hwb hwc,
+      contains_meet j _ _ (WF_union a b hwa hwb) (WF_union a c hwa hwc),
+      contains_union j a b hwa hwb, contains_union j a c hwa hwc, Bool.or_and_distrib_left]
+
 /-- Inserting two keys commutes. -/
 theorem insert_comm (a b : Nat) (t : PTree) (hwt : WF t) :
     insert a (insert b t) = insert b (insert a t) := by
@@ -3862,6 +3910,29 @@ theorem union_subset (a b c : PTree) (hwa : WF a) (hwb : WF b) (hwc : WF c)
   · rw [hca, Bool.false_or] at hj
     exact (subset_iff b c hwb hwc).mp hbc j hj
   · exact (subset_iff a c hwa hwc).mp hac j hca
+
+/-- The intersection is below the left operand. -/
+theorem meet_subset_left (a b : PTree) (hwa : WF a) (hwb : WF b) :
+    subset (meet a b) a = true := by
+  show subsetU (meet a b) a = true
+  rw [subset_iff (meet a b) a (WF_meet a b hwa hwb) hwa]
+  intro j hj; rw [contains_meet j a b hwa hwb] at hj; exact (and_split hj).1
+
+/-- The intersection is below the right operand. -/
+theorem meet_subset_right (a b : PTree) (hwa : WF a) (hwb : WF b) :
+    subset (meet a b) b = true := by
+  show subsetU (meet a b) b = true
+  rw [subset_iff (meet a b) b (WF_meet a b hwa hwb) hwb]
+  intro j hj; rw [contains_meet j a b hwa hwb] at hj; exact (and_split hj).2
+
+/-- Intersection is the greatest lower bound: it lies above any common lower bound of both operands. -/
+theorem subset_meet (a b c : PTree) (hwa : WF a) (hwb : WF b) (hwc : WF c)
+    (hab : subset a b = true) (hac : subset a c = true) : subset a (meet b c) = true := by
+  show subsetU a (meet b c) = true
+  rw [subset_iff a (meet b c) hwa (WF_meet b c hwb hwc)]
+  intro j hj
+  rw [contains_meet j b c hwb hwc, (subset_iff a b hwa hwb).mp hab j hj,
+      (subset_iff a c hwa hwc).mp hac j hj, Bool.and_self]
 
 end PTree
 end NatCol
