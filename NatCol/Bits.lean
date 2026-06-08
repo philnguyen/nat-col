@@ -175,6 +175,15 @@ theorem testBit_of_clearLowest (m s : UInt32) (h : testBit (clearLowest m) s = t
     testBit m s = true := by
   unfold testBit clearLowest at *; bv_decide
 
+/-- Clearing the lowest set bit lowers the population count by one — the per-step size fact of the
+present-slot fold (`mergeKids` appends one child per cleared bit). -/
+theorem popCount_clearLowest (m : UInt32) (hm : m ≠ 0) :
+    popCount (clearLowest m) + 1 = popCount m := by
+  have key : popCountAux (clearLowest m) + 1 = popCountAux m := by
+    unfold popCountAux clearLowest at *; bv_decide
+  show (popCountAux (clearLowest m)).toNat + 1 = (popCountAux m).toNat
+  rw [← key]; exact (toNat_add_one_of_le (popCountAux_toNat_le (clearLowest m))).symm
+
 /-- Setting an unset bit raises the population count by one. -/
 theorem popCount_setBit (m i : UInt32) (h : testBit m i = false) :
     popCount (setBit m i) = popCount m + 1 := by
@@ -224,6 +233,26 @@ theorem arrayIndex_lt (m i : UInt32) (h : testBit m i = true) :
     unfold popCountAux lowerMask testBit at *; bv_decide
   show (popCountAux (m &&& lowerMask i)).toNat < (popCountAux m).toNat
   exact UInt32.lt_iff_toNat_lt.mp key
+
+/-- The lowest set bit sits at compact index `0` (nothing is below it). The base of the
+present-slot fold's indexing: the first child appended lands at position `0`. -/
+theorem arrayIndex_lowestSetIdx (m : UInt32) (hm : m ≠ 0) :
+    arrayIndex m (lowestSetIdx m) = 0 := by
+  have key : popCountAux (m &&& lowerMask (lowestSetIdx m)) = 0 := by
+    unfold lowestSetIdx lowerMask popCountAux at *; bv_decide
+  show (popCountAux (m &&& lowerMask (lowestSetIdx m))).toNat = 0
+  rw [key]; rfl
+
+/-- Clearing the lowest set bit drops every other set slot's compact index by one (the just-removed
+lowest bit no longer counts below it). The fold's inductive index shift. -/
+theorem arrayIndex_clearLowest_of_ne (m c : UInt32) (hc : c < 32)
+    (htb : testBit m c = true) (hne : c ≠ lowestSetIdx m) :
+    arrayIndex m c = arrayIndex (clearLowest m) c + 1 := by
+  have key : popCountAux (m &&& lowerMask c) = popCountAux (clearLowest m &&& lowerMask c) + 1 := by
+    unfold lowestSetIdx clearLowest lowerMask testBit popCountAux at *; bv_decide
+  show (popCountAux (m &&& lowerMask c)).toNat
+      = (popCountAux (clearLowest m &&& lowerMask c)).toNat + 1
+  rw [key]; exact toNat_add_one_of_le (popCountAux_toNat_le (clearLowest m &&& lowerMask c))
 
 /-- No bit of `0` is set. -/
 theorem testBit_zero (i : UInt32) : testBit 0 i = false := by unfold testBit; bv_decide
