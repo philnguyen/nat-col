@@ -2052,5 +2052,91 @@ together they make `union` a verified operation the lattice/order layer can buil
 theorem WF_union (a b : PTree) (hwa : WF a) (hwb : WF b) : WF (union a b) := by
   rw [union]; exact WF_unionU a b hwa hwb
 
+/-! ### Extensionality
+
+`contains` determines a well-formed tree uniquely: two `WF` trees with the same membership are equal
+(`ext`). This lifts the `contains_*` seams to structural equalities, the bridge the lattice/order
+laws cross (`union_comm` etc. follow from `ext` after matching membership pointwise). The proof rests
+on `exists_mem` (a non-empty `WF` tree has a witness key) plus the routing invariant, which together
+pin a `bin`'s level, prefix, mask, and children from its key set. -/
+
+/-- A concrete member key: descend to the first child of every `bin`, then read a tip's lowest set
+bit. Unlike `someKey` (which zeroes the bits below a node's level — only a prefix probe), this
+follows a real path to a leaf, so a `WF` tree genuinely contains it. -/
+private def witnessKey : PTree → Nat
+  | .nil => 0
+  | .tip pfx bits => (lowestSetIdx bits).toNat + 32 * pfx
+  | .bin _ _ _ kids => if h : 0 < kids.size then witnessKey (kids[0]'h) else 0
+decreasing_by
+  simp_wf
+  rename_i h
+  have := Array.sizeOf_lt_of_mem (Array.getElem_mem h)
+  omega
+
+/-- Adding a multiple of 32 leaves the bottom chunk unchanged. -/
+private theorem chunk_zero_add_mul (a b : Nat) : chunk (a + 32 * b) 0 = chunk a 0 := by
+  rw [chunk0_eq, chunk0_eq, Nat.add_mul_mod_self_left]
+
+/-- `witnessKey` names a real member of any well-formed non-empty tree: a tip's lowest set bit, or
+(recursively) a member of a `bin`'s first child — which routes back to that child by alignment. -/
+private theorem contains_witnessKey :
+    ∀ (t : PTree), WF t → t ≠ .nil → contains (witnessKey t) t = true := by
+  intro t
+  induction t using witnessKey.induct with
+  | case1 => intro _ hne; exact absurd rfl hne
+  | case2 pfx bits =>
+    intro hwf _
+    have hb : bits ≠ 0 := by rw [WF] at hwf; exact hwf
+    have hlo : (lowestSetIdx bits).toNat < 32 := by
+      have h := UInt32.lt_iff_toNat_lt.mp (lowestSetIdx_lt bits hb)
+      rwa [show (32 : UInt32).toNat = 32 from by decide] at h
+    rw [contains_tip, Bool.and_eq_true, beq_iff_eq, witnessKey]
+    refine ⟨?_, ?_⟩
+    · rw [Nat.shiftRight_eq_div_pow, show (2 : Nat) ^ 5 = 32 from rfl,
+          Nat.add_mul_div_left _ _ (by decide : 0 < 32), Nat.div_eq_of_lt hlo, Nat.zero_add]
+    · rw [chunk_zero_add_mul, chunk_toNat_zero _ (lowestSetIdx_lt bits hb)]
+      exact testBit_lowestSetIdx bits hb
+  | case3 pfx level mask kids h IH =>
+    intro hwf _
+    rw [WF] at hwf
+    obtain ⟨hlvl, hsize, hpc, hkidswf, hnonnil, hrout⟩ := hwf
+    have hm : mask ≠ 0 := by
+      intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+    have hwf0 : WF (kids[0]'h) := hkidswf _ (Array.getElem_mem h)
+    have hne0 : kids[0]'h ≠ .nil := hnonnil _ (Array.getElem_mem h)
+    have hmem0 : contains (witnessKey (kids[0]'h)) (kids[0]'h) = true := IH hwf0 hne0
+    have harr : arrayIndex mask (lowestSetIdx mask) = 0 := arrayIndex_lowestSetIdx mask hm
+    have hc0tb : testBit mask (lowestSetIdx mask) = true := testBit_lowestSetIdx mask hm
+    have hc0lt : lowestSetIdx mask < 32 := lowestSetIdx_lt mask hm
+    have hchild0 : childAt mask kids (lowestSetIdx mask) = kids[0]'h := by
+      unfold childAt; rw [harr, Array.getElem?_eq_getElem h, Option.getD_some]
+    have halign : AlignedAt level (lowestSetIdx mask) pfx (kids[0]'h) := by
+      have := hrout (lowestSetIdx mask) hc0lt hc0tb; rwa [hchild0] at this
+    have hcj : chunk (witnessKey (kids[0]'h)) level = lowestSetIdx mask := (halign _ hmem0).1
+    rw [show witnessKey (.bin pfx level mask kids) = witnessKey (kids[0]'h) from by
+          rw [witnessKey, dif_pos h],
+        contains_bin, hcj, hc0tb, Bool.true_and, hchild0]
+    exact hmem0
+  | case4 pfx level mask kids hns =>
+    intro hwf _
+    rw [WF] at hwf
+    obtain ⟨_, hsize, hpc, _, _, _⟩ := hwf
+    exact absurd (show 0 < kids.size by rw [hsize]; omega) hns
+
+/-- A non-empty well-formed tree has a member: `contains` is not identically `false`. -/
+theorem exists_mem (t : PTree) (hwf : WF t) (hne : t ≠ .nil) : ∃ j, contains j t = true :=
+  ⟨witnessKey t, contains_witnessKey t hwf hne⟩
+
+/-- The converse: a well-formed tree with no members is `nil`. The `nil` half of `ext`. -/
+theorem eq_nil_of_no_member (t : PTree) (hwf : WF t) (h : ∀ j, contains j t = false) : t = .nil := by
+  cases t with
+  | nil => rfl
+  | tip pfx bits =>
+    have hpos := contains_witnessKey _ hwf (fun hc => PTree.noConfusion hc)
+    rw [h] at hpos; exact absurd hpos (by decide)
+  | bin pfx level mask kids =>
+    have hpos := contains_witnessKey _ hwf (fun hc => PTree.noConfusion hc)
+    rw [h] at hpos; exact absurd hpos (by decide)
+
 end PTree
 end NatCol
