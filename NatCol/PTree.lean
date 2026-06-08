@@ -2273,6 +2273,354 @@ together they make `union` a verified operation the lattice/order layer can buil
 theorem WF_union (a b : PTree) (hwa : WF a) (hwb : WF b) : WF (union a b) := by
   rw [union]; exact WF_unionU a b hwa hwb
 
+/-! ### Intersection re-compression (`compactify`/`finalize`)
+
+`meetU`'s aligned-`bin` case intersects the shared mask child-by-child (`meetKids`), producing an
+array that may contain empty (`nil`) intersections. `compactify` drops those and recomputes the
+surviving mask; `finalize` then re-wraps (0 survivors → `nil`, 1 → lift the lone child, ≥ 2 →
+`bin`). The spec below pins down `compactify`'s output (its mask bits, its compact size, and that
+reading any present slot recovers the original child), from which the `contains`/`WF` behaviour of
+`finalize` follows. -/
+
+/-- The fold invariant of `compactify mask kids rem accM acc`, by strong induction on `rem.toNat`.
+Starting from a seed `(accM, acc)` whose bits lie strictly below the unprocessed mask `rem`, it
+keeps each non-empty child of `rem` lowest-first. The conclusion characterises the result mask
+bit-for-bit (`accM` plus the surviving bits of `rem`), its compact size, and that reading any
+present slot recovers `childAt mask kids`. -/
+private theorem compactify_spec (mask : UInt32) (kids : Array PTree) :
+    ∀ (n : Nat) (rem : UInt32), rem.toNat = n → ∀ (accM : UInt32) (acc : Array PTree),
+      acc.size = popCount accM →
+      (∀ c, c < 32 → testBit rem c = true → testBit accM c = false) →
+      (∀ c c', c < 32 → c' < 32 → testBit accM c = true → testBit rem c' = true → c < c') →
+      (∀ c, c < 32 → testBit accM c = true →
+        acc[arrayIndex accM c]? = some (childAt mask kids c)) →
+      (∀ c, c < 32 → testBit (compactify mask kids rem accM acc).1 c
+          = (testBit accM c || (testBit rem c && !isNil (childAt mask kids c))))
+      ∧ (compactify mask kids rem accM acc).2.size = popCount (compactify mask kids rem accM acc).1
+      ∧ (∀ c, c < 32 → testBit (compactify mask kids rem accM acc).1 c = true →
+          (compactify mask kids rem accM acc).2[arrayIndex (compactify mask kids rem accM acc).1 c]?
+            = some (childAt mask kids c)) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro rem hrem accM acc hP1 hP2 hP3 hP4
+    by_cases h0 : (rem == 0) = true
+    · have hr0 : rem = 0 := by simpa using h0
+      rw [compactify, dif_pos h0]
+      refine ⟨?_, hP1, ?_⟩
+      · intro c hc; rw [hr0, testBit_zero, Bool.false_and, Bool.or_false]
+      · intro c hc htb; exact hP4 c hc htb
+    · have hrem0 : rem ≠ 0 := by intro h; exact h0 (by rw [h]; rfl)
+      have hlo : lowestSetIdx rem < 32 := lowestSetIdx_lt rem hrem0
+      have hlotb : testBit rem (lowestSetIdx rem) = true := testBit_lowestSetIdx rem hrem0
+      have hlt : (clearLowest rem).toNat < n := by
+        rw [← hrem]; exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem hrem0)
+      by_cases hnil : isNil (childAt mask kids (lowestSetIdx rem)) = true
+      · -- skip: the lowest slot's intersection is empty, drop it
+        have hstep : compactify mask kids rem accM acc
+            = compactify mask kids (clearLowest rem) accM acc := by
+          rw [compactify, dif_neg h0, if_pos hnil]
+        have hP2' : ∀ c, c < 32 → testBit (clearLowest rem) c = true → testBit accM c = false :=
+          fun c hc htb => hP2 c hc (testBit_of_clearLowest rem c htb)
+        have hP3' : ∀ c c', c < 32 → c' < 32 → testBit accM c = true →
+            testBit (clearLowest rem) c' = true → c < c' :=
+          fun c c' hc hc' hacc htb => hP3 c c' hc hc' hacc (testBit_of_clearLowest rem c' htb)
+        obtain ⟨ihC1, ihC2, ihC3⟩ :=
+          IH (clearLowest rem).toNat hlt (clearLowest rem) rfl accM acc hP1 hP2' hP3' hP4
+        rw [hstep]
+        refine ⟨?_, ihC2, ihC3⟩
+        intro c hc
+        rw [ihC1 c hc]
+        by_cases hclo : c = lowestSetIdx rem
+        · subst hclo
+          rw [testBit_clearLowest_self rem hrem0, hlotb]
+          simp only [hnil, Bool.not_true, Bool.and_false]
+        · rw [testBit_clearLowest_of_ne rem c hc hclo]
+      · -- keep: the lowest slot survives, push it and set its bit
+        have hnf : isNil (childAt mask kids (lowestSetIdx rem)) = false := by
+          simpa using hnil
+        have hloacc : testBit accM (lowestSetIdx rem) = false := hP2 (lowestSetIdx rem) hlo hlotb
+        have hbelow : ∀ d, d < 32 → testBit accM d = true → d < lowestSetIdx rem :=
+          fun d hd hacc => hP3 d (lowestSetIdx rem) hd hlo hacc hlotb
+        have hstep : compactify mask kids rem accM acc
+            = compactify mask kids (clearLowest rem) (setBit accM (lowestSetIdx rem))
+                (acc.push (childAt mask kids (lowestSetIdx rem))) := by
+          rw [compactify, dif_neg h0, if_neg hnil]
+        have hP1' : (acc.push (childAt mask kids (lowestSetIdx rem))).size
+            = popCount (setBit accM (lowestSetIdx rem)) := by
+          rw [Array.size_push, hP1, popCount_setBit accM (lowestSetIdx rem) hloacc]
+        have hP2' : ∀ c, c < 32 → testBit (clearLowest rem) c = true →
+            testBit (setBit accM (lowestSetIdx rem)) c = false := by
+          intro c hc htb
+          have hcne : c ≠ lowestSetIdx rem := by
+            intro he; rw [he, testBit_clearLowest_self rem hrem0] at htb; exact absurd htb (by decide)
+          rw [testBit_setBit accM (lowestSetIdx rem) c hlo hc,
+              hP2 c hc (testBit_of_clearLowest rem c htb),
+              beq_eq_false_iff_ne.mpr (fun he => hcne he.symm)]
+          rfl
+        have hP3' : ∀ c c', c < 32 → c' < 32 → testBit (setBit accM (lowestSetIdx rem)) c = true →
+            testBit (clearLowest rem) c' = true → c < c' := by
+          intro c c' hc hc' hacc htb'
+          have hc'rem : testBit rem c' = true := testBit_of_clearLowest rem c' htb'
+          have hc'ne : c' ≠ lowestSetIdx rem := by
+            intro he; rw [he, testBit_clearLowest_self rem hrem0] at htb'
+            exact absurd htb' (by decide)
+          rw [testBit_setBit accM (lowestSetIdx rem) c hlo hc, Bool.or_eq_true] at hacc
+          rcases hacc with haccM | heq
+          · exact hP3 c c' hc hc' haccM hc'rem
+          · have heq' : lowestSetIdx rem = c := by simpa using heq
+            subst heq'
+            exact uint32_lt_of_le_of_ne (lowestSetIdx_le_of_testBit rem c' hc' hc'rem)
+              (fun he => hc'ne he.symm)
+        have hP4' : ∀ c, c < 32 → testBit (setBit accM (lowestSetIdx rem)) c = true →
+            (acc.push (childAt mask kids (lowestSetIdx rem)))[arrayIndex
+              (setBit accM (lowestSetIdx rem)) c]? = some (childAt mask kids c) := by
+          intro c hc htbc
+          by_cases hclo : c = lowestSetIdx rem
+          · subst hclo
+            rw [arrayIndex_setBit_self,
+                arrayIndex_eq_popCount_of_below accM (lowestSetIdx rem) hc hbelow, ← hP1,
+                Array.getElem?_push_size]
+          · have haccc : testBit accM c = true := by
+              rw [testBit_setBit accM (lowestSetIdx rem) c hlo hc, Bool.or_eq_true] at htbc
+              rcases htbc with h | h
+              · exact h
+              · have hcontra : lowestSetIdx rem = c := by simpa using h
+                exact absurd hcontra (fun he => hclo he.symm)
+            have hidxlt : arrayIndex accM c < acc.size := by
+              rw [hP1]; exact arrayIndex_lt accM c haccc
+            rw [arrayIndex_setBit_of_le accM (lowestSetIdx rem) c hlo hc
+                  (uint32_le_of_lt (hbelow c hc haccc)),
+                Array.getElem?_push_lt hidxlt, ← Array.getElem?_eq_getElem hidxlt]
+            exact hP4 c hc haccc
+        obtain ⟨ihC1, ihC2, ihC3⟩ :=
+          IH (clearLowest rem).toNat hlt (clearLowest rem) rfl (setBit accM (lowestSetIdx rem))
+            (acc.push (childAt mask kids (lowestSetIdx rem))) hP1' hP2' hP3' hP4'
+        rw [hstep]
+        refine ⟨?_, ihC2, ihC3⟩
+        intro c hc
+        rw [ihC1 c hc]
+        by_cases hclo : c = lowestSetIdx rem
+        · subst hclo
+          rw [testBit_setBit accM (lowestSetIdx rem) (lowestSetIdx rem) hlo hlo,
+              testBit_clearLowest_self rem hrem0, hloacc, hlotb, hnf]
+          simp
+        · rw [testBit_setBit accM (lowestSetIdx rem) c hlo hc,
+              beq_eq_false_iff_ne.mpr (fun he => hclo he.symm), Bool.or_false,
+              testBit_clearLowest_of_ne rem c hc hclo]
+
+/-- `compactify_spec` specialised to the top-level call (`accM = 0`, `acc = #[]`): the surviving
+mask has slot `c` iff `mask` did and the intersected child there is non-empty; the array stays
+compact; and reading any present slot recovers `childAt mask kids`. -/
+private theorem compactify_top (mask : UInt32) (kids : Array PTree) :
+    (∀ c, c < 32 → testBit (compactify mask kids mask 0 #[]).1 c
+        = (testBit mask c && !isNil (childAt mask kids c)))
+    ∧ (compactify mask kids mask 0 #[]).2.size = popCount (compactify mask kids mask 0 #[]).1
+    ∧ (∀ c, c < 32 → testBit (compactify mask kids mask 0 #[]).1 c = true →
+        (compactify mask kids mask 0 #[]).2[arrayIndex (compactify mask kids mask 0 #[]).1 c]?
+          = some (childAt mask kids c)) := by
+  obtain ⟨hM, hS, hR⟩ := compactify_spec mask kids mask.toNat mask rfl 0 #[]
+    rfl
+    (fun c _ _ => testBit_zero c)
+    (fun c c' _ _ hacc _ => by simp [testBit_zero] at hacc)
+    (fun c _ htb => by simp [testBit_zero] at htb)
+  refine ⟨?_, hS, hR⟩
+  intro c hc
+  rw [hM c hc, testBit_zero, Bool.false_or]
+
+/-- A short-circuit fact: if `b && !isNil x` is already `false`, then so is `b && contains j x`
+(an empty child contains nothing). Bridges `compactify`'s "present and non-empty" mask bit to the
+`contains` test `finalize` must satisfy. -/
+private theorem and_contains_eq_false_of (j : Nat) (b : Bool) (x : PTree)
+    (h : (b && !isNil x) = false) : (b && contains j x) = false := by
+  cases x with
+  | nil => rw [contains_nil, Bool.and_false]
+  | tip _ _ => simp only [isNil, Bool.not_false, Bool.and_true] at h; rw [h, Bool.false_and]
+  | bin _ _ _ _ => simp only [isNil, Bool.not_false, Bool.and_true] at h; rw [h, Bool.false_and]
+
+/-- Membership after re-compression: `finalize` collapses the empty-child cases but preserves
+membership exactly — a key is in the re-wrapped branch iff its slot is present in `mask` and it is
+in that slot's child. The single-survivor *lift* case relies on the routing hypothesis (`halign`):
+the lifted child's keys all hang under its own slot, so dropping the branch level loses nothing. -/
+theorem contains_finalize (j : Nat) (p l : Nat) (mask : UInt32) (kids : Array PTree)
+    (halign : ∀ c, c < 32 → testBit mask c = true → AlignedAt l c p (childAt mask kids c)) :
+    contains j (finalize p l mask kids)
+      = (testBit mask (chunk j l) && contains j (childAt mask kids (chunk j l))) := by
+  obtain ⟨m, ks, he⟩ : ∃ m ks, compactify mask kids mask 0 #[] = (m, ks) := ⟨_, _, rfl⟩
+  obtain ⟨hM, _, hR⟩ := compactify_top mask kids
+  rw [he] at hM hR
+  have hMm : ∀ c, c < 32 → testBit m c = (testBit mask c && !isNil (childAt mask kids c)) := hM
+  have hRm : ∀ c, c < 32 → testBit m c = true → ks[arrayIndex m c]? = some (childAt mask kids c) := hR
+  have hmask_of_m : ∀ c, c < 32 → testBit m c = true → testBit mask c = true := by
+    intro c hc htb
+    have hmm := hMm c hc; rw [htb] at hmm
+    cases hh : testBit mask c with
+    | true => rfl
+    | false => rw [hh, Bool.false_and] at hmm; exact absurd hmm (by decide)
+  have hchild : ∀ c, c < 32 → testBit m c = true → childAt m ks c = childAt mask kids c := by
+    intro c hc htb
+    show (ks[arrayIndex m c]?).getD .nil = childAt mask kids c
+    rw [hRm c hc htb, Option.getD_some]
+  have hbridge : (testBit m (chunk j l) && contains j (childAt m ks (chunk j l)))
+      = (testBit mask (chunk j l) && contains j (childAt mask kids (chunk j l))) := by
+    by_cases htm : testBit m (chunk j l) = true
+    · rw [htm, hchild (chunk j l) (chunk_lt j l) htm, hmask_of_m (chunk j l) (chunk_lt j l) htm]
+    · simp only [Bool.not_eq_true] at htm
+      rw [htm, Bool.false_and]
+      have hkey : (testBit mask (chunk j l) && !isNil (childAt mask kids (chunk j l))) = false := by
+        rw [← hMm (chunk j l) (chunk_lt j l), htm]
+      exact (and_contains_eq_false_of j _ _ hkey).symm
+  rw [finalize, he]
+  show contains j (if m == 0 then .nil
+        else if popCount m == 1 then (ks[0]?).getD .nil else .bin p l m ks)
+      = (testBit mask (chunk j l) && contains j (childAt mask kids (chunk j l)))
+  by_cases hm0 : (m == 0) = true
+  · rw [if_pos hm0, contains_nil]
+    have hmeq : m = 0 := by simpa using hm0
+    rw [← hbridge, hmeq, testBit_zero, Bool.false_and]
+  · rw [if_neg hm0]
+    by_cases hp1 : (popCount m == 1) = true
+    · rw [if_pos hp1]
+      have hpc1 : popCount m = 1 := by simpa using hp1
+      have hmne : m ≠ 0 := fun h0 => hm0 (by rw [h0]; rfl)
+      have hc0 : testBit m (lowestSetIdx m) = true := testBit_lowestSetIdx m hmne
+      have hlo32 : lowestSetIdx m < 32 := lowestSetIdx_lt m hmne
+      have huniq : ∀ c, c < 32 → testBit m c = true → c = lowestSetIdx m := by
+        intro c hc htb
+        by_cases hcc : c = lowestSetIdx m
+        · exact hcc
+        · exfalso
+          have h1 := arrayIndex_inj m c (lowestSetIdx m) hc hlo32 htb hc0 hcc
+          rw [arrayIndex_lowestSetIdx m hmne] at h1
+          have ha := arrayIndex_lt m c htb
+          rw [hpc1] at ha
+          omega
+      have hks0 : (ks[0]?).getD .nil = childAt mask kids (lowestSetIdx m) := by
+        have hr0 := hRm (lowestSetIdx m) hlo32 hc0
+        rw [arrayIndex_lowestSetIdx m hmne] at hr0
+        rw [hr0, Option.getD_some]
+      rw [hks0, ← hbridge]
+      by_cases hcjl : chunk j l = lowestSetIdx m
+      · rw [hcjl, hc0, hchild (lowestSetIdx m) hlo32 hc0, Bool.true_and]
+      · have htmf : testBit m (chunk j l) = false := by
+          cases hh : testBit m (chunk j l) with
+          | false => rfl
+          | true => exact absurd (huniq (chunk j l) (chunk_lt j l) hh) hcjl
+        rw [htmf, Bool.false_and]
+        cases hcon : contains j (childAt mask kids (lowestSetIdx m)) with
+        | false => rfl
+        | true =>
+          have hal := halign (lowestSetIdx m) hlo32 (hmask_of_m (lowestSetIdx m) hlo32 hc0) j hcon
+          exact absurd hal.1 hcjl
+    · rw [if_neg hp1, contains_bin]
+      exact hbridge
+
+/-- Every child `compactify` keeps comes from the seed `acc` or is a present, non-empty
+`childAt mask kids` of a surviving slot. The membership companion to `compactify_spec`; it discharges
+`WF_finalize`'s well-formed / non-`nil` children clauses. -/
+private theorem compactify_mem (mask : UInt32) (kids : Array PTree) :
+    ∀ (n : Nat) (rem : UInt32), rem.toNat = n → ∀ (accM : UInt32) (acc : Array PTree) (x : PTree),
+      x ∈ (compactify mask kids rem accM acc).2 →
+        x ∈ acc ∨ ∃ c, c < 32 ∧ testBit rem c = true ∧ isNil (childAt mask kids c) = false
+          ∧ x = childAt mask kids c := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro rem hrem accM acc x hx
+    by_cases h0 : (rem == 0) = true
+    · rw [compactify, dif_pos h0] at hx; exact Or.inl hx
+    · have hrem0 : rem ≠ 0 := by intro h; exact h0 (by rw [h]; rfl)
+      have hlo : lowestSetIdx rem < 32 := lowestSetIdx_lt rem hrem0
+      have hlotb : testBit rem (lowestSetIdx rem) = true := testBit_lowestSetIdx rem hrem0
+      have hlt : (clearLowest rem).toNat < n := by
+        rw [← hrem]; exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem hrem0)
+      by_cases hnil : isNil (childAt mask kids (lowestSetIdx rem)) = true
+      · rw [compactify, dif_neg h0, if_pos hnil] at hx
+        rcases IH (clearLowest rem).toNat hlt (clearLowest rem) rfl accM acc x hx with hacc | hex
+        · exact Or.inl hacc
+        · obtain ⟨c, hc, htb, hnfc, hxc⟩ := hex
+          exact Or.inr ⟨c, hc, testBit_of_clearLowest rem c htb, hnfc, hxc⟩
+      · have hnf : isNil (childAt mask kids (lowestSetIdx rem)) = false := by simpa using hnil
+        rw [compactify, dif_neg h0, if_neg hnil] at hx
+        rcases IH (clearLowest rem).toNat hlt (clearLowest rem) rfl (setBit accM (lowestSetIdx rem))
+            (acc.push (childAt mask kids (lowestSetIdx rem))) x hx with hacc | hex
+        · rcases Array.mem_push.mp hacc with hin | heq
+          · exact Or.inl hin
+          · exact Or.inr ⟨lowestSetIdx rem, hlo, hlotb, hnf, heq⟩
+        · obtain ⟨c, hc, htb, hnfc, hxc⟩ := hex
+          exact Or.inr ⟨c, hc, testBit_of_clearLowest rem c htb, hnfc, hxc⟩
+
+/-- Top-level form of `compactify_mem`: every child the re-compressed array holds is a present,
+non-empty `childAt mask kids`. -/
+private theorem compactify_mem_top (mask : UInt32) (kids : Array PTree) (x : PTree)
+    (hx : x ∈ (compactify mask kids mask 0 #[]).2) :
+    ∃ c, c < 32 ∧ testBit mask c = true ∧ isNil (childAt mask kids c) = false
+      ∧ x = childAt mask kids c := by
+  rcases compactify_mem mask kids mask.toNat mask rfl 0 #[] x hx with hacc | hex
+  · simp at hacc
+  · exact hex
+
+/-- `finalize` preserves well-formedness. Given aligned, well-formed candidate children under `mask`,
+the re-wrapped branch is canonical: the empty cases (`nil`, lifted singleton) are trivially or
+directly `WF`; the `bin` case rebuilds a `≥ 2`-child node whose size (`compactify_top`), children
+(`compactify_mem_top`), non-emptiness, and routing (`hchild`/`halign`) all hold. -/
+theorem WF_finalize (p l : Nat) (mask : UInt32) (kids : Array PTree) (hl : 0 < l)
+    (hwf : ∀ c, c < 32 → testBit mask c = true → WF (childAt mask kids c))
+    (halign : ∀ c, c < 32 → testBit mask c = true → AlignedAt l c p (childAt mask kids c)) :
+    WF (finalize p l mask kids) := by
+  obtain ⟨m, ks, he⟩ : ∃ m ks, compactify mask kids mask 0 #[] = (m, ks) := ⟨_, _, rfl⟩
+  obtain ⟨hM, hS, hR⟩ := compactify_top mask kids
+  rw [he] at hM hS hR
+  have hMm : ∀ c, c < 32 → testBit m c = (testBit mask c && !isNil (childAt mask kids c)) := hM
+  have hSm : ks.size = popCount m := hS
+  have hRm : ∀ c, c < 32 → testBit m c = true → ks[arrayIndex m c]? = some (childAt mask kids c) := hR
+  have hmask_of_m : ∀ c, c < 32 → testBit m c = true → testBit mask c = true := by
+    intro c hc htb
+    have hmm := hMm c hc; rw [htb] at hmm
+    cases hh : testBit mask c with
+    | true => rfl
+    | false => rw [hh, Bool.false_and] at hmm; exact absurd hmm (by decide)
+  have hchild : ∀ c, c < 32 → testBit m c = true → childAt m ks c = childAt mask kids c := by
+    intro c hc htb
+    show (ks[arrayIndex m c]?).getD .nil = childAt mask kids c
+    rw [hRm c hc htb, Option.getD_some]
+  have hmem : ∀ x ∈ ks, ∃ c, c < 32 ∧ testBit mask c = true ∧ isNil (childAt mask kids c) = false
+      ∧ x = childAt mask kids c := by
+    intro x hx
+    exact compactify_mem_top mask kids x (by rw [he]; exact hx)
+  rw [finalize, he]
+  show WF (if m == 0 then .nil
+        else if popCount m == 1 then (ks[0]?).getD .nil else .bin p l m ks)
+  by_cases hm0 : (m == 0) = true
+  · rw [if_pos hm0, WF]; trivial
+  · rw [if_neg hm0]
+    have hmne : m ≠ 0 := fun h0 => hm0 (by rw [h0]; rfl)
+    by_cases hp1 : (popCount m == 1) = true
+    · rw [if_pos hp1]
+      have hc0 : testBit m (lowestSetIdx m) = true := testBit_lowestSetIdx m hmne
+      have hlo32 : lowestSetIdx m < 32 := lowestSetIdx_lt m hmne
+      have hks0 : (ks[0]?).getD .nil = childAt mask kids (lowestSetIdx m) := by
+        have hr0 := hRm (lowestSetIdx m) hlo32 hc0
+        rw [arrayIndex_lowestSetIdx m hmne] at hr0
+        rw [hr0, Option.getD_some]
+      rw [hks0]
+      exact hwf (lowestSetIdx m) hlo32 (hmask_of_m (lowestSetIdx m) hlo32 hc0)
+    · rw [if_neg hp1, WF]
+      have hpc2 : 2 ≤ popCount m := by
+        have h1 := one_le_popCount_of_ne_zero m hmne
+        have hne1 : popCount m ≠ 1 := fun h => hp1 (by rw [h]; rfl)
+        omega
+      refine ⟨hl, hSm, hpc2, ?_, ?_, ?_⟩
+      · intro x hx
+        obtain ⟨c', hc', htmask, _, hxc⟩ := hmem x hx
+        rw [hxc]; exact hwf c' hc' htmask
+      · intro x hx
+        obtain ⟨c', _, _, hnf, hxc⟩ := hmem x hx
+        rw [hxc]; intro hnil; rw [hnil] at hnf; exact absurd hnf (by decide)
+      · intro c hc htb
+        rw [hchild c hc htb]
+        exact halign c hc (hmask_of_m c hc htb)
+
 /-! ### Extensionality
 
 `contains` determines a well-formed tree uniquely: two `WF` trees with the same membership are equal

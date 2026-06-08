@@ -342,6 +342,18 @@ theorem lt_or_gt_uint32 {a b : UInt32} (h : a ≠ b) : a < b ∨ a > b := by
   · exact absurd (UInt32.toNat_inj.mp heq) h
   · exact Or.inr (UInt32.lt_iff_toNat_lt.mpr hgt)
 
+theorem uint32_lt_of_le_of_ne {a b : UInt32} (hle : a ≤ b) (hne : a ≠ b) : a < b := by
+  have h1 := UInt32.le_iff_toNat_le.mp hle
+  have h2 : a.toNat ≠ b.toNat := fun h => hne (UInt32.toNat_inj.mp h)
+  exact UInt32.lt_iff_toNat_lt.mpr (by omega)
+
+/-- A nonzero mask has at least one set slot. -/
+theorem one_le_popCount_of_ne_zero (m : UInt32) (h : m ≠ 0) : 1 ≤ popCount m := by
+  have key : (1 : UInt32) ≤ popCountAux m := by revert h; unfold popCountAux; bv_decide
+  show 1 ≤ (popCountAux m).toNat
+  calc (1 : Nat) = (1 : UInt32).toNat := rfl
+    _ ≤ (popCountAux m).toNat := UInt32.le_iff_toNat_le.mp key
+
 /-- Moving the slot up by one raises the compact index by the (just-passed) bit. Backs the
 forward element-extraction in `Node.ext`. -/
 theorem arrayIndex_succ (m i : UInt32) (hi : i < 31) :
@@ -391,6 +403,43 @@ theorem testBit_or (a b i : UInt32) : testBit (a ||| b) i = (testBit a i || test
 
 theorem testBit_and (a b i : UInt32) : testBit (a &&& b) i = (testBit a i && testBit b i) := by
   unfold testBit; bv_decide
+
+/-! ### Lemmas backing the intersection re-compression (`compactify`/`finalize`)
+
+These feed `PTree`'s `meet`: after an intersection thins a branch, `compactify` drops the empty
+children lowest-first and recomputes the surviving mask, which needs that the running accumulator's
+bits stay strictly below the unprocessed mask (`lowestSetIdx` is the minimum) and that a mask whose
+bits all sit below a slot indexes its full population there. -/
+
+/-- `lowestSetIdx` is the *minimum* set slot: every present bit sits at or above it. Proved via the
+strict monotonicity of the compact index — a bit below the lowest would index before slot 0. -/
+theorem lowestSetIdx_le_of_testBit (m c : UInt32) (hc : c < 32) (h : testBit m c = true) :
+    lowestSetIdx m ≤ c := by
+  have hm : m ≠ 0 := by intro h0; rw [h0, testBit_zero] at h; exact absurd h (by decide)
+  rcases Nat.lt_or_ge c.toNat (lowestSetIdx m).toNat with hlt | hge
+  · exfalso
+    have hlt' : c < lowestSetIdx m := UInt32.lt_iff_toNat_lt.mpr hlt
+    have hcontra := arrayIndex_lt_of_lt m c (lowestSetIdx m) hc (lowestSetIdx_lt m hm) h hlt'
+    rw [arrayIndex_lowestSetIdx m hm] at hcontra
+    omega
+  · exact UInt32.le_iff_toNat_le.mpr hge
+
+/-- A slot below `i` is set in the low-mask `lowerMask i` (for in-range `i`). -/
+theorem testBit_lowerMask_lt (i c : UInt32) (hi : i < 32) (hlt : c < i) :
+    testBit (lowerMask i) c = true := by
+  unfold testBit lowerMask; bv_decide
+
+/-- When every set bit of `m` lies strictly below slot `i`, `arrayIndex m i` counts all of `m`. -/
+theorem arrayIndex_eq_popCount_of_below (m i : UInt32) (hi : i < 32)
+    (h : ∀ c, c < 32 → testBit m c = true → c < i) : arrayIndex m i = popCount m := by
+  have hand : m &&& lowerMask i = m := by
+    apply eq_of_testBit_eq
+    intro c hc
+    rw [testBit_and]
+    by_cases hb : testBit m c = true
+    · rw [hb, testBit_lowerMask_lt i c hi (h c hc hb)]; rfl
+    · simp only [Bool.not_eq_true] at hb; rw [hb]; rfl
+  unfold arrayIndex; rw [hand]
 
 /-- A mask that is height-minimal (`2 ≤ m`) has a set bit above slot 0 — that high bit is what
 forces the height in the canonical-shape invariant. -/
