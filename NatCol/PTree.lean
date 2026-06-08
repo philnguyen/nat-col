@@ -634,5 +634,58 @@ theorem lt_branchLevel (k kb level : Nat)
     unfold branchLevel at hge
     exact hge
 
+/-- The bottom chunk of a xor is the xor of the operands' bottom chunks. -/
+private theorem nchunk_xor (ka kb l : Nat) :
+    ((ka ^^^ kb) >>> (5 * l)) &&& 31
+      = ((ka >>> (5 * l)) &&& 31) ^^^ ((kb >>> (5 * l)) &&& 31) := by
+  apply Nat.eq_of_testBit_eq
+  intro i
+  simp only [Nat.testBit_and, Nat.testBit_shiftRight, Nat.testBit_xor]
+  cases Nat.testBit ka (5 * l + i) <;> cases Nat.testBit kb (5 * l + i) <;>
+    cases Nat.testBit 31 i <;> rfl
+
+private theorem chunk_xor_eq_zero_of_chunk_eq {ka kb l : Nat} (h : chunk ka l = chunk kb l) :
+    chunk (ka ^^^ kb) l = 0 := by
+  have E : (ka >>> (5 * l)) &&& 31 = (kb >>> (5 * l)) &&& 31 := by
+    have h' : UInt32.ofNat ((ka >>> (5 * l)) &&& 31) = UInt32.ofNat ((kb >>> (5 * l)) &&& 31) := h
+    have := congrArg UInt32.toNat h'
+    rwa [UInt32.toNat_ofNat_of_lt' (Nat.lt_of_le_of_lt Nat.and_le_right (by decide)),
+         UInt32.toNat_ofNat_of_lt' (Nat.lt_of_le_of_lt Nat.and_le_right (by decide))] at this
+  show UInt32.ofNat (((ka ^^^ kb) >>> (5 * l)) &&& 31) = 0
+  rw [nchunk_xor, E, Nat.xor_self]; rfl
+
+private theorem xor_ne_zero_of_ne {ka kb : Nat} (h : ka ≠ kb) : ka ^^^ kb ≠ 0 := by
+  intro h0
+  apply h
+  have : ka ^^^ kb ^^^ kb = 0 ^^^ kb := by rw [h0]
+  rwa [Nat.xor_assoc, Nat.xor_self, Nat.xor_zero, Nat.zero_xor] at this
+
+private theorem chunk_branchLevel_xor_ne_zero (ka kb : Nat) (h : ka ≠ kb) :
+    chunk (ka ^^^ kb) (branchLevel ka kb) ≠ 0 := by
+  have hx : ka ^^^ kb ≠ 0 := xor_ne_zero_of_ne h
+  unfold branchLevel
+  rcases Nat.eq_zero_or_pos (requiredHeight (ka ^^^ kb)) with hL | hL
+  · rw [hL]
+    have hlt : ka ^^^ kb < 2 ^ 5 := by
+      have := lt_pow_of_requiredHeight_le (h := 0) (Nat.le_of_eq hL)
+      rw [pow32_eq] at this; simpa using this
+    show UInt32.ofNat (((ka ^^^ kb) >>> (5 * 0)) &&& 31) ≠ 0
+    rw [Nat.mul_zero, Nat.shiftRight_zero, show (31 : Nat) = 2 ^ 5 - 1 from rfl,
+        Nat.and_two_pow_sub_one_eq_mod, Nat.mod_eq_of_lt hlt]
+    intro hzero
+    apply hx
+    have := congrArg UInt32.toNat hzero
+    rwa [UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hlt (by decide)),
+         show (0 : UInt32).toNat = 0 from rfl] at this
+  · have he : (requiredHeight (ka ^^^ kb) - 1) + 1 = requiredHeight (ka ^^^ kb) := by omega
+    rw [← he]
+    exact chunk_ne_zero_of_requiredHeight_eq (by omega)
+
+/-- The two slots a `join ka _ kb _` branches at are distinct, so its 2-child `bin` is well-formed
+(the `hne` the `join` seams demand). -/
+theorem chunk_branchLevel_ne (ka kb : Nat) (h : ka ≠ kb) :
+    chunk ka (branchLevel ka kb) ≠ chunk kb (branchLevel ka kb) := fun heq =>
+  chunk_branchLevel_xor_ne_zero ka kb h (chunk_xor_eq_zero_of_chunk_eq heq)
+
 end PTree
 end NatCol
