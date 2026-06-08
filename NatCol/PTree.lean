@@ -119,6 +119,12 @@ decreasing_by
   have := Array.sizeOf_lt_of_mem hc
   omega
 
+/-- Total child accessor: the subtree a `bin`'s mask routes slot `c` to, `nil` when the slot is
+absent (or the compact index is out of range). Gives every membership/merge proof one total
+accessor in place of the raw `dite` bounds juggling. -/
+@[inline] def childAt (mask : UInt32) (kids : Array PTree) (c : UInt32) : PTree :=
+  (kids[arrayIndex mask c]?).getD .nil
+
 -- Set union — three mutually-recursive pieces, total via a shared lexicographic measure on combined
 -- subtree size. `mergeChild` is split out of `mergeKids` only to keep the latter's body shallow: a
 -- deeply-nested `let` under a well-founded recursion trips the kernel's deep-recursion check. The
@@ -291,6 +297,133 @@ end
 /-- `a ⊆ b`: every key of `a` is in `b`, via the structural Patricia walk. -/
 @[inline] def subset (a b : PTree) : Bool := subsetU a b
 
+-- Set intersection — like union, three mutually-recursive pieces over a shared lexicographic
+-- measure, but intersection only ever shrinks: it touches just the shared mask `m1 &&& m2` and can
+-- leave a branch with fewer than two surviving children, so the equal-level `bin`/`bin` case
+-- re-compresses via `compactify` (drop the now-empty children, recompute the mask) + `finalize`
+-- (0 survivors → `nil`, 1 → lift the lone child, ≥ 2 → `bin`). The routing cases just descend.
+
+/-- `nil`-test as a `Bool`, for the re-compression fold (keeps it off the `Option`-match path that
+trips the kernel inside a well-founded recursion). -/
+@[inline] def isNil : PTree → Bool
+  | .nil => true
+  | _    => false
+
+/-- Drop the empty (`nil`) children from a mask-compact array and recompute the surviving mask: fold
+the mask `rem` lowest-first, keeping each non-empty child and setting its bit. Re-establishes the
+"no nil children" / "compact" invariants after an intersection thins a branch. -/
+def compactify (mask : UInt32) (kids : Array PTree) (rem : UInt32) (accM : UInt32)
+    (acc : Array PTree) : UInt32 × Array PTree :=
+  if hrem : rem == 0 then (accM, acc)
+  else
+    if isNil (childAt mask kids (lowestSetIdx rem)) then
+      compactify mask kids (clearLowest rem) accM acc
+    else
+      compactify mask kids (clearLowest rem) (setBit accM (lowestSetIdx rem))
+        (acc.push (childAt mask kids (lowestSetIdx rem)))
+termination_by rem.toNat
+decreasing_by
+  all_goals
+    have : (clearLowest rem).toNat < rem.toNat :=
+      UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem (by simp_all))
+    omega
+
+/-- Re-wrap a re-compressed branch: empty → `nil`, a single survivor → that child (lift the
+collapsed level — the path-compression step), otherwise a `bin`. -/
+def finalize (p l : Nat) (mask : UInt32) (kids : Array PTree) : PTree :=
+  match compactify mask kids mask 0 #[] with
+  | (m, ks) =>
+    if m == 0 then .nil
+    else if popCount m == 1 then (ks[0]?).getD .nil
+    else .bin p l m ks
+
+set_option linter.unusedVariables false in
+mutual
+/-- Intersection driver: empty on either `nil`; two `tip`s AND their bitsets (drop if disjoint or
+empty); a `tip` or off-level `bin` descends into the one matching child; two equal-level `bin`s
+intersect the shared mask child-by-child (`meetKids`) then re-compress (`finalize`). -/
+def meetU : PTree → PTree → PTree
+  | .nil, _ => .nil
+  | .tip _ _, .nil => .nil
+  | .bin _ _ _ _, .nil => .nil
+  | .tip p1 b1, .tip p2 b2 =>
+    if p1 == p2 then (if (b1 &&& b2) == 0 then .nil else .tip p1 (b1 &&& b2)) else .nil
+  | .tip p1 b1, .bin bp bl bm bk =>
+    if prefixAbove (someKey (.tip p1 b1)) bl == bp
+        && testBit bm (chunk (someKey (.tip p1 b1)) bl) then
+      if h : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size then
+        meetU (.tip p1 b1) (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h)
+      else .nil
+    else .nil
+  | .bin bp bl bm bk, .tip p2 b2 =>
+    if prefixAbove (someKey (.tip p2 b2)) bl == bp
+        && testBit bm (chunk (someKey (.tip p2 b2)) bl) then
+      if h : arrayIndex bm (chunk (someKey (.tip p2 b2)) bl) < bk.size then
+        meetU (bk[arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)]'h) (.tip p2 b2)
+      else .nil
+    else .nil
+  | .bin p1 l1 m1 k1, .bin p2 l2 m2 k2 =>
+    if l1 == l2 then
+      if prefixAbove (someKey (.bin p1 l1 m1 k1)) l1
+          == prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 then
+        finalize p1 l1 (m1 &&& m2) (meetKids m1 k1 m2 k2 (m1 &&& m2) #[])
+      else .nil
+    else if l2 < l1 then
+      if prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 == p1
+          && testBit m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) then
+        if h : arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) < k1.size then
+          meetU (k1[arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)]'h) (.bin p2 l2 m2 k2)
+        else .nil
+      else .nil
+    else
+      if prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 == p2
+          && testBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) then
+        if h : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size then
+          meetU (.bin p1 l1 m1 k1) (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h)
+        else .nil
+      else .nil
+termination_by s t => (sizeOf s + sizeOf t, 0)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h); omega)
+
+/-- The intersected child at a shared slot `i`: recurse with `meetU` on the two children (the `nil`
+fallbacks never fire for a slot actually present in both masks). -/
+def meetChild (m1 : UInt32) (k1 : Array PTree) (m2 : UInt32) (k2 : Array PTree) (i : UInt32) :
+    PTree :=
+  if h1 : arrayIndex m1 i < k1.size then
+    if h2 : arrayIndex m2 i < k2.size then
+      meetU (k1[arrayIndex m1 i]'h1) (k2[arrayIndex m2 i]'h2)
+    else .nil
+  else .nil
+termination_by (sizeOf k1 + sizeOf k2, 0)
+decreasing_by
+  all_goals simp_wf
+  all_goals (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h1)
+             have := Array.sizeOf_lt_of_mem (Array.getElem_mem h2); omega)
+
+/-- Fold over the shared mask `rem` (= `m1 &&& m2`), appending each slot's `meetChild` to `acc`
+(lowest first); the result is compact under the shared mask, `nil` where the intersection is empty
+(those are pruned later by `compactify`). -/
+def meetKids (m1 : UInt32) (k1 : Array PTree) (m2 : UInt32) (k2 : Array PTree)
+    (rem : UInt32) (acc : Array PTree) : Array PTree :=
+  if hrem : rem == 0 then acc
+  else
+    meetKids m1 k1 m2 k2 (clearLowest rem) (acc.push (meetChild m1 k1 m2 k2 (lowestSetIdx rem)))
+termination_by (sizeOf k1 + sizeOf k2 + 1, rem.toNat)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have : (clearLowest rem).toNat < rem.toNat :=
+         UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem (by simp_all)); omega)
+end
+
+/-- Set intersection `a ∩ b`. -/
+@[inline] def meet (a b : PTree) : PTree := meetU a b
+
 ----------------------------------------------------------------------------------------------------
 -- Validation: `PTree` must agree with the verified `NatSet` (implementation-level cross-checks;
 -- proofs are added in later stages)
@@ -336,6 +469,22 @@ private def subsetCorpus : List (List Nat) :=
 #guard !((ofList seqK).subset (ofList (List.range 500)))
 #guard !((ofList sparseK).subset (ofList (List.range 50)))
 
+-- intersection agrees with `NatSet.inter` across dense/sparse/overlapping mixes
+#guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
+  ((ofList a).meet (ofList b)).size == (NatSet.inter (NatSet.ofList a) (NatSet.ofList b)).size
+-- membership after intersection = membership in both operands
+#guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
+  (a ++ b).all fun k =>
+    ((ofList a).meet (ofList b)).contains k == ((ofList a).contains k && (ofList b).contains k)
+-- re-compression anchors: disjoint → empty; self/subset idempotence; bin/bin collapse to one or none
+#guard ((ofList evenK).meet (ofList oddK)).size == 0                  -- disjoint → nil
+#guard ((ofList seqK).meet (ofList seqK)).size == seqK.length         -- idempotent
+#guard ((ofList (List.range 500)).meet (ofList seqK)).size == 500     -- ⊆ → the smaller
+#guard ((ofList sparseK).meet (ofList sparseK)).size == (ofList sparseK).size
+#guard ((ofList [0, 32]).meet (ofList [0, 64])).size == 1             -- finalize lifts the lone survivor
+#guard (((ofList [0, 32]).meet (ofList [0, 64])).contains 0)
+#guard ((ofList [0, 32]).meet (ofList [64, 96])).size == 0            -- finalize collapses to nil
+
 ----------------------------------------------------------------------------------------------------
 -- Theorems
 --
@@ -345,11 +494,6 @@ private def subsetCorpus : List (List Nat) :=
 -- mirroring `Tree`'s `get?_*` seams but over the height-erased Patricia shape.
 ----------------------------------------------------------------------------------------------------
 
-/-- Total child accessor: the subtree a `bin`'s mask routes slot `c` to, `nil` when the slot is
-absent (or the compact index is out of range). Gives every membership/merge proof one total
-accessor in place of the raw `dite` bounds juggling. -/
-@[inline] def childAt (mask : UInt32) (kids : Array PTree) (c : UInt32) : PTree :=
-  (kids[arrayIndex mask c]?).getD .nil
 
 /-- The empty set contains nothing. -/
 theorem contains_nil (k : Nat) : contains k .nil = false := by rw [contains]
