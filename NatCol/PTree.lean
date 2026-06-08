@@ -994,5 +994,87 @@ theorem WF_ofList (ks : List Nat) : WF (ofList ks) := by
   | nil => intro s hs; exact hs
   | cons a t ih => intro s hs; exact ih (s.insert a) (WF_insert a s hs)
 
+/-! ### The `union` present-slot fold
+
+The aligned-`bin` case of `unionU` rebuilds the child array with `mergeKids`, a present-slot fold
+over the combined mask `m1 ||| m2` that appends one `mergeChild` per set bit (lowest first). These
+structural facts characterize that array independently of `mergeChild`'s contents: its size, and
+that reading slot `c` back (via `childAt` on the merged mask) recovers `mergeChild … c`. They are
+the bridge the union membership/`WF` seams cross to reach the per-slot `mergeChild` reasoning. -/
+
+/-- The fold's running invariant: starting from `acc`, processing `rem`'s set bits lowest-first
+appends one child per bit. Stated by strong induction on `rem.toNat` (each step clears the lowest
+bit): the result keeps `acc` as a prefix, grows by `popCount rem`, and lands each remaining set
+bit's `mergeChild` at its compact index past `acc`. -/
+private theorem mergeKids_spec (m1 : UInt32) (k1 : Array PTree) (m2 : UInt32) (k2 : Array PTree) :
+    ∀ (n : Nat) (rem : UInt32), rem.toNat = n → ∀ (acc : Array PTree),
+      (mergeKids m1 k1 m2 k2 rem acc).size = acc.size + popCount rem
+      ∧ (∀ i, i < acc.size → (mergeKids m1 k1 m2 k2 rem acc)[i]? = acc[i]?)
+      ∧ (∀ c, c < 32 → testBit rem c = true →
+           (mergeKids m1 k1 m2 k2 rem acc)[acc.size + arrayIndex rem c]?
+             = some (mergeChild m1 k1 m2 k2 c)) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro rem hrem acc
+    by_cases h0 : (rem == 0) = true
+    · have hr0 : rem = 0 := by simpa using h0
+      rw [mergeKids, dif_pos h0]
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hr0, show popCount (0 : UInt32) = 0 from rfl, Nat.add_zero]
+      · intro i hi; rfl
+      · intro c hc htb; rw [hr0, testBit_zero] at htb; exact absurd htb (by decide)
+    · have hrem0 : rem ≠ 0 := by intro h; exact h0 (by rw [h]; rfl)
+      have hstep : mergeKids m1 k1 m2 k2 rem acc
+          = mergeKids m1 k1 m2 k2 (clearLowest rem)
+              (acc.push (mergeChild m1 k1 m2 k2 (lowestSetIdx rem))) := by
+        rw [mergeKids, dif_neg h0]
+      have hlt : (clearLowest rem).toNat < n := by
+        rw [← hrem]; exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem hrem0)
+      obtain ⟨ihsize, ihpref, ihthird⟩ :=
+        IH (clearLowest rem).toNat hlt (clearLowest rem) rfl
+          (acc.push (mergeChild m1 k1 m2 k2 (lowestSetIdx rem)))
+      have hpc : popCount (clearLowest rem) + 1 = popCount rem := popCount_clearLowest rem hrem0
+      have haccsz : (acc.push (mergeChild m1 k1 m2 k2 (lowestSetIdx rem))).size = acc.size + 1 :=
+        Array.size_push ..
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hstep, ihsize, haccsz]; omega
+      · intro i hi
+        rw [hstep, ihpref i (by omega), Array.getElem?_push_lt hi, Array.getElem?_eq_getElem hi]
+      · intro c hc htb
+        rw [hstep]
+        by_cases hclo : c = lowestSetIdx rem
+        · subst hclo
+          rw [arrayIndex_lowestSetIdx rem hrem0, Nat.add_zero,
+              ihpref acc.size (by omega), Array.getElem?_push_size]
+        · have htb' : testBit (clearLowest rem) c = true := by
+            rw [testBit_clearLowest_of_ne rem c hc hclo]; exact htb
+          have hidx : arrayIndex rem c = arrayIndex (clearLowest rem) c + 1 :=
+            arrayIndex_clearLowest_of_ne rem c hc htb hclo
+          have key := ihthird c hc htb'
+          rw [haccsz] at key
+          rw [hidx, show acc.size + (arrayIndex (clearLowest rem) c + 1)
+                = acc.size + 1 + arrayIndex (clearLowest rem) c from by omega]
+          exact key
+
+/-- Reading slot `c` (present in the merged mask) of the rebuilt child array recovers that slot's
+`mergeChild`. The structural half of the aligned-`bin` union seam: it reduces `childAt` on the
+merged `bin` to per-slot `mergeChild`, where the membership/`WF` reasoning then takes over. -/
+theorem childAt_mergeKids (m1 : UInt32) (k1 : Array PTree) (m2 : UInt32) (k2 : Array PTree)
+    (c : UInt32) (hc : c < 32) (htb : testBit (m1 ||| m2) c = true) :
+    childAt (m1 ||| m2) (mergeKids m1 k1 m2 k2 (m1 ||| m2) #[]) c = mergeChild m1 k1 m2 k2 c := by
+  obtain ⟨_, _, hthird⟩ := mergeKids_spec m1 k1 m2 k2 (m1 ||| m2).toNat (m1 ||| m2) rfl #[]
+  have hc' := hthird c hc htb
+  unfold childAt
+  rw [show (#[] : Array PTree).size = 0 from rfl, Nat.zero_add] at hc'
+  rw [hc', Option.getD_some]
+
+/-- The rebuilt child array has exactly one slot per present bit of the merged mask — the compact
+size invariant the merged `bin` needs to stay well-formed. -/
+theorem size_mergeKids (m1 : UInt32) (k1 : Array PTree) (m2 : UInt32) (k2 : Array PTree) :
+    (mergeKids m1 k1 m2 k2 (m1 ||| m2) #[]).size = popCount (m1 ||| m2) := by
+  obtain ⟨hsize, _, _⟩ := mergeKids_spec m1 k1 m2 k2 (m1 ||| m2).toNat (m1 ||| m2) rfl #[]
+  rw [hsize, show (#[] : Array PTree).size = 0 from rfl, Nat.zero_add]
+
 end PTree
 end NatCol
