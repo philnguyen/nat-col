@@ -984,5 +984,15 @@ theorem WF_insert (k : Nat) : ∀ (t : PTree), WF t → WF (insert k t) := by
       rw [prefixAbove_branchLevel_eq k (someKey (.bin pfx level mask kids))]
       exact aligned_bin pfx level mask kids hwf _ (lt_branchLevel k _ level hkne5)
 
+/-- Building from a list keeps the trie canonical (repeated `insert` from the empty trie). -/
+theorem WF_ofList (ks : List Nat) : WF (ofList ks) := by
+  unfold ofList
+  suffices h : ∀ (l : List Nat) (s : PTree), WF s → WF (l.foldl (fun s k => s.insert k) s) by
+    exact h ks .nil WF_empty
+  intro l
+  induction l with
+  | nil => intro s hs; exact hs
+  | cons a t ih => intro s hs; exact ih (s.insert a) (WF_insert a s hs)
+
 end PTree
 end NatCol
