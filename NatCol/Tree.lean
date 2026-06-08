@@ -67,6 +67,11 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   `Tree.filter`; a fully-filtered leaf becomes empty, but that emptiness is governed at the node
   above (or the collection top), so this carries no canonical-shape obligation of its own. -/
   filter    : (UInt32 → V → Bool) → L → L
+  /-- A representative present slot of a non-empty leaf (the lowest set slot). The path-compressed
+  successor `NatCol.PTree` reconstructs a representative key for a `tip` from this (`someKey`,
+  `witnessKey`), which its branch/`join` routing needs to recover a node's shared prefix. The old
+  height-indexed `Tree` never probes a representative key, so it ignores this field. -/
+  someSlot  : L → UInt32
   /-- `contains` agrees with `get?`'s presence: the `Bool` fast path matches the denotational
   lookup. Lets the collection layer keep its `get?`-based membership lemmas after routing
   `contains` through the boxing-free path. -/
@@ -133,6 +138,12 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   `Tree.restrictsEq_iff`, which drives `restricts` transitivity. -/
   get?_restricts : ∀ (rel : V → V → Bool), (∀ x, rel x x = true) → ∀ (a b : L),
     (restricts rel a b = true ↔ ∀ i, i < 32 → optRel rel (get? a i) (get? b i) = true)
+  /-- The representative slot of a non-empty leaf is in range (`< 32`). Backs the in-range
+  reasoning `PTree.someKey`/`witnessKey` need (the low chunk must not bleed into the prefix). -/
+  someSlot_lt : ∀ (l : L), isEmpty l = false → someSlot l < 32
+  /-- The representative slot of a non-empty leaf is actually present. Backs `PTree.witnessKey`,
+  which must exhibit a real member of the leaf. -/
+  contains_someSlot : ∀ (l : L), isEmpty l = false → contains l (someSlot l) = true
 
 namespace Tree
 

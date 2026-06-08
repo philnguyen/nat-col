@@ -33,6 +33,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   restricts := Node.restricts
   toArray n := n.fold (fun acc i a => acc.push (i, a)) #[]
   filter p n := Node.filterMap (fun i a => if p i a then some a else none) n
+  someSlot n := lowestSetIdx n.positionsMask
   contains_eq_isSome n i := Node.testBit_eq_isSome_get? n i
   insert_ne_empty := Node.isEmpty_insert
   isEmpty_modify n i g := Node.isEmpty_alter_invariant n i (Option.map g) (fun o => by cases o <;> rfl)
@@ -57,6 +58,8 @@ instance {α : Type u} : LeafOps (Node α) α where
   get?_ext a b h := Node.ext h
   exists_get?_of_ne_empty := Node.exists_get?_of_isEmpty_false
   get?_restricts rel _ a b := Node.restricts_iff rel a b
+  someSlot_lt n h := lowestSetIdx_lt n.positionsMask (beq_eq_false_iff_ne.mp h)
+  contains_someSlot n h := testBit_lowestSetIdx n.positionsMask (beq_eq_false_iff_ne.mp h)
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)

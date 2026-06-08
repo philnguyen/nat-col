@@ -35,6 +35,7 @@ instance : LeafOps UInt32 Unit where
   filter p u := Nat.fold 32 (fun i _ acc =>
     let iu := UInt32.ofNat i
     if testBit u iu && p iu () then setBit acc iu else acc) (0 : UInt32)
+  someSlot := lowestSetIdx
   contains_eq_isSome u i := by
     show testBit u i = (if testBit u i then some () else none).isSome
     cases testBit u i <;> rfl
@@ -126,6 +127,8 @@ instance : LeafOps UInt32 Unit where
           | true => rfl
           | false => exfalso; have hh := hrhs i hi; simp [hai, hb, optRel] at hh
         simp [hbi]
+  someSlot_lt u h := lowestSetIdx_lt u (beq_eq_false_iff_ne.mp h)
+  contains_someSlot u h := testBit_lowestSetIdx u (beq_eq_false_iff_ne.mp h)
 
 /-- A set of natural numbers. -/
 def NatSet : Type := NatCollection UInt32
