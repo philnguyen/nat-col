@@ -226,6 +226,71 @@ end
 /-- `{0,…}` from a list, by repeated insertion. -/
 def ofList (ks : List Nat) : PTree := ks.foldl (fun s k => s.insert k) .nil
 
+-- Structural subset `a ⊆ b` — a Patricia walk that aligns the two trees by branch level and
+-- short-circuits on the masks (replacing a naive O(|a|) per-key membership walk). Route the
+-- narrower-span operand into the wider, compare bitsets at leaves, bail the moment a slot is missing.
+set_option linter.unusedVariables false in
+mutual
+/-- Subset driver: `nil ⊆ _`; a `bin` never fits a single `tip`; two `tip`s compare bitsets; a `tip`
+or narrower `bin` routes into the matching child of the wider `bin`; equal-level `bin`s need
+`m1 ⊆ m2` plus every shared child (`subsetKids`). -/
+def subsetU : PTree → PTree → Bool
+  | .nil, _ => true
+  | .tip _ _, .nil => false
+  | .bin _ _ _ _, .nil => false
+  | .tip p1 b1, .tip p2 b2 => p1 == p2 && (b1 &&& b2) == b1
+  | .tip p1 b1, .bin bp bl bm bk =>
+    prefixAbove (someKey (.tip p1 b1)) bl == bp
+      && testBit bm (chunk (someKey (.tip p1 b1)) bl)
+      && (if h : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size then
+            subsetU (.tip p1 b1) (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h)
+          else false)
+  | .bin _ _ _ _, .tip _ _ => false
+  | .bin p1 l1 m1 k1, .bin p2 l2 m2 k2 =>
+    if l1 == l2 then
+      prefixAbove (someKey (.bin p1 l1 m1 k1)) l1 == prefixAbove (someKey (.bin p2 l2 m2 k2)) l1
+        && (m1 &&& m2) == m1 && subsetKids m1 k1 m2 k2 m1
+    else if l1 < l2 then
+      prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 == prefixAbove (someKey (.bin p2 l2 m2 k2)) l2
+        && testBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)
+        && (if h : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size then
+              subsetU (.bin p1 l1 m1 k1)
+                (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h)
+            else false)
+    else false
+termination_by a b => (sizeOf a + sizeOf b, 0)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h); omega)
+
+/-- Confirm every `a`-child is a subset of the aligned `b`-child for two equal-level/prefix bins
+with `m1 ⊆ m2` checked, bit-scanning the shared mask `rem` (= `m1`) lowest-first. -/
+def subsetKids (m1 : UInt32) (k1 : Array PTree) (m2 : UInt32) (k2 : Array PTree) (rem : UInt32) :
+    Bool :=
+  if hrem : rem == 0 then true
+  else
+    (if h1 : arrayIndex m1 (lowestSetIdx rem) < k1.size then
+      if h2 : arrayIndex m2 (lowestSetIdx rem) < k2.size then
+        subsetU (k1[arrayIndex m1 (lowestSetIdx rem)]'h1) (k2[arrayIndex m2 (lowestSetIdx rem)]'h2)
+      else false
+    else false)
+      && subsetKids m1 k1 m2 k2 (clearLowest rem)
+termination_by (sizeOf k1 + sizeOf k2 + 1, rem.toNat)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h1)
+       have := Array.sizeOf_lt_of_mem (Array.getElem_mem h2); omega)
+    | (have : (clearLowest rem).toNat < rem.toNat :=
+         UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem (by simp_all)); omega)
+    | omega
+end
+
+/-- `a ⊆ b`: every key of `a` is in `b`, via the structural Patricia walk. -/
+@[inline] def subset (a b : PTree) : Bool := subsetU a b
+
 ----------------------------------------------------------------------------------------------------
 -- Validation: `PTree` must agree with the verified `NatSet` (implementation-level cross-checks;
 -- proofs are added in later stages)
@@ -258,6 +323,18 @@ private def oddK : List Nat := (List.range 400).map (2 * · + 1)
 -- membership after union agrees with NatSet
 #guard (sparseK ++ List.range 50).all fun k =>
   ((ofList sparseK).union (ofList (List.range 50))).contains k == true
+
+-- subset agrees with `NatSet.subset` across dense/sparse/overlapping mixes (both directions)
+private def subsetCorpus : List (List Nat) :=
+  [[], [0], List.range 500, seqK, sparseK, evenK, oddK, sparseK ++ List.range 50,
+   (List.range 300).map (· + 1)]
+#guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
+  (ofList a).subset (ofList b) == (NatSet.ofList a).subset (NatSet.ofList b)
+-- explicit anchors: dense reflexive (the prototype's regression cell), proper ⊆, and a near-miss
+#guard (ofList seqK).subset (ofList seqK)
+#guard (ofList (List.range 500)).subset (ofList seqK)
+#guard !((ofList seqK).subset (ofList (List.range 500)))
+#guard !((ofList sparseK).subset (ofList (List.range 50)))
 
 ----------------------------------------------------------------------------------------------------
 -- Theorems
