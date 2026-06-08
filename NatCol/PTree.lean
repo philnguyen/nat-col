@@ -582,5 +582,57 @@ theorem aligned_bin (pfx level : Nat) (mask : UInt32) (kids : Array PTree)
   exact ⟨chunk_eq_of_shiftRight_eq (shiftRight_mono_eq hkey (by omega)),
          prefixAbove_eq_of_shiftRight_eq (shiftRight_mono_eq hkey (by omega))⟩
 
+/-! ### Branch-level facts
+
+`branchLevel ka kb = requiredHeight (ka ^^^ kb)` is the level a `join ka _ kb _` branches at. These
+pin down what the `join` seams need at the call site: the two keys agree above the branch level (so
+the shared prefix is well-defined) and the level is high enough to sit above an existing subtree. -/
+
+private theorem pow32_eq (n : Nat) : (32 : Nat) ^ n = 2 ^ (5 * n) := by
+  rw [show (32 : Nat) = 2 ^ 5 from rfl, ← Nat.pow_mul]
+
+/-- If two keys' xor is below `2^m`, they agree on all bits at/above `m`. -/
+private theorem shiftRight_eq_of_xor_lt {x y m : Nat} (h : x ^^^ y < 2 ^ m) :
+    x >>> m = y >>> m := by
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [Nat.testBit_shiftRight, Nat.testBit_shiftRight]
+  have hf : Nat.testBit (x ^^^ y) (m + i) = false :=
+    Nat.testBit_lt_two_pow (Nat.lt_of_lt_of_le h (Nat.pow_le_pow_right (by decide) (by omega)))
+  rw [Nat.testBit_xor] at hf
+  revert hf
+  cases Nat.testBit x (m + i) <;> cases Nat.testBit y (m + i) <;> simp
+
+/-- Two keys agree above their branch level: the join's shared prefix is well-defined. -/
+theorem prefixAbove_branchLevel_eq (ka kb : Nat) :
+    prefixAbove ka (branchLevel ka kb) = prefixAbove kb (branchLevel ka kb) := by
+  unfold prefixAbove branchLevel
+  apply shiftRight_eq_of_xor_lt
+  rw [← pow32_eq]
+  exact lt_pow_of_requiredHeight_le (Nat.le_refl _)
+
+/-- A high-bit divergence forces a positive branch level (the tip join always branches at `≥ 1`). -/
+theorem branchLevel_pos (k kb : Nat) (h : k >>> 5 ≠ kb >>> 5) : 0 < branchLevel k kb := by
+  rcases Nat.eq_zero_or_pos (branchLevel k kb) with hz | hp
+  · refine absurd ?_ h
+    apply shiftRight_eq_of_xor_lt (m := 5)
+    unfold branchLevel at hz
+    have hlt := lt_pow_of_requiredHeight_le (h := 0) (Nat.le_of_eq hz)
+    rw [pow32_eq] at hlt
+    simpa using hlt
+  · exact hp
+
+/-- Divergence above a bin's level forces the branch level past it (the bin join branches deeper). -/
+theorem lt_branchLevel (k kb level : Nat)
+    (h : k >>> (5 * (level + 1)) ≠ kb >>> (5 * (level + 1))) : level < branchLevel k kb := by
+  rcases Nat.lt_or_ge level (branchLevel k kb) with hlt | hge
+  · exact hlt
+  · refine absurd ?_ h
+    apply shiftRight_eq_of_xor_lt (m := 5 * (level + 1))
+    rw [← pow32_eq]
+    apply lt_pow_of_requiredHeight_le
+    unfold branchLevel at hge
+    exact hge
+
 end PTree
 end NatCol
