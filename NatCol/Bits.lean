@@ -234,6 +234,13 @@ theorem arrayIndex_lt (m i : UInt32) (h : testBit m i = true) :
   show (popCountAux (m &&& lowerMask i)).toNat < (popCountAux m).toNat
   exact UInt32.lt_iff_toNat_lt.mp key
 
+/-- Population count is monotone under `|||`: a union of masks covers at least one operand. Bounds
+the merged child count for the union of two `bin`s below by either side's (so it stays `≥ 2`). -/
+theorem popCount_or_left (a b : UInt32) : popCount a ≤ popCount (a ||| b) := by
+  have key : popCountAux a ≤ popCountAux (a ||| b) := by unfold popCountAux; bv_decide
+  show (popCountAux a).toNat ≤ (popCountAux (a ||| b)).toNat
+  exact UInt32.le_iff_toNat_le.mp key
+
 /-- The lowest set bit sits at compact index `0` (nothing is below it). The base of the
 present-slot fold's indexing: the first child appended lands at position `0`. -/
 theorem arrayIndex_lowestSetIdx (m : UInt32) (hm : m ≠ 0) :
@@ -266,6 +273,10 @@ about `setBit` and that bound feed the `Node`/`Tree`/`Collection` proofs. -/
 theorem two_le_of_ne (m : UInt32) (h0 : m ≠ 0) (h1 : m ≠ 1) : 2 ≤ m := by bv_decide
 
 theorem setBit_ne_zero (m i : UInt32) : setBit m i ≠ 0 := by unfold setBit; bv_decide
+
+/-- A `|||` with a nonzero operand is nonzero — the merged `tip` of a union keeps a set bit. -/
+theorem or_ne_zero_left (a b : UInt32) (h : a ≠ 0) : (a ||| b) ≠ 0 := by
+  intro h0; apply h; bv_decide
 
 /-- Setting an already-set bit is a no-op (so `insert` leaves the mask unchanged when the
 slot is already present). -/
