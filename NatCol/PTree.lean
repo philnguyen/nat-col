@@ -2403,5 +2403,54 @@ decreasing_by
   have := Array.sizeOf_lt_of_mem (Array.getElem_mem hi1)
   omega
 
+/-! ### Lattice laws for `union`
+
+With `ext` and `contains_union` in hand, the set-algebra laws reduce to Boolean identities on
+membership. These are the `NatSet`-facing contract the order/lattice layer will export. -/
+
+/-- Union is commutative. -/
+theorem union_comm (a b : PTree) (hwa : WF a) (hwb : WF b) : union a b = union b a := by
+  refine ext _ _ (WF_union a b hwa hwb) (WF_union b a hwb hwa) (fun j => ?_)
+  rw [contains_union j a b hwa hwb, contains_union j b a hwb hwa, Bool.or_comm]
+
+/-- Union is associative. -/
+theorem union_assoc (a b c : PTree) (hwa : WF a) (hwb : WF b) (hwc : WF c) :
+    union (union a b) c = union a (union b c) := by
+  refine ext _ _ (WF_union _ c (WF_union a b hwa hwb) hwc)
+    (WF_union a _ hwa (WF_union b c hwb hwc)) (fun j => ?_)
+  rw [contains_union j _ c (WF_union a b hwa hwb) hwc, contains_union j a b hwa hwb,
+      contains_union j a _ hwa (WF_union b c hwb hwc), contains_union j b c hwb hwc, Bool.or_assoc]
+
+/-- Union is idempotent. -/
+theorem union_self (a : PTree) (hwa : WF a) : union a a = a := by
+  refine ext _ _ (WF_union a a hwa hwa) hwa (fun j => ?_)
+  rw [contains_union j a a hwa hwa, Bool.or_self]
+
+/-- `empty` is a right identity for union. -/
+theorem union_empty (a : PTree) (hwa : WF a) : union a empty = a := by
+  refine ext _ _ (WF_union a empty hwa WF_empty) hwa (fun j => ?_)
+  rw [contains_union j a empty hwa WF_empty]
+  simp only [empty, contains_nil, Bool.or_false]
+
+/-- `empty` is a left identity for union. -/
+theorem empty_union (a : PTree) (hwa : WF a) : union empty a = a := by
+  refine ext _ _ (WF_union empty a WF_empty hwa) hwa (fun j => ?_)
+  rw [contains_union j empty a WF_empty hwa]
+  simp only [empty, contains_nil, Bool.false_or]
+
+/-- Inserting two keys commutes. -/
+theorem insert_comm (a b : Nat) (t : PTree) (hwt : WF t) :
+    insert a (insert b t) = insert b (insert a t) := by
+  refine ext _ _ (WF_insert a _ (WF_insert b t hwt)) (WF_insert b _ (WF_insert a t hwt)) (fun j => ?_)
+  rw [contains_insert a j _ (WF_insert b t hwt), contains_insert b j t hwt,
+      contains_insert b j _ (WF_insert a t hwt), contains_insert a j t hwt,
+      ← Bool.or_assoc, ← Bool.or_assoc, Bool.or_comm (j == a) (j == b)]
+
+/-- Re-inserting a key is idempotent. -/
+theorem insert_idem (a : Nat) (t : PTree) (hwt : WF t) : insert a (insert a t) = insert a t := by
+  refine ext _ _ (WF_insert a _ (WF_insert a t hwt)) (WF_insert a t hwt) (fun j => ?_)
+  rw [contains_insert a j _ (WF_insert a t hwt), contains_insert a j t hwt, ← Bool.or_assoc,
+      Bool.or_self]
+
 end PTree
 end NatCol
