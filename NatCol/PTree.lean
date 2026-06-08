@@ -2817,5 +2817,59 @@ theorem subset_iff (a b : PTree) (hwa : WF a) (hwb : WF b) :
       exact ⟨fun j hj => hall (lowestSetIdx rem) hc0lt hc0rem j hj,
              fun c hc htbcl j hj => hall c hc (testBit_of_clearLowest rem c htbcl) j hj⟩
 
+/-! ### Order laws for `subset`
+
+`subset` is the membership preorder, antisymmetric up to `ext`; `union` is its least upper bound.
+These mirror the `NatSet`/`NatCollection` order contract the migration will export, each reduced to
+membership reasoning through `subset_iff` (and `ext` for antisymmetry). -/
+
+/-- `subset` is reflexive. -/
+theorem subset_refl (a : PTree) (hwa : WF a) : subset a a = true := by
+  show subsetU a a = true
+  rw [subset_iff a a hwa hwa]; exact fun j hj => hj
+
+/-- `subset` is transitive. -/
+theorem subset_trans (a b c : PTree) (hwa : WF a) (hwb : WF b) (hwc : WF c)
+    (hab : subset a b = true) (hbc : subset b c = true) : subset a c = true := by
+  show subsetU a c = true
+  rw [subset_iff a c hwa hwc]
+  exact fun j hj => (subset_iff b c hwb hwc).mp hbc j ((subset_iff a b hwa hwb).mp hab j hj)
+
+/-- `subset` is antisymmetric: mutual inclusion of well-formed trees is equality (via `ext`). -/
+theorem subset_antisymm (a b : PTree) (hwa : WF a) (hwb : WF b)
+    (hab : subset a b = true) (hba : subset b a = true) : a = b := by
+  refine ext a b hwa hwb (fun j => ?_)
+  exact Bool.eq_iff_iff.mpr ⟨(subset_iff a b hwa hwb).mp hab j, (subset_iff b a hwb hwa).mp hba j⟩
+
+/-- `empty` is below everything. -/
+theorem empty_subset (a : PTree) : subset empty a = true := by
+  show subsetU .nil a = true; rw [subsetU]
+
+/-- The left operand is below the union. -/
+theorem subset_union_left (a b : PTree) (hwa : WF a) (hwb : WF b) :
+    subset a (union a b) = true := by
+  show subsetU a (union a b) = true
+  rw [subset_iff a (union a b) hwa (WF_union a b hwa hwb)]
+  intro j hj; rw [contains_union j a b hwa hwb, hj, Bool.true_or]
+
+/-- The right operand is below the union. -/
+theorem subset_union_right (a b : PTree) (hwa : WF a) (hwb : WF b) :
+    subset b (union a b) = true := by
+  show subsetU b (union a b) = true
+  rw [subset_iff b (union a b) hwb (WF_union a b hwa hwb)]
+  intro j hj; rw [contains_union j a b hwa hwb, hj, Bool.or_true]
+
+/-- Union is the least upper bound: it lies below any common upper bound of both operands. -/
+theorem union_subset (a b c : PTree) (hwa : WF a) (hwb : WF b) (hwc : WF c)
+    (hac : subset a c = true) (hbc : subset b c = true) : subset (union a b) c = true := by
+  show subsetU (union a b) c = true
+  rw [subset_iff (union a b) c (WF_union a b hwa hwb) hwc]
+  intro j hj
+  rw [contains_union j a b hwa hwb] at hj
+  cases hca : contains j a
+  · rw [hca, Bool.false_or] at hj
+    exact (subset_iff b c hwb hwc).mp hbc j hj
+  · exact (subset_iff a c hwa hwc).mp hac j hca
+
 end PTree
 end NatCol
