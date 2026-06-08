@@ -2529,5 +2529,293 @@ theorem insert_idem (a : Nat) (t : PTree) (hwt : WF t) : insert a (insert a t) =
   rw [contains_insert a j _ (WF_insert a t hwt), contains_insert a j t hwt, ← Bool.or_assoc,
       Bool.or_self]
 
+/-! ### Subset: the structural-subset denotational seam
+
+`subset_iff` lifts the Patricia `subsetU`/`subsetKids` walk to the membership order — the order
+analogue of `contains_union`. With it the order laws (refl/trans/antisymm, LUB/GLB) reduce to
+Boolean/membership reasoning, exactly as the union lattice laws did through `ext`. -/
+
+/-- A bitset inclusion `b1 &&& b2 = b1` says every in-range bit of `b1` is also a bit of `b2`. The
+per-slot bridge between the mask short-circuit `(m1 &&& m2) == m1` and routing-level membership. -/
+private theorem and_eq_self_iff (b1 b2 : UInt32) :
+    (b1 &&& b2) = b1 ↔ ∀ c, c < 32 → testBit b1 c = true → testBit b2 c = true := by
+  constructor
+  · intro h c hc hb1
+    have key : testBit (b1 &&& b2) c = testBit b1 c := by rw [h]
+    rw [testBit_and, hb1, Bool.true_and] at key; exact key
+  · intro h
+    apply eq_of_testBit_eq
+    intro i hi
+    rw [testBit_and]
+    cases hb1 : testBit b1 i with
+    | true => simp [h i hi hb1]
+    | false => rfl
+
+/-- **Subset characterization**: the `subsetU`/`subsetKids` walk decides `a ⊆ b` as membership
+inclusion, for well-formed `a`, `b`. The order analogue of `contains_union`, by the combined
+`subsetU.induct` (`motive2` carries the per-child spec the equal-level `bin`/`bin` case consumes).
+A `nil` is below everything; a `bin` never fits a single `tip`; two `tip`s compare bitsets; a `tip`
+or narrower `bin` routes into the matching child; equal-level `bin`s reduce to mask inclusion plus
+every shared child (`subsetKids`); a wider-on-the-left `bin` diverges and so cannot fit. -/
+theorem subset_iff (a b : PTree) (hwa : WF a) (hwb : WF b) :
+    subsetU a b = true ↔ ∀ j, contains j a = true → contains j b = true := by
+  revert hwa hwb
+  induction a, b using subsetU.induct (motive2 := fun m1 k1 m2 k2 rem =>
+    KidsWF m1 k1 → KidsWF m2 k2 →
+      (∀ c, c < 32 → testBit rem c = true → testBit m1 c = true) →
+      (∀ c, c < 32 → testBit rem c = true → testBit m2 c = true) →
+      (subsetKids m1 k1 m2 k2 rem = true ↔
+        ∀ c, c < 32 → testBit rem c = true →
+          ∀ j, contains j (childAt m1 k1 c) = true → contains j (childAt m2 k2 c) = true)) with
+  | case1 x =>
+    intro hwa hwb
+    refine iff_of_true (by rw [subsetU]) (fun j hj => ?_)
+    rw [contains_nil] at hj; exact absurd hj (by decide)
+  | case2 pfx bits =>
+    intro hwa hwb
+    apply iff_of_false
+    · intro h; rw [subsetU] at h; exact absurd h (by decide)
+    · intro hsub
+      obtain ⟨j, hj⟩ := exists_mem (.tip pfx bits) hwa (fun hc => PTree.noConfusion hc)
+      have hc := hsub j hj; rw [contains_nil] at hc; exact absurd hc (by decide)
+  | case3 pfx level mask kids =>
+    intro hwa hwb
+    apply iff_of_false
+    · intro h; rw [subsetU] at h; exact absurd h (by decide)
+    · intro hsub
+      obtain ⟨j, hj⟩ := exists_mem (.bin pfx level mask kids) hwa (fun hc => PTree.noConfusion hc)
+      have hc := hsub j hj; rw [contains_nil] at hc; exact absurd hc (by decide)
+  | case4 p1 b1 p2 b2 =>
+    intro hwa hwb
+    rw [subsetU, Bool.and_eq_true, beq_iff_eq, beq_iff_eq, and_eq_self_iff]
+    constructor
+    · rintro ⟨hp, hsub⟩ j hj
+      rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj ⊢
+      exact ⟨hj.1.trans hp, hsub (chunk j 0) (chunk_lt _ _) hj.2⟩
+    · intro hsub
+      have hp : p1 = p2 := by
+        obtain ⟨j0, hj0⟩ := exists_mem (.tip p1 b1) hwa (fun hc => PTree.noConfusion hc)
+        have hj0' := hsub j0 hj0
+        rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj0 hj0'
+        rw [← hj0.1]; exact hj0'.1
+      refine ⟨hp, fun c hc hb1c => ?_⟩
+      have hmem : contains (c.toNat + 32 * p1) (.tip p1 b1) = true := by
+        rw [contains_tip_probe p1 b1 c hc]; exact hb1c
+      have hmem2 := hsub _ hmem
+      rw [hp, contains_tip_probe p2 b2 c hc] at hmem2; exact hmem2
+  | case5 p1 b1 bp bl bm bk ih =>
+    intro hwa hwb
+    have hb1 : b1 ≠ 0 := by rw [WF] at hwa; exact hwa
+    have hwb' := hwb; rw [WF] at hwb'
+    obtain ⟨hbl0, hsize, hpc, hkidswf, hnonnil, hrout⟩ := hwb'
+    have halign := aligned_tip p1 b1 hb1 bl hbl0
+    rw [subsetU]
+    constructor
+    · intro hcond j hj
+      rw [Bool.and_eq_true, Bool.and_eq_true, beq_iff_eq] at hcond
+      obtain ⟨⟨hpre, htb⟩, hdite⟩ := hcond
+      have hchunk : chunk j bl = chunk (someKey (.tip p1 b1)) bl := (halign j hj).1
+      by_cases hidx : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size
+      · rw [dif_pos hidx] at hdite
+        have hchild : bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'hidx
+                        = childAt bm bk (chunk (someKey (.tip p1 b1)) bl) := by
+          unfold childAt; rw [Array.getElem?_eq_getElem hidx, Option.getD_some]
+        have hwfbkidx : WF (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'hidx) := by
+          rw [hchild]; exact hkidswf _ (childAt_mem bm bk _ hsize htb)
+        rw [contains_bin, hchunk, htb, Bool.true_and, ← hchild]
+        exact (ih hidx hwa hwfbkidx).mp hdite j hj
+      · rw [dif_neg hidx] at hdite; exact absurd hdite (by decide)
+    · intro hsub
+      obtain ⟨j0, hj0⟩ := exists_mem (.tip p1 b1) hwa (fun hc => PTree.noConfusion hc)
+      have hj0bin := hsub j0 hj0
+      have hchunk0 : chunk j0 bl = chunk (someKey (.tip p1 b1)) bl := (halign j0 hj0).1
+      have hpre0 : prefixAbove j0 bl = prefixAbove (someKey (.tip p1 b1)) bl := (halign j0 hj0).2
+      rw [contains_bin, hchunk0, Bool.and_eq_true] at hj0bin
+      obtain ⟨htb, hchildmem⟩ := hj0bin
+      have hidx : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size := by
+        rw [hsize]; exact arrayIndex_lt bm _ htb
+      have hprebp : prefixAbove (someKey (.tip p1 b1)) bl = bp := by
+        rw [← hpre0]
+        exact prefixAbove_eq_of_mem bp bl bm bk hwb j0
+          (by rw [contains_bin, hchunk0, htb, Bool.true_and]; exact hchildmem)
+      have hchild : bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'hidx
+                      = childAt bm bk (chunk (someKey (.tip p1 b1)) bl) := by
+        unfold childAt; rw [Array.getElem?_eq_getElem hidx, Option.getD_some]
+      have hwfbkidx : WF (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'hidx) := by
+        rw [hchild]; exact hkidswf _ (childAt_mem bm bk _ hsize htb)
+      rw [Bool.and_eq_true, Bool.and_eq_true, beq_iff_eq]
+      refine ⟨⟨hprebp, htb⟩, ?_⟩
+      rw [dif_pos hidx]
+      apply (ih hidx hwa hwfbkidx).mpr
+      intro j hj
+      have hjbin := hsub j hj
+      have hchunkj : chunk j bl = chunk (someKey (.tip p1 b1)) bl := (halign j hj).1
+      rw [contains_bin, hchunkj, htb, Bool.true_and] at hjbin
+      rw [hchild]; exact hjbin
+  | case6 pfx level mask kids p2 bits =>
+    intro hwa hwb
+    apply iff_of_false
+    · intro h; rw [subsetU] at h; exact absurd h (by decide)
+    · intro hsub
+      obtain ⟨j1, j2, hj1, hj2, hne⟩ := exists_two_divergent pfx level mask kids hwa
+      have hlvl : 0 < level := by rw [WF] at hwa; exact hwa.1
+      have h1 := hsub j1 hj1
+      have h2 := hsub j2 hj2
+      rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at h1 h2
+      have h5 : j1 >>> 5 = j2 >>> 5 := h1.1.trans h2.1.symm
+      exact hne (chunk_eq_of_shiftRight_eq (shiftRight_mono_eq h5 (by omega)))
+  | case7 p1 l1 m1 k1 p2 l2 m2 k2 heq ih2 =>
+    intro hwa hwb
+    have hl12 : l1 = l2 := eq_of_beq heq
+    subst hl12
+    have hwa' := hwa; rw [WF] at hwa'
+    obtain ⟨hl1, hsize1, hpc1, hkidswf1, hnonnil1, hrout1⟩ := hwa'
+    have hwb' := hwb; rw [WF] at hwb'
+    obtain ⟨hl2, hsize2, hpc2, hkidswf2, hnonnil2, hrout2⟩ := hwb'
+    have hm1 : m1 ≠ 0 := by intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc1; omega
+    have hm2 : m2 ≠ 0 := by intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc2; omega
+    have hkw1 : KidsWF m1 k1 := ⟨hsize1, hkidswf1, hnonnil1⟩
+    have hkw2 : KidsWF m2 k2 := ⟨hsize2, hkidswf2, hnonnil2⟩
+    rw [subsetU, if_pos heq, someKey_bin_prefixAbove p1 l1 m1 k1 hm1,
+        someKey_bin_prefixAbove p2 l1 m2 k2 hm2, Bool.and_eq_true, Bool.and_eq_true, beq_iff_eq,
+        beq_iff_eq, and_eq_self_iff]
+    constructor
+    · rintro ⟨⟨hp, hmsub⟩, hsk⟩ j hj
+      have hchildsub := (ih2 hkw1 hkw2 (fun c _ h => h) hmsub).mp hsk
+      rw [contains_bin, Bool.and_eq_true] at hj
+      obtain ⟨htbm1, hjchild⟩ := hj
+      rw [contains_bin, Bool.and_eq_true]
+      exact ⟨hmsub (chunk j l1) (chunk_lt _ _) htbm1,
+             hchildsub (chunk j l1) (chunk_lt _ _) htbm1 j hjchild⟩
+    · intro hmem
+      have hp : p1 = p2 := by
+        obtain ⟨j0, hj0⟩ := exists_mem (.bin p1 l1 m1 k1) hwa (fun hc => PTree.noConfusion hc)
+        have hj0b := hmem j0 hj0
+        have e1 : prefixAbove j0 l1 = p1 := prefixAbove_eq_of_mem p1 l1 m1 k1 hwa j0 hj0
+        have e2 : prefixAbove j0 l1 = p2 := prefixAbove_eq_of_mem p2 l1 m2 k2 hwb j0 hj0b
+        rw [← e1, e2]
+      have hmsub : ∀ c, c < 32 → testBit m1 c = true → testBit m2 c = true := by
+        intro c hc htb
+        have hwfc : WF (childAt m1 k1 c) := hkidswf1 _ (childAt_mem m1 k1 c hsize1 htb)
+        have hnec : childAt m1 k1 c ≠ .nil := hnonnil1 _ (childAt_mem m1 k1 c hsize1 htb)
+        obtain ⟨j, hj⟩ := exists_mem _ hwfc hnec
+        have hjbin1 : contains j (.bin p1 l1 m1 k1) = true :=
+          mem_child_imp_mem_bin p1 l1 m1 k1 hwa c hc htb j hj
+        have hjbin2 := hmem j hjbin1
+        have hcj : chunk j l1 = c := (hrout1 c hc htb j hj).1
+        rw [contains_bin, hcj, Bool.and_eq_true] at hjbin2; exact hjbin2.1
+      have hchildsub : ∀ c, c < 32 → testBit m1 c = true →
+          ∀ j, contains j (childAt m1 k1 c) = true → contains j (childAt m2 k2 c) = true := by
+        intro c hc htb j hj
+        have hjbin1 : contains j (.bin p1 l1 m1 k1) = true :=
+          mem_child_imp_mem_bin p1 l1 m1 k1 hwa c hc htb j hj
+        have hjbin2 := hmem j hjbin1
+        have hcj : chunk j l1 = c := (hrout1 c hc htb j hj).1
+        rw [contains_bin, hcj, Bool.and_eq_true] at hjbin2; exact hjbin2.2
+      exact ⟨⟨hp, hmsub⟩, (ih2 hkw1 hkw2 (fun c _ h => h) hmsub).mpr hchildsub⟩
+  | case8 p1 l1 m1 k1 p2 l2 m2 k2 hne hlt ih =>
+    intro hwa hwb
+    have hwb' := hwb; rw [WF] at hwb'
+    obtain ⟨hl2, hsize2, hpc2, hkidswf2, hnonnil2, hrout2⟩ := hwb'
+    have hm2 : m2 ≠ 0 := by intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc2; omega
+    have halign := aligned_bin p1 l1 m1 k1 hwa l2 hlt
+    rw [subsetU, if_neg hne, if_pos hlt, someKey_bin_prefixAbove p2 l2 m2 k2 hm2]
+    constructor
+    · intro hcond j hj
+      rw [Bool.and_eq_true, Bool.and_eq_true, beq_iff_eq] at hcond
+      obtain ⟨⟨hpre, htb⟩, hdite⟩ := hcond
+      have hchunk : chunk j l2 = chunk (someKey (.bin p1 l1 m1 k1)) l2 := (halign j hj).1
+      by_cases hidx : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size
+      · rw [dif_pos hidx] at hdite
+        have hchild : k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'hidx
+                        = childAt m2 k2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) := by
+          unfold childAt; rw [Array.getElem?_eq_getElem hidx, Option.getD_some]
+        have hwfbkidx : WF (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'hidx) := by
+          rw [hchild]; exact hkidswf2 _ (childAt_mem m2 k2 _ hsize2 htb)
+        rw [contains_bin, hchunk, htb, Bool.true_and, ← hchild]
+        exact (ih hidx hwa hwfbkidx).mp hdite j hj
+      · rw [dif_neg hidx] at hdite; exact absurd hdite (by decide)
+    · intro hsub
+      obtain ⟨j0, hj0⟩ := exists_mem (.bin p1 l1 m1 k1) hwa (fun hc => PTree.noConfusion hc)
+      have hj0bin := hsub j0 hj0
+      have hchunk0 : chunk j0 l2 = chunk (someKey (.bin p1 l1 m1 k1)) l2 := (halign j0 hj0).1
+      have hpre0 : prefixAbove j0 l2 = prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 := (halign j0 hj0).2
+      rw [contains_bin, hchunk0, Bool.and_eq_true] at hj0bin
+      obtain ⟨htb, hchildmem⟩ := hj0bin
+      have hidx : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size := by
+        rw [hsize2]; exact arrayIndex_lt m2 _ htb
+      have hprebp : prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 = p2 := by
+        rw [← hpre0]
+        exact prefixAbove_eq_of_mem p2 l2 m2 k2 hwb j0
+          (by rw [contains_bin, hchunk0, htb, Bool.true_and]; exact hchildmem)
+      have hchild : k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'hidx
+                      = childAt m2 k2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) := by
+        unfold childAt; rw [Array.getElem?_eq_getElem hidx, Option.getD_some]
+      have hwfbkidx : WF (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'hidx) := by
+        rw [hchild]; exact hkidswf2 _ (childAt_mem m2 k2 _ hsize2 htb)
+      rw [Bool.and_eq_true, Bool.and_eq_true, beq_iff_eq]
+      refine ⟨⟨hprebp, htb⟩, ?_⟩
+      rw [dif_pos hidx]
+      apply (ih hidx hwa hwfbkidx).mpr
+      intro j hj
+      have hjbin := hsub j hj
+      have hchunkj : chunk j l2 = chunk (someKey (.bin p1 l1 m1 k1)) l2 := (halign j hj).1
+      rw [contains_bin, hchunkj, htb, Bool.true_and] at hjbin
+      rw [hchild]; exact hjbin
+  | case9 p1 l1 m1 k1 p2 l2 m2 k2 hne hnlt =>
+    intro hwa hwb
+    apply iff_of_false
+    · intro h; rw [subsetU, if_neg hne, if_neg hnlt] at h; exact absurd h (by decide)
+    · intro hsub
+      obtain ⟨j1, j2, hj1, hj2, hdiv⟩ := exists_two_divergent p1 l1 m1 k1 hwa
+      have hj1b := hsub j1 hj1
+      have hj2b := hsub j2 hj2
+      have e1 : prefixAbove j1 l2 = p2 := prefixAbove_eq_of_mem p2 l2 m2 k2 hwb j1 hj1b
+      have e2 : prefixAbove j2 l2 = p2 := prefixAbove_eq_of_mem p2 l2 m2 k2 hwb j2 hj2b
+      have hl2lt : l2 < l1 := by
+        have hne' : l1 ≠ l2 := by intro he; apply hne; rw [he]; simp
+        omega
+      exact hdiv (chunk_eq_of_prefixAbove_lt (e1.trans e2.symm) hl2lt)
+  | case10 m1 k1 m2 k2 rem hrem =>
+    rename_i hkw1 hkw2 hr1 hr2
+    have hrem0 : rem = 0 := eq_of_beq hrem
+    rw [subsetKids, dif_pos hrem]
+    refine iff_of_true rfl (fun c hc htb j hj => ?_)
+    rw [hrem0, testBit_zero] at htb; exact absurd htb (by decide)
+  | case11 m1 k1 m2 k2 rem hrem ihchild ihrec =>
+    rename_i hkw1 hkw2 hr1 hr2
+    have hrem0 : rem ≠ 0 := by intro h; rw [h] at hrem; exact hrem (by decide)
+    have hc0lt : lowestSetIdx rem < 32 := lowestSetIdx_lt rem hrem0
+    have hc0rem : testBit rem (lowestSetIdx rem) = true := testBit_lowestSetIdx rem hrem0
+    have htbm1 : testBit m1 (lowestSetIdx rem) = true := hr1 _ hc0lt hc0rem
+    have htbm2 : testBit m2 (lowestSetIdx rem) = true := hr2 _ hc0lt hc0rem
+    have h1 : arrayIndex m1 (lowestSetIdx rem) < k1.size := by
+      rw [hkw1.1]; exact arrayIndex_lt m1 _ htbm1
+    have h2 : arrayIndex m2 (lowestSetIdx rem) < k2.size := by
+      rw [hkw2.1]; exact arrayIndex_lt m2 _ htbm2
+    have hch1 : k1[arrayIndex m1 (lowestSetIdx rem)]'h1 = childAt m1 k1 (lowestSetIdx rem) := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h1, Option.getD_some]
+    have hch2 : k2[arrayIndex m2 (lowestSetIdx rem)]'h2 = childAt m2 k2 (lowestSetIdx rem) := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h2, Option.getD_some]
+    have hwf1 : WF (childAt m1 k1 (lowestSetIdx rem)) := hkw1.2.1 _ (childAt_mem m1 k1 _ hkw1.1 htbm1)
+    have hwf2 : WF (childAt m2 k2 (lowestSetIdx rem)) := hkw2.2.1 _ (childAt_mem m2 k2 _ hkw2.1 htbm2)
+    have hce : subsetU (childAt m1 k1 (lowestSetIdx rem)) (childAt m2 k2 (lowestSetIdx rem)) = true ↔
+        ∀ j, contains j (childAt m1 k1 (lowestSetIdx rem)) = true →
+          contains j (childAt m2 k2 (lowestSetIdx rem)) = true := by
+      have hih := ihchild h1 h2; rw [hch1, hch2] at hih; exact hih hwf1 hwf2
+    have hre := ihrec hkw1 hkw2
+      (fun c hc h => hr1 c hc (testBit_of_clearLowest rem c h))
+      (fun c hc h => hr2 c hc (testBit_of_clearLowest rem c h))
+    rw [subsetKids, dif_neg hrem, dif_pos h1, dif_pos h2, hch1, hch2, Bool.and_eq_true, hce, hre]
+    constructor
+    · rintro ⟨hP0, hPrest⟩ c hc htbc j hj
+      by_cases hcc0 : c = lowestSetIdx rem
+      · rw [hcc0] at hj ⊢; exact hP0 j hj
+      · rw [← testBit_clearLowest_of_ne rem c hc hcc0] at htbc
+        exact hPrest c hc htbc j hj
+    · intro hall
+      exact ⟨fun j hj => hall (lowestSetIdx rem) hc0lt hc0rem j hj,
+             fun c hc htbcl j hj => hall c hc (testBit_of_clearLowest rem c htbcl) j hj⟩
+
 end PTree
 end NatCol
