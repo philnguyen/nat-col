@@ -687,5 +687,176 @@ theorem chunk_branchLevel_ne (ka kb : Nat) (h : ka ≠ kb) :
     chunk ka (branchLevel ka kb) ≠ chunk kb (branchLevel ka kb) := fun heq =>
   chunk_branchLevel_xor_ne_zero ka kb h (chunk_xor_eq_zero_of_chunk_eq heq)
 
+/-! ### The `insert` seams
+
+`contains_insert` — the `get?_insert` analogue — characterizes membership after an insert. The two
+stitching lemmas below wrap the singleton/join shapes; the three `childAt_*` array lemmas describe
+how a present slot's child, a freshly-spliced slot, and the other slots read after the compact-array
+update `insert` performs. -/
+
+/-- Membership in a singleton, as a `Bool` (the `decide`-free form the extensionality proofs use). -/
+theorem contains_singleton_eq (j k : Nat) : contains j (singleton k) = (j == k) := by
+  rw [Bool.eq_iff_iff, contains_singleton, beq_iff_eq]
+
+/-- Membership in a `join` of two slot-aligned subtrees, stated directly on `join` (unfolds the
+branch arithmetic once so the call sites need only supply the alignments). -/
+theorem contains_join_eq (j ka kb : Nat) (a b : PTree) (hne : ka ≠ kb)
+    (ha : AlignedAt (branchLevel ka kb) (chunk ka (branchLevel ka kb))
+            (prefixAbove ka (branchLevel ka kb)) a)
+    (hb : AlignedAt (branchLevel ka kb) (chunk kb (branchLevel ka kb))
+            (prefixAbove ka (branchLevel ka kb)) b) :
+    contains j (join ka a kb b) = (contains j a || contains j b) := by
+  rw [join]
+  exact contains_join j (prefixAbove ka (branchLevel ka kb)) (branchLevel ka kb)
+    (chunk ka (branchLevel ka kb)) (chunk kb (branchLevel ka kb)) a b
+    (chunk_lt _ _) (chunk_lt _ _) (chunk_branchLevel_ne ka kb hne) ha hb
+
+/-- Overwriting present slot `c`'s child: any other present slot reads through unchanged. -/
+private theorem childAt_setIfInBounds (mask c cj : UInt32) (kids : Array PTree) (nc : PTree)
+    (hc : c < 32) (hcj : cj < 32) (htc : testBit mask c = true) (htcj : testBit mask cj = true)
+    (hsize : kids.size = popCount mask) :
+    childAt mask (kids.setIfInBounds (arrayIndex mask c) nc) cj
+      = if cj = c then nc else childAt mask kids cj := by
+  unfold childAt
+  rw [Array.getElem?_setIfInBounds]
+  have hlt : arrayIndex mask c < kids.size := by rw [hsize]; exact arrayIndex_lt mask c htc
+  by_cases hjc : cj = c
+  · subst hjc; rw [if_pos rfl, if_pos hlt, Option.getD_some, if_pos rfl]
+  · rw [if_neg (arrayIndex_inj mask c cj hc hcj htc htcj (Ne.symm hjc)), if_neg hjc]
+
+/-- Reading the freshly-inserted slot `c` yields the new child. -/
+private theorem childAt_insertIdx_self (mask c : UInt32) (kids : Array PTree) (nc : PTree)
+    (hsize : kids.size = popCount mask) :
+    childAt (setBit mask c) (kids.insertIdx! (arrayIndex mask c) nc) c = nc := by
+  unfold childAt
+  have hle : arrayIndex mask c ≤ kids.size := by rw [hsize]; exact arrayIndex_le mask c
+  rw [arrayIndex_setBit_self, show kids.insertIdx! (arrayIndex mask c) nc
+        = kids.insertIdx (arrayIndex mask c) nc hle from dif_pos hle,
+      Array.getElem?_insertIdx_self hle, Option.getD_some]
+
+/-- Splicing a fresh slot `c` leaves every other present slot's child reachable (its compact index
+shifts with the insertion but still names the same element). -/
+private theorem childAt_insertIdx_of_ne (mask c cj : UInt32) (kids : Array PTree) (nc : PTree)
+    (hc : c < 32) (hcj : cj < 32) (hne : cj ≠ c) (htc : testBit mask c = false)
+    (htcj : testBit mask cj = true) (hsize : kids.size = popCount mask) :
+    childAt (setBit mask c) (kids.insertIdx! (arrayIndex mask c) nc) cj = childAt mask kids cj := by
+  unfold childAt
+  have hle : arrayIndex mask c ≤ kids.size := by rw [hsize]; exact arrayIndex_le mask c
+  rw [show kids.insertIdx! (arrayIndex mask c) nc = kids.insertIdx (arrayIndex mask c) nc hle
+        from dif_pos hle]
+  rcases lt_or_gt_uint32 hne with hlt | hgt
+  · rw [arrayIndex_setBit_of_le mask c cj hc hcj (uint32_le_of_lt hlt),
+        Array.getElem?_insertIdx_of_lt hle (arrayIndex_lt_of_lt mask cj c hcj hc htcj hlt)]
+  · rw [arrayIndex_setBit_of_gt mask c cj hc hcj hgt htc, Array.getElem?_insertIdx hle,
+        if_neg (by have := arrayIndex_le_of_le mask c cj hc hcj (uint32_le_of_lt hgt); omega),
+        if_neg (by have := arrayIndex_le_of_le mask c cj hc hcj (uint32_le_of_lt hgt); omega),
+        Nat.add_sub_cancel]
+
+set_option linter.unusedVariables false in
+/-- `get?_insert` for the set: membership after `insert k` adds exactly `k`. The single point of
+contact between the lattice/order proofs and `insert`'s structural code. -/
+theorem contains_insert (k j : Nat) :
+    ∀ (t : PTree), WF t → contains j (insert k t) = ((j == k) || contains j t) := by
+  intro t
+  induction t using insert.induct (k := k) with
+  | case1 =>
+    intro _
+    rw [insert, contains_singleton_eq, contains_nil, Bool.or_false]
+  | case2 pfx bits hmatch =>
+    intro _
+    rw [insert, if_pos hmatch, contains_tip, contains_tip,
+        testBit_setBit bits (chunk k 0) (chunk j 0) (chunk_lt _ _) (chunk_lt _ _)]
+    have hk5 : k >>> 5 = pfx := by simpa using hmatch
+    have hdec : (j == k) = ((j >>> 5 == pfx) && (chunk k 0 == chunk j 0)) := by
+      rw [Bool.eq_iff_iff, Bool.and_eq_true, beq_iff_eq, beq_iff_eq, beq_iff_eq, key_eq_iff j k, hk5]
+      exact ⟨fun ⟨h1, h2⟩ => ⟨h1, h2.symm⟩, fun ⟨h1, h2⟩ => ⟨h1, h2.symm⟩⟩
+    rw [hdec]
+    cases (j >>> 5 == pfx) <;> cases testBit bits (chunk j 0) <;>
+      cases (chunk k 0 == chunk j 0) <;> rfl
+  | case3 pfx bits hmatch =>
+    intro hwf
+    have hbits : bits ≠ 0 := by rw [WF] at hwf; exact hwf
+    have hsk : someKey (.tip pfx bits) >>> 5 = pfx := someKey_tip_shiftRight5 pfx bits hbits
+    have hkne5 : k >>> 5 ≠ someKey (.tip pfx bits) >>> 5 := by
+      rw [hsk]; intro h; exact hmatch (by rw [h]; exact beq_self_eq_true pfx)
+    have hkne : k ≠ someKey (.tip pfx bits) := fun h => hkne5 (by rw [h])
+    rw [insert, if_neg hmatch,
+        show ((pfx <<< 5) ||| (lowestSetIdx bits).toNat) = someKey (.tip pfx bits) from rfl,
+        contains_join_eq j k (someKey (.tip pfx bits)) (singleton k) (.tip pfx bits) hkne ?ha ?hb,
+        contains_singleton_eq]
+    case ha =>
+      intro k' hk'; rw [show k' = k from (contains_singleton k' k).mp hk']; exact ⟨rfl, rfl⟩
+    case hb =>
+      rw [prefixAbove_branchLevel_eq k (someKey (.tip pfx bits))]
+      exact aligned_tip pfx bits hbits _ (branchLevel_pos k _ hkne5)
+  | case4 pfx level mask kids hpfx htb h IH =>
+    intro hwf
+    rw [WF] at hwf
+    obtain ⟨_, hsize, _, hkidswf, _⟩ := hwf
+    have hwfchild : WF kids[arrayIndex mask (chunk k level)] := hkidswf _ (Array.getElem_mem h)
+    have hclt : chunk k level < 32 := chunk_lt k level
+    have hcjlt : chunk j level < 32 := chunk_lt j level
+    have hcAc : childAt mask kids (chunk k level) = kids[arrayIndex mask (chunk k level)] := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h, Option.getD_some]
+    rw [insert, if_pos hpfx, if_pos htb, dif_pos h, contains_bin, contains_bin]
+    by_cases hcjc : chunk j level = chunk k level
+    · rw [hcjc,
+          childAt_setIfInBounds mask (chunk k level) (chunk k level) kids _ hclt hclt htb htb hsize,
+          if_pos rfl, IH hwfchild, hcAc]
+      simp only [htb, Bool.true_and]
+    · have hjkf : (j == k) = false := beq_eq_false_iff_ne.mpr (fun he => hcjc (by rw [he]))
+      rw [hjkf, Bool.false_or]
+      by_cases htcj : testBit mask (chunk j level) = true
+      · rw [childAt_setIfInBounds mask (chunk k level) (chunk j level) kids _ hclt hcjlt htb htcj hsize,
+            if_neg hcjc]
+      · rw [show testBit mask (chunk j level) = false from by simpa using htcj,
+            Bool.false_and, Bool.false_and]
+  | case5 pfx level mask kids hpfx htb hnh =>
+    intro hwf
+    exfalso
+    rw [WF] at hwf
+    obtain ⟨_, hsize, _, _, _⟩ := hwf
+    exact hnh (by rw [hsize]; exact arrayIndex_lt mask (chunk k level) htb)
+  | case6 pfx level mask kids hpfx htb =>
+    intro hwf
+    have hsize : kids.size = popCount mask := by rw [WF] at hwf; exact hwf.2.1
+    have hclt : chunk k level < 32 := chunk_lt k level
+    have hcjlt : chunk j level < 32 := chunk_lt j level
+    have htbf : testBit mask (chunk k level) = false := by simpa using htb
+    rw [insert, if_pos hpfx, if_neg htb, contains_bin, contains_bin]
+    by_cases hcjc : chunk j level = chunk k level
+    · rw [hcjc, testBit_setBit mask (chunk k level) (chunk k level) hclt hclt, beq_self_eq_true,
+          Bool.or_true, Bool.true_and,
+          childAt_insertIdx_self mask (chunk k level) kids (singleton k) hsize,
+          contains_singleton_eq, htbf, Bool.false_and, Bool.or_false]
+    · have hjkf : (j == k) = false := beq_eq_false_iff_ne.mpr (fun he => hcjc (by rw [he]))
+      rw [testBit_setBit mask (chunk k level) (chunk j level) hclt hcjlt,
+          beq_eq_false_iff_ne.mpr (Ne.symm hcjc), Bool.or_false, hjkf, Bool.false_or]
+      by_cases htcj : testBit mask (chunk j level) = true
+      · rw [childAt_insertIdx_of_ne mask (chunk k level) (chunk j level) kids (singleton k)
+              hclt hcjlt hcjc htbf htcj hsize]
+      · rw [show testBit mask (chunk j level) = false from by simpa using htcj,
+            Bool.false_and, Bool.false_and]
+  | case7 pfx level mask kids hpfx =>
+    intro hwf
+    have hmne : mask ≠ 0 := by
+      have h2 := hwf; rw [WF] at h2; obtain ⟨_, _, hpc, _, _⟩ := h2
+      intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+    have hsk : prefixAbove (someKey (.bin pfx level mask kids)) level = pfx :=
+      someKey_bin_prefixAbove pfx level mask kids hmne
+    have hkne5 :
+        k >>> (5 * (level + 1)) ≠ someKey (.bin pfx level mask kids) >>> (5 * (level + 1)) := by
+      show prefixAbove k level ≠ prefixAbove (someKey (.bin pfx level mask kids)) level
+      rw [hsk]; intro h; exact hpfx (by rw [h]; exact beq_self_eq_true pfx)
+    have hkne : k ≠ someKey (.bin pfx level mask kids) := fun h => hkne5 (by rw [h])
+    rw [insert, if_neg hpfx,
+        contains_join_eq j k (someKey (.bin pfx level mask kids)) (singleton k)
+          (.bin pfx level mask kids) hkne ?ha ?hb, contains_singleton_eq]
+    case ha =>
+      intro k' hk'; rw [show k' = k from (contains_singleton k' k).mp hk']; exact ⟨rfl, rfl⟩
+    case hb =>
+      rw [prefixAbove_branchLevel_eq k (someKey (.bin pfx level mask kids))]
+      exact aligned_bin pfx level mask kids hwf _ (lt_branchLevel k _ level hkne5)
+
 end PTree
 end NatCol
