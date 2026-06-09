@@ -703,5 +703,358 @@ theorem unionU_ne_nil_of_left (c : V → V → V) (a b : PTree L) (h : a ≠ .ni
   | tip p1 b1 => cases b <;> simp only [unionU] <;> (repeat' split) <;> simp [join]
   | bin p1 l1 m1 k1 => cases b <;> simp only [unionU] <;> (repeat' split) <;> simp [join]
 
+/-! ### The `join` seams
+
+`join ka a kb b` builds a fresh 2-slot `bin` over two subtrees with divergent prefixes. The two
+slots `ca = chunk ka l`, `cb = chunk kb l` are distinct, so membership splits cleanly. These are the
+`get?_join` analogues for the prefix-divergent case of `insert`/`union`; both are stated on the
+constructed `bin` and parametrized by the slot alignments, keeping the `branchLevel` arithmetic at
+the call sites. They are leaf-agnostic (about which keys route where, not their values). -/
+
+private theorem arrayIndex_zero (i : UInt32) : arrayIndex 0 i = 0 := by
+  unfold arrayIndex
+  rw [show ((0 : UInt32) &&& lowerMask i) = 0 from by bv_decide]; rfl
+
+private theorem arrayIndex_self_setBit0 (i : UInt32) : arrayIndex (setBit 0 i) i = 0 := by
+  rw [arrayIndex_setBit_self, arrayIndex_zero]
+
+private theorem testBit_setBit0_ne (i j : UInt32) (hi : i < 32) (hj : j < 32) (h : i ≠ j) :
+    testBit (setBit 0 i) j = false := by
+  rw [testBit_setBit 0 i j hi hj, testBit_zero, Bool.false_or, beq_eq_false_iff_ne.mpr h]
+
+private theorem uint32_not_lt_of_gt {a b : UInt32} (h : a > b) : ¬ a < b := by
+  intro h2
+  have := UInt32.lt_iff_toNat_lt.mp h
+  have := UInt32.lt_iff_toNat_lt.mp h2
+  omega
+
+/-- The slot-`ca` child of a join is its first operand. -/
+private theorem childAt_join_ca (ca cb : UInt32) (a b : PTree L)
+    (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb) :
+    childAt (setBit (setBit 0 ca) cb) (if ca < cb then #[a, b] else #[b, a]) ca = a := by
+  unfold childAt
+  rcases lt_or_gt_uint32 hne with hlt | hgt
+  · rw [if_pos hlt, arrayIndex_setBit_of_le (setBit 0 ca) cb ca hcb hca (uint32_le_of_lt hlt),
+        arrayIndex_self_setBit0]
+    rfl
+  · rw [if_neg (uint32_not_lt_of_gt hgt),
+        arrayIndex_setBit_of_gt (setBit 0 ca) cb ca hcb hca hgt (testBit_setBit0_ne ca cb hca hcb hne),
+        arrayIndex_self_setBit0]
+    rfl
+
+/-- The slot-`cb` child of a join is its second operand. -/
+private theorem childAt_join_cb (ca cb : UInt32) (a b : PTree L)
+    (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb) :
+    childAt (setBit (setBit 0 ca) cb) (if ca < cb then #[a, b] else #[b, a]) cb = b := by
+  unfold childAt
+  rcases lt_or_gt_uint32 hne with hlt | hgt
+  · rw [if_pos hlt, arrayIndex_setBit_self,
+        arrayIndex_setBit_of_gt 0 ca cb hca hcb hlt (testBit_zero ca), arrayIndex_zero]
+    rfl
+  · rw [if_neg (uint32_not_lt_of_gt hgt), arrayIndex_setBit_self,
+        arrayIndex_setBit_of_le 0 ca cb hca hcb (uint32_le_of_lt hgt), arrayIndex_zero]
+    rfl
+
+private theorem testBit_join_mask (ca cb s : UInt32) (hca : ca < 32) (hcb : cb < 32) (hs : s < 32) :
+    testBit (setBit (setBit 0 ca) cb) s = ((ca == s) || (cb == s)) := by
+  rw [testBit_setBit (setBit 0 ca) cb s hcb hs, testBit_setBit 0 ca s hca hs, testBit_zero,
+      Bool.false_or, Bool.or_comm]
+
+private theorem popCount_join_mask (ca cb : UInt32) (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb) :
+    popCount (setBit (setBit 0 ca) cb) = 2 := by
+  rw [popCount_setBit _ _ (testBit_setBit0_ne ca cb hca hcb hne),
+      popCount_setBit _ _ (testBit_zero ca)]
+  rfl
+
+private theorem mem_pair {c x y : PTree L} (h : c ∈ (#[x, y] : Array (PTree L))) : c = x ∨ c = y := by
+  simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at h
+  exact h
+
+/-- Membership in a `join` of two slot-aligned subtrees is membership in either. The `get?_join`
+seam for a prefix-divergent insert/union: the two subtrees route to distinct slots, so no key can
+sit in both. -/
+theorem contains_join (j p l : Nat) (ca cb : UInt32) (a b : PTree L)
+    (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb)
+    (ha : AlignedAt l ca p a) (hb : AlignedAt l cb p b) :
+    contains j (.bin p l (setBit (setBit 0 ca) cb) (if ca < cb then #[a, b] else #[b, a]))
+      = (contains j a || contains j b) := by
+  rw [contains_bin, testBit_join_mask ca cb (chunk j l) hca hcb (chunk_lt j l)]
+  by_cases hjca : chunk j l = ca
+  · rw [hjca, beq_self_eq_true, Bool.true_or, Bool.true_and,
+        childAt_join_ca ca cb a b hca hcb hne]
+    have hjb : contains j b = false := by
+      cases hcon : contains j b with
+      | true => have := (hb j hcon).1; rw [hjca] at this; exact absurd this hne
+      | false => rfl
+    rw [hjb, Bool.or_false]
+  · by_cases hjcb : chunk j l = cb
+    · rw [hjcb, beq_self_eq_true, Bool.or_true, Bool.true_and,
+          childAt_join_cb ca cb a b hca hcb hne]
+      have hja : contains j a = false := by
+        cases hcon : contains j a with
+        | true => have := (ha j hcon).1; rw [hjcb] at this; exact absurd this.symm hne
+        | false => rfl
+      rw [hja, Bool.false_or]
+    · rw [beq_eq_false_iff_ne.mpr (fun h => hjca h.symm),
+          beq_eq_false_iff_ne.mpr (fun h => hjcb h.symm), Bool.or_false, Bool.false_and]
+      have hja : contains j a = false := by
+        cases hcon : contains j a with
+        | true => exact absurd (ha j hcon).1 hjca
+        | false => rfl
+      have hjb : contains j b = false := by
+        cases hcon : contains j b with
+        | true => exact absurd (hb j hcon).1 hjcb
+        | false => rfl
+      rw [hja, hjb, Bool.or_false]
+
+/-- A `join` of two well-formed, slot-aligned subtrees is well-formed. The `bin` it builds is
+2-child path-compression-minimal by construction, and its routing invariant is exactly the two
+alignments. -/
+theorem WF_join (p l : Nat) (ca cb : UInt32) (a b : PTree L)
+    (hl : 0 < l) (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb)
+    (ha : AlignedAt l ca p a) (hb : AlignedAt l cb p b) (hwa : WF a) (hwb : WF b)
+    (hane : a ≠ .nil) (hbne : b ≠ .nil) :
+    WF (.bin p l (setBit (setBit 0 ca) cb) (if ca < cb then #[a, b] else #[b, a])) := by
+  rw [WF]
+  refine ⟨hl, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [popCount_join_mask ca cb hca hcb hne]; split <;> rfl
+  · rw [popCount_join_mask ca cb hca hcb hne]; exact Nat.le_refl 2
+  · intro c hc
+    have hcab : c = a ∨ c = b := by
+      split at hc
+      · exact mem_pair hc
+      · exact (mem_pair hc).symm
+    rcases hcab with rfl | rfl
+    · exact hwa
+    · exact hwb
+  · intro c hc
+    have hcab : c = a ∨ c = b := by
+      split at hc
+      · exact mem_pair hc
+      · exact (mem_pair hc).symm
+    rcases hcab with rfl | rfl
+    · exact hane
+    · exact hbne
+  · intro s hs hts
+    rw [testBit_join_mask ca cb s hca hcb hs, Bool.or_eq_true, beq_iff_eq, beq_iff_eq] at hts
+    rcases hts with hsa | hsb
+    · subst hsa; rw [childAt_join_ca ca cb a b hca hcb hne]; exact ha
+    · subst hsb; rw [childAt_join_cb ca cb a b hca hcb hne]; exact hb
+
+/-! ### Alignment: a well-formed tree's keys share a high prefix
+
+The `join` seams above need their operands `AlignedAt` a common level. These lemmas supply that: a
+non-empty subtree's keys all agree above its own branch level, so it is aligned at every level
+strictly above. This is what lets a prefix-divergent `insert`/`union` slot an existing subtree
+under a fresh branch. -/
+
+/-- A low part below `2^n` does not survive a right shift by `n`: `(p <<< n ||| j) >>> n = p`. The
+bit-level core of the `someKey` high-bit facts. -/
+private theorem shiftLeft_lor_shiftRight (p j n : Nat) (hj : j < 2 ^ n) :
+    (p <<< n ||| j) >>> n = p := by
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [Nat.testBit_shiftRight, Nat.testBit_or, Nat.testBit_shiftLeft]
+  have hjf : Nat.testBit j (n + i) = false :=
+    Nat.testBit_lt_two_pow (Nat.lt_of_lt_of_le hj (Nat.pow_le_pow_right (by decide) (by omega)))
+  rw [hjf, Bool.or_false]
+  simp [Nat.add_sub_cancel_left]
+
+/-- Agreement on a right shift propagates to any larger shift (the higher bits are a suffix). -/
+private theorem shiftRight_mono_eq {k m a b : Nat} (h : k >>> a = m >>> a) (hab : a ≤ b) :
+    k >>> b = m >>> b := by
+  obtain ⟨d, rfl⟩ := Nat.exists_eq_add_of_le hab
+  rw [Nat.shiftRight_add, Nat.shiftRight_add, h]
+
+private theorem chunk_eq_of_shiftRight_eq {k m l : Nat} (h : k >>> (5 * l) = m >>> (5 * l)) :
+    chunk k l = chunk m l := by unfold chunk; rw [h]
+
+private theorem prefixAbove_eq_of_shiftRight_eq {k m l : Nat}
+    (h : k >>> (5 * (l + 1)) = m >>> (5 * (l + 1))) : prefixAbove k l = prefixAbove m l := by
+  unfold prefixAbove; exact h
+
+/-- A non-empty `tip`'s representative key carries the prefix `pfx` above the bottom chunk. The
+representative slot `LeafOps.someSlot leaf` is `< 32`, so it stays inside the bottom chunk. -/
+private theorem someKey_tip_shiftRight5 (pfx : Nat) (leaf : L) (hb : LeafOps.isEmpty leaf = false) :
+    someKey (.tip pfx leaf) >>> 5 = pfx := by
+  show ((pfx <<< 5) ||| (LeafOps.someSlot leaf).toNat) >>> 5 = pfx
+  apply shiftLeft_lor_shiftRight
+  have h := UInt32.lt_iff_toNat_lt.mp (LeafOps.someSlot_lt leaf hb)
+  rw [show (32 : UInt32).toNat = 32 from by decide] at h
+  exact h
+
+/-- A `bin`'s representative key carries the branch prefix `pfx` above `level`. -/
+private theorem someKey_bin_prefixAbove (pfx level : Nat) (mask : UInt32) (kids : Array (PTree L))
+    (hm : mask ≠ 0) : prefixAbove (someKey (.bin pfx level mask kids)) level = pfx := by
+  show ((pfx <<< (5 * (level + 1))) ||| ((lowestSetIdx mask).toNat <<< (5 * level)))
+        >>> (5 * (level + 1)) = pfx
+  apply shiftLeft_lor_shiftRight
+  have hlsi : (lowestSetIdx mask).toNat < 32 := by
+    have h := UInt32.lt_iff_toNat_lt.mp (lowestSetIdx_lt mask hm)
+    rwa [show (32 : UInt32).toNat = 32 from by decide] at h
+  rw [Nat.shiftLeft_eq, show 5 * (level + 1) = 5 * level + 5 from by omega, Nat.pow_add]
+  calc (lowestSetIdx mask).toNat * 2 ^ (5 * level)
+      < 32 * 2 ^ (5 * level) :=
+        Nat.mul_lt_mul_of_pos_right hlsi (Nat.pow_pos (by decide))
+    _ = 2 ^ (5 * level) * 2 ^ 5 := by rw [Nat.mul_comm]
+
+/-- A non-empty `tip` is aligned at every level `≥ 1`: all its keys agree with the representative
+above the bottom chunk. -/
+theorem aligned_tip (pfx : Nat) (leaf : L) (hb : LeafOps.isEmpty leaf = false) (l : Nat) (hl : 0 < l) :
+    AlignedAt l (chunk (someKey (.tip pfx leaf)) l) (prefixAbove (someKey (.tip pfx leaf)) l)
+      (.tip pfx leaf) := by
+  intro k hk
+  rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hk
+  have hk5 : k >>> 5 = someKey (.tip pfx leaf) >>> 5 := by
+    rw [someKey_tip_shiftRight5 pfx leaf hb]; exact hk.1
+  exact ⟨chunk_eq_of_shiftRight_eq (shiftRight_mono_eq hk5 (by omega)),
+         prefixAbove_eq_of_shiftRight_eq (shiftRight_mono_eq hk5 (by omega))⟩
+
+/-- A well-formed `bin` is aligned at every level strictly above its own: all its keys share the
+branch prefix `pfx`, hence agree above `level`. -/
+theorem aligned_bin (pfx level : Nat) (mask : UInt32) (kids : Array (PTree L))
+    (hwf : WF (.bin pfx level mask kids)) (l : Nat) (hl : level < l) :
+    AlignedAt l (chunk (someKey (.bin pfx level mask kids)) l)
+      (prefixAbove (someKey (.bin pfx level mask kids)) l) (.bin pfx level mask kids) := by
+  rw [WF] at hwf
+  obtain ⟨_, _, hpc, _, _, hrout⟩ := hwf
+  have hm : mask ≠ 0 := by
+    intro h; rw [h, show popCount 0 = 0 from rfl] at hpc; omega
+  intro k hk
+  rw [contains_bin, Bool.and_eq_true] at hk
+  obtain ⟨htb, hcc⟩ := hk
+  have hkp : prefixAbove k level = pfx :=
+    (hrout (chunk k level) (chunk_lt _ _) htb k hcc).2
+  have hsp : prefixAbove (someKey (.bin pfx level mask kids)) level = pfx :=
+    someKey_bin_prefixAbove pfx level mask kids hm
+  have hkey : k >>> (5 * (level + 1)) = someKey (.bin pfx level mask kids) >>> (5 * (level + 1)) := by
+    show prefixAbove k level = prefixAbove (someKey (.bin pfx level mask kids)) level
+    rw [hkp, hsp]
+  exact ⟨chunk_eq_of_shiftRight_eq (shiftRight_mono_eq hkey (by omega)),
+         prefixAbove_eq_of_shiftRight_eq (shiftRight_mono_eq hkey (by omega))⟩
+
+/-! ### Branch-level facts
+
+`branchLevel ka kb = requiredHeight (ka ^^^ kb)` is the level a `join ka _ kb _` branches at. These
+pin down what the `join` seams need at the call site: the two keys agree above the branch level (so
+the shared prefix is well-defined) and the level is high enough to sit above an existing subtree.
+Pure `Nat` arithmetic — leaf-independent. -/
+
+private theorem pow32_eq (n : Nat) : (32 : Nat) ^ n = 2 ^ (5 * n) := by
+  rw [show (32 : Nat) = 2 ^ 5 from rfl, ← Nat.pow_mul]
+
+/-- If two keys' xor is below `2^m`, they agree on all bits at/above `m`. -/
+private theorem shiftRight_eq_of_xor_lt {x y m : Nat} (h : x ^^^ y < 2 ^ m) :
+    x >>> m = y >>> m := by
+  apply Nat.eq_of_testBit_eq
+  intro i
+  rw [Nat.testBit_shiftRight, Nat.testBit_shiftRight]
+  have hf : Nat.testBit (x ^^^ y) (m + i) = false :=
+    Nat.testBit_lt_two_pow (Nat.lt_of_lt_of_le h (Nat.pow_le_pow_right (by decide) (by omega)))
+  rw [Nat.testBit_xor] at hf
+  revert hf
+  cases Nat.testBit x (m + i) <;> cases Nat.testBit y (m + i) <;> simp
+
+/-- Two keys agree above their branch level: the join's shared prefix is well-defined. -/
+theorem prefixAbove_branchLevel_eq (ka kb : Nat) :
+    prefixAbove ka (branchLevel ka kb) = prefixAbove kb (branchLevel ka kb) := by
+  unfold prefixAbove branchLevel
+  apply shiftRight_eq_of_xor_lt
+  rw [← pow32_eq]
+  exact lt_pow_of_requiredHeight_le (Nat.le_refl _)
+
+/-- A high-bit divergence forces a positive branch level (the tip join always branches at `≥ 1`). -/
+theorem branchLevel_pos (k kb : Nat) (h : k >>> 5 ≠ kb >>> 5) : 0 < branchLevel k kb := by
+  rcases Nat.eq_zero_or_pos (branchLevel k kb) with hz | hp
+  · refine absurd ?_ h
+    apply shiftRight_eq_of_xor_lt (m := 5)
+    unfold branchLevel at hz
+    have hlt := lt_pow_of_requiredHeight_le (h := 0) (Nat.le_of_eq hz)
+    rw [pow32_eq] at hlt
+    simpa using hlt
+  · exact hp
+
+/-- Divergence above a bin's level forces the branch level past it (the bin join branches deeper). -/
+theorem lt_branchLevel (k kb level : Nat)
+    (h : k >>> (5 * (level + 1)) ≠ kb >>> (5 * (level + 1))) : level < branchLevel k kb := by
+  rcases Nat.lt_or_ge level (branchLevel k kb) with hlt | hge
+  · exact hlt
+  · refine absurd ?_ h
+    apply shiftRight_eq_of_xor_lt (m := 5 * (level + 1))
+    rw [← pow32_eq]
+    apply lt_pow_of_requiredHeight_le
+    unfold branchLevel at hge
+    exact hge
+
+/-- The bottom chunk of a xor is the xor of the operands' bottom chunks. -/
+private theorem nchunk_xor (ka kb l : Nat) :
+    ((ka ^^^ kb) >>> (5 * l)) &&& 31
+      = ((ka >>> (5 * l)) &&& 31) ^^^ ((kb >>> (5 * l)) &&& 31) := by
+  apply Nat.eq_of_testBit_eq
+  intro i
+  simp only [Nat.testBit_and, Nat.testBit_shiftRight, Nat.testBit_xor]
+  cases Nat.testBit ka (5 * l + i) <;> cases Nat.testBit kb (5 * l + i) <;>
+    cases Nat.testBit 31 i <;> rfl
+
+private theorem chunk_xor_eq_zero_of_chunk_eq {ka kb l : Nat} (h : chunk ka l = chunk kb l) :
+    chunk (ka ^^^ kb) l = 0 := by
+  have E : (ka >>> (5 * l)) &&& 31 = (kb >>> (5 * l)) &&& 31 := by
+    have h' : UInt32.ofNat ((ka >>> (5 * l)) &&& 31) = UInt32.ofNat ((kb >>> (5 * l)) &&& 31) := h
+    have := congrArg UInt32.toNat h'
+    rwa [UInt32.toNat_ofNat_of_lt' (Nat.lt_of_le_of_lt Nat.and_le_right (by decide)),
+         UInt32.toNat_ofNat_of_lt' (Nat.lt_of_le_of_lt Nat.and_le_right (by decide))] at this
+  show UInt32.ofNat (((ka ^^^ kb) >>> (5 * l)) &&& 31) = 0
+  rw [nchunk_xor, E, Nat.xor_self]; rfl
+
+private theorem xor_ne_zero_of_ne {ka kb : Nat} (h : ka ≠ kb) : ka ^^^ kb ≠ 0 := by
+  intro h0
+  apply h
+  have : ka ^^^ kb ^^^ kb = 0 ^^^ kb := by rw [h0]
+  rwa [Nat.xor_assoc, Nat.xor_self, Nat.xor_zero, Nat.zero_xor] at this
+
+private theorem chunk_branchLevel_xor_ne_zero (ka kb : Nat) (h : ka ≠ kb) :
+    chunk (ka ^^^ kb) (branchLevel ka kb) ≠ 0 := by
+  have hx : ka ^^^ kb ≠ 0 := xor_ne_zero_of_ne h
+  unfold branchLevel
+  rcases Nat.eq_zero_or_pos (requiredHeight (ka ^^^ kb)) with hL | hL
+  · rw [hL]
+    have hlt : ka ^^^ kb < 2 ^ 5 := by
+      have := lt_pow_of_requiredHeight_le (h := 0) (Nat.le_of_eq hL)
+      rw [pow32_eq] at this; simpa using this
+    show UInt32.ofNat (((ka ^^^ kb) >>> (5 * 0)) &&& 31) ≠ 0
+    rw [Nat.mul_zero, Nat.shiftRight_zero, show (31 : Nat) = 2 ^ 5 - 1 from rfl,
+        Nat.and_two_pow_sub_one_eq_mod, Nat.mod_eq_of_lt hlt]
+    intro hzero
+    apply hx
+    have := congrArg UInt32.toNat hzero
+    rwa [UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hlt (by decide)),
+         show (0 : UInt32).toNat = 0 from rfl] at this
+  · have he : (requiredHeight (ka ^^^ kb) - 1) + 1 = requiredHeight (ka ^^^ kb) := by omega
+    rw [← he]
+    exact chunk_ne_zero_of_requiredHeight_eq (by omega)
+
+/-- The two slots a `join ka _ kb _` branches at are distinct, so its 2-child `bin` is well-formed
+(the `hne` the `join` seams demand). -/
+theorem chunk_branchLevel_ne (ka kb : Nat) (h : ka ≠ kb) :
+    chunk ka (branchLevel ka kb) ≠ chunk kb (branchLevel ka kb) := fun heq =>
+  chunk_branchLevel_xor_ne_zero ka kb h (chunk_xor_eq_zero_of_chunk_eq heq)
+
+/-- Membership in a singleton, as a `Bool` (the `decide`-free form the extensionality proofs use). -/
+theorem contains_singleton_eq (j k : Nat) (v : V) : contains j (singleton k v : PTree L) = (j == k) := by
+  rw [Bool.eq_iff_iff, contains_singleton, beq_iff_eq]
+
+/-- Membership in a `join` of two slot-aligned subtrees, stated directly on `join` (unfolds the
+branch arithmetic once so the call sites need only supply the alignments). -/
+theorem contains_join_eq (j ka kb : Nat) (a b : PTree L) (hne : ka ≠ kb)
+    (ha : AlignedAt (branchLevel ka kb) (chunk ka (branchLevel ka kb))
+            (prefixAbove ka (branchLevel ka kb)) a)
+    (hb : AlignedAt (branchLevel ka kb) (chunk kb (branchLevel ka kb))
+            (prefixAbove ka (branchLevel ka kb)) b) :
+    contains j (join ka a kb b) = (contains j a || contains j b) := by
+  rw [join]
+  exact contains_join j (prefixAbove ka (branchLevel ka kb)) (branchLevel ka kb)
+    (chunk ka (branchLevel ka kb)) (chunk kb (branchLevel ka kb)) a b
+    (chunk_lt _ _) (chunk_lt _ _) (chunk_branchLevel_ne ka kb hne) ha hb
+
 end PTree
 end NatCol
