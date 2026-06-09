@@ -5257,5 +5257,127 @@ theorem subset_iff_eq (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (
     subset rel a b = true ↔ ∀ k, optRel rel (get? k a) (get? k b) = true := by
   rw [subset]; exact subset_iff rel hrefl a b hwa hwb
 
+/-! ### Lattice and order laws (generic `PTree L`)
+
+The value-level algebra (`optVjoin`/`optVmeet`/`optRel` on `Option V`) lifts to the tree level
+through the four seams + `ext_get?`: a structural equality reduces to a pointwise `Option`-algebra
+identity, and an order fact to a pointwise `optRel` fact. Each law carries exactly the combine
+hypotheses its value-level counterpart needs (commutativity, idempotence, transitivity, …). The
+template the migration re-exports on `NatSet`/`NatMap`. -/
+
+private theorem get?_empty (j : Nat) : get? j (empty : PTree L) = none := get?_nil j
+
+private theorem optVjoin_idem (cf : V → V → V) (hidem : ∀ x, cf x x = x) (ox : Option V) :
+    optVjoin cf ox ox = ox := by cases ox <;> simp only [optVjoin] <;> rw [hidem]
+
+private theorem optVmeet_idem (cf : V → V → V) (hidem : ∀ x, cf x x = x) (ox : Option V) :
+    optVmeet cf ox ox = ox := by cases ox <;> simp only [optVmeet] <;> rw [hidem]
+
+private theorem optVjoin_comm (cf : V → V → V) (hc : ∀ x y, cf x y = cf y x) (ox oy : Option V) :
+    optVjoin cf ox oy = optVjoin cf oy ox := by
+  cases ox <;> cases oy <;> simp only [optVjoin] <;> first | rfl | rw [hc]
+
+private theorem optVmeet_comm (cf : V → V → V) (hc : ∀ x y, cf x y = cf y x) (ox oy : Option V) :
+    optVmeet cf ox oy = optVmeet cf oy ox := by
+  cases ox <;> cases oy <;> simp only [optVmeet] <;> first | rfl | rw [hc]
+
+private theorem optRel_refl (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (ox : Option V) :
+    optRel rel ox ox = true := by
+  cases ox with
+  | none => rfl
+  | some x => exact hrefl x
+
+private theorem optRel_trans (rel : V → V → Bool)
+    (htrans : ∀ x y z, rel x y = true → rel y z = true → rel x z = true)
+    (oa ob oc : Option V) (h1 : optRel rel oa ob = true) (h2 : optRel rel ob oc = true) :
+    optRel rel oa oc = true := by
+  cases oa with
+  | none => rfl
+  | some x => cases ob with
+    | none => simp [optRel] at h1
+    | some y => cases oc with
+      | none => simp [optRel] at h2
+      | some z => simp only [optRel] at h1 h2 ⊢; exact htrans x y z h1 h2
+
+private theorem optRel_antisymm (rel : V → V → Bool)
+    (hanti : ∀ x y, rel x y = true → rel y x = true → x = y)
+    (oa ob : Option V) (h1 : optRel rel oa ob = true) (h2 : optRel rel ob oa = true) :
+    oa = ob := by
+  cases oa with
+  | none => cases ob with
+    | none => rfl
+    | some y => simp [optRel] at h2
+  | some x => cases ob with
+    | none => simp [optRel] at h1
+    | some y => simp only [optRel] at h1 h2; rw [hanti x y h1 h2]
+
+/-- `union` with the empty map on the right is the identity. -/
+theorem union_empty (cf : V → V → V) (a : PTree L) (hwa : WF a) : union cf a empty = a :=
+  ext_get? (union cf a empty) a (WF_union cf a empty hwa WF_empty) hwa (fun j => by
+    rw [get?_union cf j a empty hwa WF_empty, get?_empty, optVjoin_none_right])
+
+/-- `union` with the empty map on the left is the identity. -/
+theorem empty_union (cf : V → V → V) (a : PTree L) (hwa : WF a) : union cf empty a = a :=
+  ext_get? (union cf empty a) a (WF_union cf empty a WF_empty hwa) hwa (fun j => by
+    rw [get?_union cf j empty a WF_empty hwa, get?_empty, optVjoin_none_left])
+
+/-- `meet` with the empty map is empty (annihilator). -/
+theorem meet_empty (cf : V → V → V) (a : PTree L) (hwa : WF a) : meet cf a empty = empty :=
+  ext_get? (meet cf a empty) empty (WF_meet cf a empty hwa WF_empty) WF_empty (fun j => by
+    rw [get?_meet cf j a empty hwa WF_empty, get?_empty, optVmeet_none_right])
+
+/-- `meet` with the empty map on the left is empty. -/
+theorem empty_meet (cf : V → V → V) (a : PTree L) (hwa : WF a) : meet cf empty a = empty :=
+  ext_get? (meet cf empty a) empty (WF_meet cf empty a WF_empty hwa) WF_empty (fun j => by
+    rw [get?_meet cf j empty a WF_empty hwa, get?_empty, optVmeet_none_left])
+
+/-- `union` is commutative when its combine is. -/
+theorem union_comm (cf : V → V → V) (hc : ∀ x y, cf x y = cf y x) (a b : PTree L)
+    (hwa : WF a) (hwb : WF b) : union cf a b = union cf b a :=
+  ext_get? (union cf a b) (union cf b a) (WF_union cf a b hwa hwb) (WF_union cf b a hwb hwa)
+    (fun j => by rw [get?_union cf j a b hwa hwb, get?_union cf j b a hwb hwa, optVjoin_comm cf hc])
+
+/-- `meet` is commutative when its combine is. -/
+theorem meet_comm (cf : V → V → V) (hc : ∀ x y, cf x y = cf y x) (a b : PTree L)
+    (hwa : WF a) (hwb : WF b) : meet cf a b = meet cf b a :=
+  ext_get? (meet cf a b) (meet cf b a) (WF_meet cf a b hwa hwb) (WF_meet cf b a hwb hwa)
+    (fun j => by rw [get?_meet cf j a b hwa hwb, get?_meet cf j b a hwb hwa, optVmeet_comm cf hc])
+
+/-- `union` is idempotent when its combine is. -/
+theorem union_self (cf : V → V → V) (hidem : ∀ x, cf x x = x) (a : PTree L) (hwa : WF a) :
+    union cf a a = a :=
+  ext_get? (union cf a a) a (WF_union cf a a hwa hwa) hwa
+    (fun j => by rw [get?_union cf j a a hwa hwa, optVjoin_idem cf hidem])
+
+/-- `meet` is idempotent when its combine is. -/
+theorem meet_self (cf : V → V → V) (hidem : ∀ x, cf x x = x) (a : PTree L) (hwa : WF a) :
+    meet cf a a = a :=
+  ext_get? (meet cf a a) a (WF_meet cf a a hwa hwa) hwa
+    (fun j => by rw [get?_meet cf j a a hwa hwa, optVmeet_idem cf hidem])
+
+/-- The restriction order is reflexive (when `rel` is). -/
+theorem subset_refl (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (a : PTree L) (hwa : WF a) :
+    subset rel a a = true :=
+  (subset_iff_eq rel hrefl a a hwa hwa).mpr (fun k => optRel_refl rel hrefl (get? k a))
+
+/-- The restriction order is transitive (when `rel` is). -/
+theorem subset_trans (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (htrans : ∀ x y z, rel x y = true → rel y z = true → rel x z = true)
+    (a b c : PTree L) (hwa : WF a) (hwb : WF b) (hwc : WF c)
+    (hab : subset rel a b = true) (hbc : subset rel b c = true) : subset rel a c = true :=
+  (subset_iff_eq rel hrefl a c hwa hwc).mpr (fun k =>
+    optRel_trans rel htrans (get? k a) (get? k b) (get? k c)
+      ((subset_iff_eq rel hrefl a b hwa hwb).mp hab k)
+      ((subset_iff_eq rel hrefl b c hwb hwc).mp hbc k))
+
+/-- The restriction order is antisymmetric (when `rel` is): mutual restriction forces equality. -/
+theorem subset_antisymm (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (hanti : ∀ x y, rel x y = true → rel y x = true → x = y)
+    (a b : PTree L) (hwa : WF a) (hwb : WF b)
+    (hab : subset rel a b = true) (hba : subset rel b a = true) : a = b :=
+  ext_get? a b hwa hwb (fun j => optRel_antisymm rel hanti (get? j a) (get? j b)
+    ((subset_iff_eq rel hrefl a b hwa hwb).mp hab j)
+    ((subset_iff_eq rel hrefl b a hwb hwa).mp hba j))
+
 end PTree
 end NatCol
