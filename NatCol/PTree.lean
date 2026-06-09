@@ -5311,6 +5311,74 @@ private theorem optRel_antisymm (rel : V → V → Bool)
     | none => simp [optRel] at h1
     | some y => simp only [optRel] at h1 h2; rw [hanti x y h1 h2]
 
+/-- The `meet` value-step lies below its left input (when the combine does, `rel (cf x y) x`). -/
+private theorem optRel_optVmeet_left (rel : V → V → Bool) (cf : V → V → V)
+    (hmle : ∀ x y, rel (cf x y) x = true) (oa ob : Option V) :
+    optRel rel (optVmeet cf oa ob) oa = true := by
+  cases oa with
+  | none => cases ob <;> rfl
+  | some x => cases ob with
+    | none => rfl
+    | some y => exact hmle x y
+
+/-- The `meet` value-step lies below its right input (when the combine does, `rel (cf x y) y`). -/
+private theorem optRel_optVmeet_right (rel : V → V → Bool) (cf : V → V → V)
+    (hmre : ∀ x y, rel (cf x y) y = true) (oa ob : Option V) :
+    optRel rel (optVmeet cf oa ob) ob = true := by
+  cases ob with
+  | none => cases oa <;> rfl
+  | some y => cases oa with
+    | none => rfl
+    | some x => exact hmre x y
+
+/-- Any common lower bound `oc` lies below the `meet` value-step (the greatest-lower-bound step). -/
+private theorem optRel_optVmeet_glb (rel : V → V → Bool) (cf : V → V → V)
+    (hglb : ∀ z x y, rel z x = true → rel z y = true → rel z (cf x y) = true)
+    (oa ob oc : Option V) (h1 : optRel rel oc oa = true) (h2 : optRel rel oc ob = true) :
+    optRel rel oc (optVmeet cf oa ob) = true := by
+  cases oc with
+  | none => rfl
+  | some z => cases oa with
+    | none => simp [optRel] at h1
+    | some x => cases ob with
+      | none => simp [optRel] at h2
+      | some y => simp only [optVmeet, optRel] at h1 h2 ⊢; exact hglb z x y h1 h2
+
+/-- The left input lies below the `union` value-step (when the combine does, `rel x (cf x y)`). -/
+private theorem optRel_optVjoin_left (rel : V → V → Bool) (cf : V → V → V)
+    (hrefl : ∀ x, rel x x = true) (hjle : ∀ x y, rel x (cf x y) = true) (oa ob : Option V) :
+    optRel rel oa (optVjoin cf oa ob) = true := by
+  cases oa with
+  | none => rfl
+  | some x => cases ob with
+    | none => exact hrefl x
+    | some y => exact hjle x y
+
+/-- The right input lies below the `union` value-step (when the combine does, `rel y (cf x y)`). -/
+private theorem optRel_optVjoin_right (rel : V → V → Bool) (cf : V → V → V)
+    (hrefl : ∀ x, rel x x = true) (hjre : ∀ x y, rel y (cf x y) = true) (oa ob : Option V) :
+    optRel rel ob (optVjoin cf oa ob) = true := by
+  cases ob with
+  | none => rfl
+  | some y => cases oa with
+    | none => exact hrefl y
+    | some x => exact hjre x y
+
+/-- The `union` value-step lies below any common upper bound `oc` (the least-upper-bound step). -/
+private theorem optRel_optVjoin_lub (rel : V → V → Bool) (cf : V → V → V)
+    (hjlub : ∀ x y z, rel x z = true → rel y z = true → rel (cf x y) z = true)
+    (oa ob oc : Option V) (h1 : optRel rel oa oc = true) (h2 : optRel rel ob oc = true) :
+    optRel rel (optVjoin cf oa ob) oc = true := by
+  cases oa with
+  | none => cases ob with
+    | none => rfl
+    | some y => exact h2
+  | some x => cases ob with
+    | none => exact h1
+    | some y => cases oc with
+      | none => simp [optRel] at h1
+      | some z => simp only [optVjoin, optRel] at h1 h2 ⊢; exact hjlub x y z h1 h2
+
 /-- `union` with the empty map on the right is the identity. -/
 theorem union_empty (cf : V → V → V) (a : PTree L) (hwa : WF a) : union cf a empty = a :=
   ext_get? (union cf a empty) a (WF_union cf a empty hwa WF_empty) hwa (fun j => by
@@ -5433,6 +5501,62 @@ theorem subset_antisymm (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
   ext_get? a b hwa hwb (fun j => optRel_antisymm rel hanti (get? j a) (get? j b)
     ((subset_iff_eq rel hrefl a b hwa hwb).mp hab j)
     ((subset_iff_eq rel hrefl b a hwb hwa).mp hba j))
+
+/-- `meet` is a lower bound of its left input (greatest-lower-bound part 1). -/
+theorem meet_subset_left (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (cf : V → V → V)
+    (hmle : ∀ x y, rel (cf x y) x = true) (a b : PTree L) (hwa : WF a) (hwb : WF b) :
+    subset rel (meet cf a b) a = true :=
+  (subset_iff_eq rel hrefl (meet cf a b) a (WF_meet cf a b hwa hwb) hwa).mpr (fun k => by
+    rw [get?_meet cf k a b hwa hwb]
+    exact optRel_optVmeet_left rel cf hmle (get? k a) (get? k b))
+
+/-- `meet` is a lower bound of its right input (greatest-lower-bound part 2). -/
+theorem meet_subset_right (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (cf : V → V → V)
+    (hmre : ∀ x y, rel (cf x y) y = true) (a b : PTree L) (hwa : WF a) (hwb : WF b) :
+    subset rel (meet cf a b) b = true :=
+  (subset_iff_eq rel hrefl (meet cf a b) b (WF_meet cf a b hwa hwb) hwb).mpr (fun k => by
+    rw [get?_meet cf k a b hwa hwb]
+    exact optRel_optVmeet_right rel cf hmre (get? k a) (get? k b))
+
+/-- Any common lower bound of `a` and `b` is below their `meet` (greatest-lower-bound universal). -/
+theorem subset_meet (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (cf : V → V → V)
+    (hglb : ∀ z x y, rel z x = true → rel z y = true → rel z (cf x y) = true)
+    (a b c : PTree L) (hwa : WF a) (hwb : WF b) (hwc : WF c)
+    (hca : subset rel c a = true) (hcb : subset rel c b = true) :
+    subset rel c (meet cf a b) = true :=
+  (subset_iff_eq rel hrefl c (meet cf a b) hwc (WF_meet cf a b hwa hwb)).mpr (fun k => by
+    rw [get?_meet cf k a b hwa hwb]
+    exact optRel_optVmeet_glb rel cf hglb (get? k a) (get? k b) (get? k c)
+      ((subset_iff_eq rel hrefl c a hwc hwa).mp hca k)
+      ((subset_iff_eq rel hrefl c b hwc hwb).mp hcb k))
+
+/-- `union` is an upper bound of its left input (least-upper-bound part 1). -/
+theorem subset_union_left (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (cf : V → V → V)
+    (hjle : ∀ x y, rel x (cf x y) = true) (a b : PTree L) (hwa : WF a) (hwb : WF b) :
+    subset rel a (union cf a b) = true :=
+  (subset_iff_eq rel hrefl a (union cf a b) hwa (WF_union cf a b hwa hwb)).mpr (fun k => by
+    rw [get?_union cf k a b hwa hwb]
+    exact optRel_optVjoin_left rel cf hrefl hjle (get? k a) (get? k b))
+
+/-- `union` is an upper bound of its right input (least-upper-bound part 2). -/
+theorem subset_union_right (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (cf : V → V → V)
+    (hjre : ∀ x y, rel y (cf x y) = true) (a b : PTree L) (hwa : WF a) (hwb : WF b) :
+    subset rel b (union cf a b) = true :=
+  (subset_iff_eq rel hrefl b (union cf a b) hwb (WF_union cf a b hwa hwb)).mpr (fun k => by
+    rw [get?_union cf k a b hwa hwb]
+    exact optRel_optVjoin_right rel cf hrefl hjre (get? k a) (get? k b))
+
+/-- Any common upper bound of `a` and `b` is above their `union` (least-upper-bound universal). -/
+theorem union_subset (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (cf : V → V → V)
+    (hjlub : ∀ x y z, rel x z = true → rel y z = true → rel (cf x y) z = true)
+    (a b c : PTree L) (hwa : WF a) (hwb : WF b) (hwc : WF c)
+    (hac : subset rel a c = true) (hbc : subset rel b c = true) :
+    subset rel (union cf a b) c = true :=
+  (subset_iff_eq rel hrefl (union cf a b) c (WF_union cf a b hwa hwb) hwc).mpr (fun k => by
+    rw [get?_union cf k a b hwa hwb]
+    exact optRel_optVjoin_lub rel cf hjlub (get? k a) (get? k b) (get? k c)
+      ((subset_iff_eq rel hrefl a c hwa hwc).mp hac k)
+      ((subset_iff_eq rel hrefl b c hwb hwc).mp hbc k))
 
 end PTree
 end NatCol
