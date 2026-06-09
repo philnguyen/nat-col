@@ -164,6 +164,25 @@ decreasing_by
 /-- All `(key, value)` pairs of the trie, ascending by key. -/
 @[inline] def toArray (t : PTree L) : Array (Nat × V) := toArrayAux #[] t
 
+-- Structural equality. On WF (canonical) tries this coincides with logical equality
+-- (`eq_of_beq`/`beq_refl`), which is what makes the `NatCollection` `BEq` lawful. Children are
+-- compared via `beqList` on `kids.toList`, so the lawfulness proofs are clean structural inductions
+-- (`Array.toList` is injective).
+mutual
+/-- Structural equality of two tries (see the note above the `mutual` block). -/
+@[specialize] def beq [BEq L] : PTree L → PTree L → Bool
+  | .nil,             .nil             => true
+  | .tip p1 l1,       .tip p2 l2       => (p1 == p2) && (l1 == l2)
+  | .bin p1 v1 m1 k1, .bin p2 v2 m2 k2 =>
+      (p1 == p2) && (v1 == v2) && (m1 == m2) && beqList k1.toList k2.toList
+  | _,                _                => false
+/-- Element-wise structural equality of two child lists (the `beq` companion). -/
+@[specialize] def beqList [BEq L] : List (PTree L) → List (PTree L) → Bool
+  | [],       []       => true
+  | c1 :: r1, c2 :: r2 => beq c1 c2 && beqList r1 r2
+  | _,        _        => false
+end
+
 /-- Total child accessor: the subtree a `bin`'s mask routes slot `c` to, `nil` when the slot is
 absent (or the compact index is out of range). Gives every membership/merge proof one total
 accessor in place of the raw `dite` bounds juggling. -/
@@ -553,6 +572,11 @@ private def strictlyAscending (xs : List Nat) : Bool := (xs.zip (xs.drop 1)).all
 #guard (ofSet sparseK).toArray.size == refCount sparseK                            -- count matches
 #guard strictlyAscending ((ofSet sparseK).toArray.toList.map Prod.fst)            -- sparse, ascending
 #guard strictlyAscending ((ofSet seqK).toArray.toList.map Prod.fst)              -- dense, ascending
+
+-- structural `beq` matches set equality on canonical tries (same set built two ways compares equal)
+#guard beq (ofSet [1, 2, 3]) (ofSet [3, 2, 1, 2])
+#guard !beq (ofSet [1, 2]) (ofSet [1, 2, 3])
+#guard beq (ofSet sparseK) (ofSet sparseK.reverse)                                -- order-independent
 
 ----------------------------------------------------------------------------------------------------
 -- Theorems
@@ -5589,6 +5613,62 @@ theorem union_subset (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (c
     exact optRel_optVjoin_lub rel cf hjlub (get? k a) (get? k b) (get? k c)
       ((subset_iff_eq rel hrefl a c hwa hwc).mp hac k)
       ((subset_iff_eq rel hrefl b c hwb hwc).mp hbc k))
+
+/-! ### Structural equality (`beq`) is lawful
+
+On any two tries (canonical or not) `beq` decides propositional equality — `beq_refl` and
+`eq_of_beq` below. The `NatCollection` wrapper turns these into a `LawfulBEq` instance; because
+every collection is kept canonical, structural equality there coincides with logical (set/map)
+equality. The proofs are mutual structural inductions mirroring `beq`/`beqList`. -/
+
+mutual
+/-- `beq` is reflexive (given a reflexive leaf `BEq`). -/
+theorem beq_refl [BEq L] [LawfulBEq L] : (t : PTree L) → beq t t = true
+  | .nil        => rfl
+  | .tip p l    => by simp only [beq, beq_self_eq_true, Bool.and_self]
+  | .bin p v m k => by
+      show ((p == p) && (v == v) && (m == m) && beqList k.toList k.toList) = true
+      rw [beqList_refl k.toList]
+      simp only [beq_self_eq_true, Bool.and_self]
+/-- `beqList` is reflexive (the `beq_refl` companion). -/
+theorem beqList_refl [BEq L] [LawfulBEq L] : (l : List (PTree L)) → beqList l l = true
+  | []     => rfl
+  | c :: r => by
+      show (beq c c && beqList r r) = true
+      rw [beq_refl c, beqList_refl r, Bool.and_self]
+end
+
+mutual
+/-- `beq` decides propositional equality. -/
+theorem eq_of_beq [BEq L] [LawfulBEq L] : {a b : PTree L} → beq a b = true → a = b
+  | .nil,             .nil,             _ => rfl
+  | .tip p1 l1,       .tip p2 l2,       h => by
+      simp only [beq, Bool.and_eq_true] at h
+      rw [LawfulBEq.eq_of_beq h.1, LawfulBEq.eq_of_beq h.2]
+  | .bin p1 v1 m1 k1, .bin p2 v2 m2 k2, h => by
+      simp only [beq, Bool.and_eq_true] at h
+      obtain ⟨⟨⟨hp, hv⟩, hm⟩, hk⟩ := h
+      have hp' : p1 = p2 := LawfulBEq.eq_of_beq hp
+      have hv' : v1 = v2 := LawfulBEq.eq_of_beq hv
+      have hm' : m1 = m2 := LawfulBEq.eq_of_beq hm
+      have hk' : k1 = k2 := Array.toList_inj.mp (eqList_of_beqList hk)
+      subst hp'; subst hv'; subst hm'; subst hk'; rfl
+  | .nil,             .tip _ _,         h => by simp [beq] at h
+  | .nil,             .bin _ _ _ _,     h => by simp [beq] at h
+  | .tip _ _,         .nil,             h => by simp [beq] at h
+  | .tip _ _,         .bin _ _ _ _,     h => by simp [beq] at h
+  | .bin _ _ _ _,     .nil,             h => by simp [beq] at h
+  | .bin _ _ _ _,     .tip _ _,         h => by simp [beq] at h
+/-- `beqList` decides propositional equality (the `eq_of_beq` companion). -/
+theorem eqList_of_beqList [BEq L] [LawfulBEq L] :
+    {l1 l2 : List (PTree L)} → beqList l1 l2 = true → l1 = l2
+  | [],       [],       _ => rfl
+  | c1 :: r1, c2 :: r2, h => by
+      simp only [beqList, Bool.and_eq_true] at h
+      rw [eq_of_beq h.1, eqList_of_beqList h.2]
+  | [],       _ :: _,   h => by simp [beqList] at h
+  | _ :: _,   [],       h => by simp [beqList] at h
+end
 
 end PTree
 end NatCol
