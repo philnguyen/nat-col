@@ -144,6 +144,26 @@ decreasing_by
   have := Array.sizeOf_lt_of_mem hc
   omega
 
+/-- Append every `(key, value)` pair to `acc`, in ascending key order. A `tip` enumerates its leaf
+(`LeafOps.toArray`, ascending slots), reconstructing each full key from the tip's prefix; a `bin`
+visits its children left-to-right (children sit in ascending chunk-at-level order), so the whole
+walk is ascending. The one structural traversal the higher-level folds/filters/monadic ops reduce
+to (via `toArray`). -/
+def toArrayAux : Array (Nat × V) → PTree L → Array (Nat × V)
+  | acc, .nil            => acc
+  | acc, .tip pfx leaf   =>
+      (LeafOps.toArray leaf).foldl (fun a sv => a.push ((pfx <<< 5) ||| sv.1.toNat, sv.2)) acc
+  | acc, .bin _ _ _ kids => kids.attach.foldl (fun a ⟨c, _⟩ => toArrayAux a c) acc
+termination_by _ t => sizeOf t
+decreasing_by
+  simp_wf
+  rename_i c hc
+  have := Array.sizeOf_lt_of_mem hc
+  omega
+
+/-- All `(key, value)` pairs of the trie, ascending by key. -/
+@[inline] def toArray (t : PTree L) : Array (Nat × V) := toArrayAux #[] t
+
 /-- Total child accessor: the subtree a `bin`'s mask routes slot `c` to, `nil` when the slot is
 absent (or the compact index is out of range). Gives every membership/merge proof one total
 accessor in place of the raw `dite` bounds juggling. -/
@@ -525,6 +545,14 @@ private def subsetCorpus : List (List Nat) :=
 #guard (meetSet (ofSet [0, 32]) (ofSet [0, 64])).size == 1            -- finalize lifts the lone survivor
 #guard (meetSet (ofSet [0, 32]) (ofSet [0, 64])).contains 0
 #guard (meetSet (ofSet [0, 32]) (ofSet [64, 96])).size == 0           -- finalize collapses to nil
+
+-- `toArray` enumerates keys in ascending order regardless of insertion order or key spread
+private def strictlyAscending (xs : List Nat) : Bool := (xs.zip (xs.drop 1)).all (fun p => p.1 < p.2)
+#guard (ofSet [3, 1, 2]).toArray.toList.map Prod.fst == [1, 2, 3]
+#guard (ofSet [5, 1000, 0, 32]).toArray.toList.map Prod.fst == [0, 5, 32, 1000]   -- across leaves
+#guard (ofSet sparseK).toArray.size == refCount sparseK                            -- count matches
+#guard strictlyAscending ((ofSet sparseK).toArray.toList.map Prod.fst)            -- sparse, ascending
+#guard strictlyAscending ((ofSet seqK).toArray.toList.map Prod.fst)              -- dense, ascending
 
 ----------------------------------------------------------------------------------------------------
 -- Theorems
