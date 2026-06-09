@@ -3273,5 +3273,382 @@ theorem contains_meet (cf : V → V → V) (j : Nat) (a b : PTree L) (hwa : WF a
 theorem WF_meet (cf : V → V → V) (a b : PTree L) (hwa : WF a) (hwb : WF b) : WF (meet cf a b) := by
   rw [meet]; exact (meet_WF_contains cf a b hwa hwb).1
 
+/-! ### Extensionality
+
+A well-formed tree is determined by its `get?` denotation: two `WF` trees that read identically at
+every key are equal (`ext_get?`). This lifts the `get?_*`/`contains_*` seams to structural
+equalities, the bridge the lattice/order laws cross. The key-set alone (`contains`) already pins a
+tree's *shape* — its `nil`/`tip`/`bin` structure and a `bin`'s level/prefix/mask/children — so that
+machinery is leaf-agnostic and stated on `contains`; only the final `tip`-vs-`tip` step needs the
+leaf's full value denotation (via `LeafOps.get?_ext`), which is why the top-level theorem is
+`get?`-based rather than `contains`-based (two maps can share a key-set yet differ in values). -/
+
+/-- A concrete member key: descend to the first child of every `bin`, then read a leaf's
+representative slot (`someSlot`). Unlike `someKey` (which zeroes the bits below a node's level — only
+a prefix probe), this follows a real path to a leaf, so a `WF` tree genuinely contains it. -/
+private def witnessKey : PTree L → Nat
+  | .nil => 0
+  | .tip pfx leaf => (LeafOps.someSlot leaf).toNat + 32 * pfx
+  | .bin _ _ _ kids => if h : 0 < kids.size then witnessKey (kids[0]'h) else 0
+decreasing_by
+  simp_wf
+  rename_i h
+  have := Array.sizeOf_lt_of_mem (Array.getElem_mem h)
+  omega
+
+/-- Adding a multiple of 32 leaves the bottom chunk unchanged. -/
+private theorem chunk_zero_add_mul (a b : Nat) : chunk (a + 32 * b) 0 = chunk a 0 := by
+  rw [chunk0_eq, chunk0_eq, Nat.add_mul_mod_self_left]
+
+/-- `witnessKey` names a real member of any well-formed non-empty tree: a leaf's representative slot,
+or (recursively) a member of a `bin`'s first child — which routes back to that child by alignment. -/
+private theorem contains_witnessKey :
+    ∀ (t : PTree L), WF t → t ≠ .nil → contains (witnessKey t) t = true := by
+  intro t
+  induction t using witnessKey.induct with
+  | case1 => intro _ hne; exact absurd rfl hne
+  | case2 pfx leaf =>
+    intro hwf _
+    have hb : LeafOps.isEmpty leaf = false := by rw [WF] at hwf; exact hwf
+    have hlo : (LeafOps.someSlot leaf).toNat < 32 := by
+      have h := UInt32.lt_iff_toNat_lt.mp (LeafOps.someSlot_lt leaf hb)
+      rwa [show (32 : UInt32).toNat = 32 from by decide] at h
+    rw [contains_tip, Bool.and_eq_true, beq_iff_eq, witnessKey]
+    refine ⟨?_, ?_⟩
+    · rw [Nat.shiftRight_eq_div_pow, show (2 : Nat) ^ 5 = 32 from rfl,
+          Nat.add_mul_div_left _ _ (by decide : 0 < 32), Nat.div_eq_of_lt hlo, Nat.zero_add]
+    · rw [chunk_zero_add_mul, chunk_toNat_zero _ (LeafOps.someSlot_lt leaf hb)]
+      exact LeafOps.contains_someSlot leaf hb
+  | case3 pfx level mask kids h IH =>
+    intro hwf _
+    rw [WF] at hwf
+    obtain ⟨hlvl, hsize, hpc, hkidswf, hnonnil, hrout⟩ := hwf
+    have hm : mask ≠ 0 := by
+      intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+    have hwf0 : WF (kids[0]'h) := hkidswf _ (Array.getElem_mem h)
+    have hne0 : kids[0]'h ≠ .nil := hnonnil _ (Array.getElem_mem h)
+    have hmem0 : contains (witnessKey (kids[0]'h)) (kids[0]'h) = true := IH hwf0 hne0
+    have harr : arrayIndex mask (lowestSetIdx mask) = 0 := arrayIndex_lowestSetIdx mask hm
+    have hc0tb : testBit mask (lowestSetIdx mask) = true := testBit_lowestSetIdx mask hm
+    have hc0lt : lowestSetIdx mask < 32 := lowestSetIdx_lt mask hm
+    have hchild0 : childAt mask kids (lowestSetIdx mask) = kids[0]'h := by
+      unfold childAt; rw [harr, Array.getElem?_eq_getElem h, Option.getD_some]
+    have halign : AlignedAt level (lowestSetIdx mask) pfx (kids[0]'h) := by
+      have := hrout (lowestSetIdx mask) hc0lt hc0tb; rwa [hchild0] at this
+    have hcj : chunk (witnessKey (kids[0]'h)) level = lowestSetIdx mask := (halign _ hmem0).1
+    rw [show witnessKey (.bin pfx level mask kids) = witnessKey (kids[0]'h) from by
+          rw [witnessKey, dif_pos h],
+        contains_bin, hcj, hc0tb, Bool.true_and, hchild0]
+    exact hmem0
+  | case4 pfx level mask kids hns =>
+    intro hwf _
+    rw [WF] at hwf
+    obtain ⟨_, hsize, hpc, _, _, _⟩ := hwf
+    exact absurd (show 0 < kids.size by rw [hsize]; omega) hns
+
+/-- A non-empty well-formed tree has a member: `contains` is not identically `false`. -/
+theorem exists_mem (t : PTree L) (hwf : WF t) (hne : t ≠ .nil) : ∃ j, contains j t = true :=
+  ⟨witnessKey t, contains_witnessKey t hwf hne⟩
+
+/-- The converse: a well-formed tree with no members is `nil`. The `nil` half of `ext`. -/
+theorem eq_nil_of_no_member (t : PTree L) (hwf : WF t) (h : ∀ j, contains j t = false) :
+    t = .nil := by
+  cases t with
+  | nil => rfl
+  | tip pfx leaf =>
+    have hpos := contains_witnessKey _ hwf (by simp)
+    rw [h] at hpos; exact absurd hpos (by decide)
+  | bin pfx level mask kids =>
+    have hpos := contains_witnessKey _ hwf (by simp)
+    rw [h] at hpos; exact absurd hpos (by decide)
+
+/-- A present slot's child sits in the `kids` array (it is read at an in-range compact index). -/
+private theorem childAt_mem (mask : UInt32) (kids : Array (PTree L)) (c : UInt32)
+    (hsize : kids.size = popCount mask) (htb : testBit mask c = true) :
+    childAt mask kids c ∈ kids := by
+  have hidx : arrayIndex mask c < kids.size := by rw [hsize]; exact arrayIndex_lt mask c htb
+  have he : childAt mask kids c = kids[arrayIndex mask c]'hidx := by
+    unfold childAt; rw [Array.getElem?_eq_getElem hidx, Option.getD_some]
+  rw [he]; exact Array.getElem_mem hidx
+
+/-- Every key in a well-formed `bin` carries the branch prefix. -/
+private theorem prefixAbove_eq_of_mem (p l : Nat) (m : UInt32) (k : Array (PTree L))
+    (hwf : WF (.bin p l m k)) (j : Nat) (hj : contains j (.bin p l m k) = true) :
+    prefixAbove j l = p := by
+  rw [WF] at hwf
+  obtain ⟨_, _, _, _, _, hrout⟩ := hwf
+  rw [contains_bin, Bool.and_eq_true] at hj
+  obtain ⟨htb, hcc⟩ := hj
+  exact (hrout (chunk j l) (chunk_lt _ _) htb j hcc).2
+
+/-- A key contained in a present slot's child is contained in the `bin`: it routes back to that
+slot (its chunk equals `c` by alignment). -/
+private theorem mem_child_imp_mem_bin (p l : Nat) (m : UInt32) (k : Array (PTree L))
+    (hwf : WF (.bin p l m k)) (c : UInt32) (hc : c < 32) (htb : testBit m c = true)
+    (j : Nat) (hj : contains j (childAt m k c) = true) : contains j (.bin p l m k) = true := by
+  rw [WF] at hwf
+  obtain ⟨_, _, _, _, _, hrout⟩ := hwf
+  have hcj : chunk j l = c := (hrout c hc htb j hj).1
+  rw [contains_bin, hcj, htb, Bool.true_and]; exact hj
+
+/-- Two keys whose prefixes agree above level `l2` agree on any chunk above `l2`. -/
+private theorem chunk_eq_of_prefixAbove_lt {j1 j2 l1 l2 : Nat}
+    (h : prefixAbove j1 l2 = prefixAbove j2 l2) (hlt : l2 < l1) : chunk j1 l1 = chunk j2 l1 := by
+  have h' : j1 >>> (5 * (l2 + 1)) = j2 >>> (5 * (l2 + 1)) := h
+  exact chunk_eq_of_shiftRight_eq (shiftRight_mono_eq h' (by omega))
+
+/-- Compact indices cover `0..popCount mask`: every position `i` below the count is the compact
+index of some present slot. The inverse of `arrayIndex` on present bits, needed to read a `bin`'s
+children back by array index. -/
+private theorem arrayIndex_surj : ∀ (n : Nat) (m : UInt32), popCount m = n →
+    ∀ i, i < n → ∃ c, c < 32 ∧ testBit m c = true ∧ arrayIndex m c = i := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro m hpc i hi
+    have hm : m ≠ 0 := by intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+    by_cases hi0 : i = 0
+    · exact ⟨lowestSetIdx m, lowestSetIdx_lt m hm, testBit_lowestSetIdx m hm,
+             by rw [arrayIndex_lowestSetIdx m hm, hi0]⟩
+    · have hcl : popCount (clearLowest m) = n - 1 := by
+        have := popCount_clearLowest m hm; omega
+      have hclt : popCount (clearLowest m) < n := by omega
+      obtain ⟨c, hc32, hctb, hcidx⟩ :=
+        IH (popCount (clearLowest m)) hclt (clearLowest m) rfl (i - 1) (by omega)
+      have htbm : testBit m c = true := testBit_of_clearLowest m c hctb
+      have hcne : c ≠ lowestSetIdx m := by
+        intro he
+        rw [he, testBit_clearLowest_self m hm] at hctb; exact absurd hctb (by decide)
+      refine ⟨c, hc32, htbm, ?_⟩
+      rw [arrayIndex_clearLowest_of_ne m c hc32 htbm hcne, hcidx]; omega
+
+/-- A well-formed `bin` (≥ 2 children) holds two keys that route to different slots at its level —
+the divergence that pins down its branch level. -/
+private theorem exists_two_divergent (p l : Nat) (m : UInt32) (k : Array (PTree L))
+    (hwf : WF (.bin p l m k)) :
+    ∃ j1 j2, contains j1 (.bin p l m k) = true ∧ contains j2 (.bin p l m k) = true
+      ∧ chunk j1 l ≠ chunk j2 l := by
+  have hwf' := hwf
+  rw [WF] at hwf'
+  obtain ⟨hlvl, hsize, hpc, hkidswf, hnonnil, hrout⟩ := hwf'
+  have hm : m ≠ 0 := by intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+  have hclne : clearLowest m ≠ 0 := by
+    intro h0
+    have := popCount_clearLowest m hm
+    rw [h0, show popCount 0 = 0 from rfl] at this; omega
+  have hc1lt : lowestSetIdx m < 32 := lowestSetIdx_lt m hm
+  have hc2lt : lowestSetIdx (clearLowest m) < 32 := lowestSetIdx_lt (clearLowest m) hclne
+  have hc1tb : testBit m (lowestSetIdx m) = true := testBit_lowestSetIdx m hm
+  have hc2tb : testBit m (lowestSetIdx (clearLowest m)) = true :=
+    testBit_of_clearLowest m _ (testBit_lowestSetIdx (clearLowest m) hclne)
+  have hcne : lowestSetIdx m ≠ lowestSetIdx (clearLowest m) := by
+    intro he
+    have h1 : testBit (clearLowest m) (lowestSetIdx m) = false := testBit_clearLowest_self m hm
+    have h2 : testBit (clearLowest m) (lowestSetIdx (clearLowest m)) = true :=
+      testBit_lowestSetIdx (clearLowest m) hclne
+    rw [← he] at h2; rw [h1] at h2; exact absurd h2 (by decide)
+  have hwfc1 : WF (childAt m k (lowestSetIdx m)) := hkidswf _ (childAt_mem m k _ hsize hc1tb)
+  have hnec1 : childAt m k (lowestSetIdx m) ≠ .nil := hnonnil _ (childAt_mem m k _ hsize hc1tb)
+  have hwfc2 : WF (childAt m k (lowestSetIdx (clearLowest m))) :=
+    hkidswf _ (childAt_mem m k _ hsize hc2tb)
+  have hnec2 : childAt m k (lowestSetIdx (clearLowest m)) ≠ .nil :=
+    hnonnil _ (childAt_mem m k _ hsize hc2tb)
+  obtain ⟨j1, hj1⟩ := exists_mem _ hwfc1 hnec1
+  obtain ⟨j2, hj2⟩ := exists_mem _ hwfc2 hnec2
+  refine ⟨j1, j2, mem_child_imp_mem_bin p l m k hwf _ hc1lt hc1tb j1 hj1,
+          mem_child_imp_mem_bin p l m k hwf _ hc2lt hc2tb j2 hj2, ?_⟩
+  have ha1 : chunk j1 l = lowestSetIdx m := (hrout _ hc1lt hc1tb j1 hj1).1
+  have ha2 : chunk j2 l = lowestSetIdx (clearLowest m) := (hrout _ hc2lt hc2tb j2 hj2).1
+  rw [ha1, ha2]; exact hcne
+
+/-- Two `bin`s with the same key set cannot have `lA < lB`: `b`'s keys diverge at `lB`, but being in
+`a` they agree above `lA`, hence (as `lA < lB`) agree at `lB` — contradiction. Pins the level. -/
+private theorem not_lt_level (pA lA : Nat) (mA : UInt32) (kA : Array (PTree L))
+    (pB lB : Nat) (mB : UInt32) (kB : Array (PTree L))
+    (hwa : WF (.bin pA lA mA kA)) (hwb : WF (.bin pB lB mB kB))
+    (h : ∀ j, contains j (.bin pA lA mA kA) = contains j (.bin pB lB mB kB)) : ¬ lA < lB := by
+  intro hlt
+  obtain ⟨j1, j2, hj1, hj2, hne⟩ := exists_two_divergent pB lB mB kB hwb
+  have hj1a : contains j1 (.bin pA lA mA kA) = true := by rw [h]; exact hj1
+  have hj2a : contains j2 (.bin pA lA mA kA) = true := by rw [h]; exact hj2
+  have hp1 : prefixAbove j1 lA = pA := prefixAbove_eq_of_mem pA lA mA kA hwa j1 hj1a
+  have hp2 : prefixAbove j2 lA = pA := prefixAbove_eq_of_mem pA lA mA kA hwa j2 hj2a
+  exact hne (chunk_eq_of_prefixAbove_lt (hp1.trans hp2.symm) hlt)
+
+/-- Same key set + same level ⇒ same present slots: a slot present in `mA` holds a key (by
+`exists_mem`) that, being in `b`, forces the matching slot of `mB`. Pins the mask (with its mirror). -/
+private theorem mask_testBit_imp (pA l : Nat) (mA : UInt32) (kA : Array (PTree L))
+    (pB : Nat) (mB : UInt32) (kB : Array (PTree L))
+    (hwa : WF (.bin pA l mA kA)) (_hwb : WF (.bin pB l mB kB))
+    (h : ∀ j, contains j (.bin pA l mA kA) = contains j (.bin pB l mB kB))
+    (c : UInt32) (hc : c < 32) (htb : testBit mA c = true) : testBit mB c = true := by
+  have hwa' := hwa
+  rw [WF] at hwa'
+  obtain ⟨_, hsizeA, _, hkidswfA, hnonnilA, hroutA⟩ := hwa'
+  have hwfc : WF (childAt mA kA c) := hkidswfA _ (childAt_mem mA kA c hsizeA htb)
+  have hnec : childAt mA kA c ≠ .nil := hnonnilA _ (childAt_mem mA kA c hsizeA htb)
+  obtain ⟨j, hj⟩ := exists_mem _ hwfc hnec
+  have hcj : chunk j l = c := (hroutA c hc htb j hj).1
+  have hjA : contains j (.bin pA l mA kA) = true := mem_child_imp_mem_bin pA l mA kA hwa c hc htb j hj
+  have hjB : contains j (.bin pB l mB kB) = true := by rw [← h]; exact hjA
+  rw [contains_bin, Bool.and_eq_true] at hjB
+  rw [← hcj]; exact hjB.1
+
+/-- An aligned subtree reads `none` at a key that routes away from its slot — the `get?` shadow of
+`contains_false_of_aligned`, for the off-slot child recursion in `ext_get?`. -/
+private theorem get?_none_of_aligned {j : Nat} (l : Nat) (c : UInt32) (p : Nat) (t : PTree L)
+    (h : AlignedAt l c p t) (hj : chunk j l ≠ c) : get? j t = none := by
+  have hcf := contains_false_of_aligned l c p t h hj
+  rw [contains_eq_isSome] at hcf
+  cases hg : get? j t with
+  | none => rfl
+  | some v => rw [hg] at hcf; simp at hcf
+
+/-- A "probe" key targeting slot `c`: prefix `p`, bottom chunk `c`. Its lookup in `tip p leaf` reads
+exactly the leaf's slot `c` — the per-slot lever that recovers a tip's leaf from its denotation. -/
+private theorem get?_tip_probe (p : Nat) (leaf : L) (c : UInt32) (hc : c < 32) :
+    get? (c.toNat + 32 * p) (.tip p leaf) = LeafOps.get? leaf c := by
+  have hclt : c.toNat < 32 := by
+    have := UInt32.lt_iff_toNat_lt.mp hc; rwa [show (32 : UInt32).toNat = 32 from by decide] at this
+  have hpre : (c.toNat + 32 * p) >>> 5 = p := by
+    rw [Nat.shiftRight_eq_div_pow, show (2 : Nat) ^ 5 = 32 from rfl,
+        Nat.add_mul_div_left _ _ (by decide : 0 < 32), Nat.div_eq_of_lt hclt, Nat.zero_add]
+  have hch : chunk (c.toNat + 32 * p) 0 = c := by rw [chunk_zero_add_mul, chunk_toNat_zero _ hc]
+  rw [get?_tip, hpre, hch]; simp
+
+/-- Same key set + same level/prefix/mask ⇒ matching present children read identically: a key routes
+to slot `c` in both, or to neither (alignment reads `none`). Drives the per-child recursion. -/
+private theorem child_get?_eq (p l : Nat) (m : UInt32) (kA kB : Array (PTree L))
+    (hwa : WF (.bin p l m kA)) (hwb : WF (.bin p l m kB))
+    (h : ∀ j, get? j (.bin p l m kA) = get? j (.bin p l m kB))
+    (c : UInt32) (hc : c < 32) (htb : testBit m c = true) (x : Nat) :
+    get? x (childAt m kA c) = get? x (childAt m kB c) := by
+  by_cases hcx : chunk x l = c
+  · have eA : get? x (.bin p l m kA) = get? x (childAt m kA c) := by
+      rw [get?_bin, hcx, if_pos htb]
+    have eB : get? x (.bin p l m kB) = get? x (childAt m kB c) := by
+      rw [get?_bin, hcx, if_pos htb]
+    rw [← eA, ← eB, h]
+  · have hwa' := hwa; rw [WF] at hwa'
+    have hwb' := hwb; rw [WF] at hwb'
+    obtain ⟨_, _, _, _, _, hroutA⟩ := hwa'
+    obtain ⟨_, _, _, _, _, hroutB⟩ := hwb'
+    rw [get?_none_of_aligned l c p _ (hroutA c hc htb) hcx,
+        get?_none_of_aligned l c p _ (hroutB c hc htb) hcx]
+
+/-- **Extensionality** (`get?` form): two well-formed trees with the same lookup at every key are
+equal. The keystone that lifts the `get?_*`/`contains_*` seams to structural equalities, so the
+lattice/order laws reduce to matching denotations pointwise. By recursion on `a`: `nil` pins by
+`eq_nil_of_no_member`; a `tip` vs a `bin` is impossible (a `bin` diverges, a `tip` does not); two
+`tip`s share prefix (a member's key) and leaf (`LeafOps.get?_ext`); two `bin`s share level, prefix,
+mask (`not_lt_level`/`mask_testBit_imp`) and then, child by child, recurse. -/
+theorem ext_get? (a b : PTree L) (hwa : WF a) (hwb : WF b)
+    (h : ∀ j, get? j a = get? j b) : a = b := by
+  match a, b, hwa, hwb, h with
+  | .nil, b, _, hwb, h =>
+    refine (eq_nil_of_no_member b hwb (fun j => ?_)).symm
+    have hj : get? j b = none := (h j).symm.trans (get?_nil j)
+    simp [contains_eq_isSome, hj]
+  | .tip p1 b1, .nil, hwa, _, h =>
+    refine eq_nil_of_no_member _ hwa (fun j => ?_)
+    have hj : get? j (.tip p1 b1) = none := (h j).trans (get?_nil j)
+    simp [contains_eq_isSome, hj]
+  | .bin p1 l1 m1 k1, .nil, hwa, _, h =>
+    refine eq_nil_of_no_member _ hwa (fun j => ?_)
+    have hj : get? j (.bin p1 l1 m1 k1) = none := (h j).trans (get?_nil j)
+    simp [contains_eq_isSome, hj]
+  | .tip p1 b1, .bin p2 l2 m2 k2, hwa, hwb, h =>
+    exfalso
+    have hcont : ∀ j, contains j (.tip p1 b1) = contains j (.bin p2 l2 m2 k2) :=
+      fun j => by rw [contains_eq_isSome, contains_eq_isSome, h j]
+    obtain ⟨j1, j2, hj1, hj2, hne⟩ := exists_two_divergent p2 l2 m2 k2 hwb
+    have hj1a : contains j1 (.tip p1 b1) = true := by rw [hcont]; exact hj1
+    have hj2a : contains j2 (.tip p1 b1) = true := by rw [hcont]; exact hj2
+    rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj1a hj2a
+    have hbl0 : 0 < l2 := by rw [WF] at hwb; exact hwb.1
+    apply hne
+    apply chunk_eq_of_shiftRight_eq
+    exact shiftRight_mono_eq (hj1a.1.trans hj2a.1.symm) (by omega)
+  | .bin p1 l1 m1 k1, .tip p2 b2, hwa, hwb, h =>
+    exfalso
+    have hcont : ∀ j, contains j (.bin p1 l1 m1 k1) = contains j (.tip p2 b2) :=
+      fun j => by rw [contains_eq_isSome, contains_eq_isSome, h j]
+    obtain ⟨j1, j2, hj1, hj2, hne⟩ := exists_two_divergent p1 l1 m1 k1 hwa
+    have hj1b : contains j1 (.tip p2 b2) = true := by rw [← hcont]; exact hj1
+    have hj2b : contains j2 (.tip p2 b2) = true := by rw [← hcont]; exact hj2
+    rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj1b hj2b
+    have hbl0 : 0 < l1 := by rw [WF] at hwa; exact hwa.1
+    apply hne
+    apply chunk_eq_of_shiftRight_eq
+    exact shiftRight_mono_eq (hj1b.1.trans hj2b.1.symm) (by omega)
+  | .tip p1 b1, .tip p2 b2, hwa, hwb, h =>
+    have hcont : ∀ j, contains j (.tip p1 b1) = contains j (.tip p2 b2) :=
+      fun j => by rw [contains_eq_isSome, contains_eq_isSome, h j]
+    have hp : p1 = p2 := by
+      obtain ⟨j, hj⟩ := exists_mem (.tip p1 b1) hwa (by simp)
+      have hjb : contains j (.tip p2 b2) = true := by rw [← hcont]; exact hj
+      rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj hjb
+      rw [← hj.1, ← hjb.1]
+    subst hp
+    have hbits : b1 = b2 := by
+      apply LeafOps.get?_ext
+      intro c hcc
+      rw [← get?_tip_probe p1 b1 c hcc, ← get?_tip_probe p1 b2 c hcc, h]
+    rw [hbits]
+  | .bin p1 l1 m1 k1, .bin p2 l2 m2 k2, hwa, hwb, h =>
+    have hcont : ∀ j, contains j (.bin p1 l1 m1 k1) = contains j (.bin p2 l2 m2 k2) :=
+      fun j => by rw [contains_eq_isSome, contains_eq_isSome, h j]
+    have hl : l1 = l2 := by
+      have h1 := not_lt_level p1 l1 m1 k1 p2 l2 m2 k2 hwa hwb hcont
+      have h2 := not_lt_level p2 l2 m2 k2 p1 l1 m1 k1 hwb hwa (fun j => (hcont j).symm)
+      omega
+    subst hl
+    have hp : p1 = p2 := by
+      obtain ⟨j, hj⟩ := exists_mem (.bin p1 l1 m1 k1) hwa (by simp)
+      have hjb : contains j (.bin p2 l1 m2 k2) = true := by rw [← hcont]; exact hj
+      rw [← prefixAbove_eq_of_mem p1 l1 m1 k1 hwa j hj,
+          ← prefixAbove_eq_of_mem p2 l1 m2 k2 hwb j hjb]
+    subst hp
+    have hm : m1 = m2 := by
+      apply eq_of_testBit_eq
+      intro c hc
+      have d1 := mask_testBit_imp p1 l1 m1 k1 p1 m2 k2 hwa hwb hcont c hc
+      have d2 := mask_testBit_imp p1 l1 m2 k2 p1 m1 k1 hwb hwa (fun j => (hcont j).symm) c hc
+      by_cases hb1 : testBit m1 c = true
+      · rw [hb1, d1 hb1]
+      · have hb1f : testBit m1 c = false := by simpa using hb1
+        by_cases hb2 : testBit m2 c = true
+        · exact absurd (d2 hb2) hb1
+        · have hb2f : testBit m2 c = false := by simpa using hb2
+          rw [hb1f, hb2f]
+    subst hm
+    have hsizeA : k1.size = popCount m1 := by rw [WF] at hwa; exact hwa.2.1
+    have hsizeB : k2.size = popCount m1 := by rw [WF] at hwb; exact hwb.2.1
+    have hwa' := hwa; rw [WF] at hwa'
+    have hwb' := hwb; rw [WF] at hwb'
+    obtain ⟨_, _, _, hkidswfA, _, _⟩ := hwa'
+    obtain ⟨_, _, _, hkidswfB, _, _⟩ := hwb'
+    have hk : k1 = k2 := by
+      apply Array.ext
+      · rw [hsizeA, hsizeB]
+      · intro i hi1 hi2
+        obtain ⟨c, hc, htb, hac⟩ :=
+          arrayIndex_surj (popCount m1) m1 rfl i (by rw [← hsizeA]; exact hi1)
+        have hk1 : k1[i]'hi1 = childAt m1 k1 c := by
+          unfold childAt; rw [hac, Array.getElem?_eq_getElem hi1, Option.getD_some]
+        have hk2 : k2[i]'hi2 = childAt m1 k2 c := by
+          unfold childAt; rw [hac, Array.getElem?_eq_getElem hi2, Option.getD_some]
+        refine ext_get? (k1[i]'hi1) (k2[i]'hi2) (hkidswfA _ (Array.getElem_mem hi1))
+          (hkidswfB _ (Array.getElem_mem hi2)) ?_
+        intro x
+        rw [hk1, hk2]
+        exact child_get?_eq p1 l1 m1 k1 k2 hwa hwb h c hc htb x
+    rw [hk]
+termination_by sizeOf a
+decreasing_by
+  simp_wf
+  have := Array.sizeOf_lt_of_mem (Array.getElem_mem hi1)
+  omega
+
 end PTree
 end NatCol
