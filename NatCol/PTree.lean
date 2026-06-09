@@ -1367,5 +1367,196 @@ theorem WF_ofList (kvs : List (Nat × V)) : WF (ofList kvs : PTree L) := by
   | nil => intro s hs; exact hs
   | cons a t ih => intro s hs; exact ih (s.insert a.1 a.2) (WF_insert a.1 a.2 s hs)
 
+/-! ### Leaf-level `contains` bridges through `join`/`meet`
+
+The `isSome` shadows of `LeafOps.get?_join`/`get?_meet`: at the leaf, a `join` holds the union of
+two leaves' slots and a `meet` their intersection. These are the seams the key-presence union/meet
+proofs cross at a `tip`, where the two leaves combine (the analogue of the monomorphic `testBit_or`/
+`testBit_and`). -/
+
+/-- A `join`ed leaf holds slot `i` iff either operand does. -/
+private theorem leaf_contains_join (cf : V → V → V) (a b : L) (i : UInt32) (hi : i < 32) :
+    LeafOps.contains (LeafOps.join cf a b) i = (LeafOps.contains a i || LeafOps.contains b i) := by
+  rw [LeafOps.contains_eq_isSome, LeafOps.get?_join cf a b i hi, LeafOps.contains_eq_isSome,
+      LeafOps.contains_eq_isSome]
+  cases LeafOps.get? a i <;> cases LeafOps.get? b i <;> rfl
+
+/-- A `meet`ed leaf holds slot `i` iff both operands do. -/
+private theorem leaf_contains_meet (cf : V → V → V) (a b : L) (i : UInt32) (hi : i < 32) :
+    LeafOps.contains (LeafOps.meet cf a b) i = (LeafOps.contains a i && LeafOps.contains b i) := by
+  rw [LeafOps.contains_eq_isSome, LeafOps.get?_meet cf a b i hi, LeafOps.contains_eq_isSome,
+      LeafOps.contains_eq_isSome]
+  cases LeafOps.get? a i <;> cases LeafOps.get? b i <;> rfl
+
+/-! ### The `union` present-slot fold
+
+The aligned-`bin` case of `unionU` rebuilds the child array with `mergeKids`, a present-slot fold
+over the combined mask `m1 ||| m2` that appends one `mergeChild` per set bit (lowest first). These
+structural facts characterize that array independently of `mergeChild`'s contents: its size, and
+that reading slot `c` back (via `childAt` on the merged mask) recovers `mergeChild … c`. The fold
+shape is leaf-agnostic — the combine `cf` is just carried through. -/
+
+/-- The fold's running invariant: starting from `acc`, processing `rem`'s set bits lowest-first
+appends one child per bit. Stated by strong induction on `rem.toNat` (each step clears the lowest
+bit): the result keeps `acc` as a prefix, grows by `popCount rem`, and lands each remaining set
+bit's `mergeChild` at its compact index past `acc`. -/
+private theorem mergeKids_spec (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) :
+    ∀ (n : Nat) (rem : UInt32), rem.toNat = n → ∀ (acc : Array (PTree L)),
+      (mergeKids cf m1 k1 m2 k2 rem acc).size = acc.size + popCount rem
+      ∧ (∀ i, i < acc.size → (mergeKids cf m1 k1 m2 k2 rem acc)[i]? = acc[i]?)
+      ∧ (∀ c, c < 32 → testBit rem c = true →
+           (mergeKids cf m1 k1 m2 k2 rem acc)[acc.size + arrayIndex rem c]?
+             = some (mergeChild cf m1 k1 m2 k2 c)) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro rem hrem acc
+    by_cases h0 : (rem == 0) = true
+    · have hr0 : rem = 0 := by simpa using h0
+      rw [mergeKids, dif_pos h0]
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hr0, show popCount (0 : UInt32) = 0 from rfl, Nat.add_zero]
+      · intro i hi; rfl
+      · intro c hc htb; rw [hr0, testBit_zero] at htb; exact absurd htb (by decide)
+    · have hrem0 : rem ≠ 0 := by intro h; exact h0 (by rw [h]; rfl)
+      have hstep : mergeKids cf m1 k1 m2 k2 rem acc
+          = mergeKids cf m1 k1 m2 k2 (clearLowest rem)
+              (acc.push (mergeChild cf m1 k1 m2 k2 (lowestSetIdx rem))) := by
+        rw [mergeKids, dif_neg h0]
+      have hlt : (clearLowest rem).toNat < n := by
+        rw [← hrem]; exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem hrem0)
+      obtain ⟨ihsize, ihpref, ihthird⟩ :=
+        IH (clearLowest rem).toNat hlt (clearLowest rem) rfl
+          (acc.push (mergeChild cf m1 k1 m2 k2 (lowestSetIdx rem)))
+      have hpc : popCount (clearLowest rem) + 1 = popCount rem := popCount_clearLowest rem hrem0
+      have haccsz : (acc.push (mergeChild cf m1 k1 m2 k2 (lowestSetIdx rem))).size = acc.size + 1 :=
+        Array.size_push ..
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hstep, ihsize, haccsz]; omega
+      · intro i hi
+        rw [hstep, ihpref i (by omega), Array.getElem?_push_lt hi, Array.getElem?_eq_getElem hi]
+      · intro c hc htb
+        rw [hstep]
+        by_cases hclo : c = lowestSetIdx rem
+        · subst hclo
+          rw [arrayIndex_lowestSetIdx rem hrem0, Nat.add_zero,
+              ihpref acc.size (by omega), Array.getElem?_push_size]
+        · have htb' : testBit (clearLowest rem) c = true := by
+            rw [testBit_clearLowest_of_ne rem c hc hclo]; exact htb
+          have hidx : arrayIndex rem c = arrayIndex (clearLowest rem) c + 1 :=
+            arrayIndex_clearLowest_of_ne rem c hc htb hclo
+          have key := ihthird c hc htb'
+          rw [haccsz] at key
+          rw [hidx, show acc.size + (arrayIndex (clearLowest rem) c + 1)
+                = acc.size + 1 + arrayIndex (clearLowest rem) c from by omega]
+          exact key
+
+/-- Reading slot `c` (present in the merged mask) of the rebuilt child array recovers that slot's
+`mergeChild`. The structural half of the aligned-`bin` union seam: it reduces `childAt` on the
+merged `bin` to per-slot `mergeChild`, where the membership/`WF` reasoning then takes over. -/
+theorem childAt_mergeKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) (c : UInt32) (hc : c < 32) (htb : testBit (m1 ||| m2) c = true) :
+    childAt (m1 ||| m2) (mergeKids cf m1 k1 m2 k2 (m1 ||| m2) #[]) c = mergeChild cf m1 k1 m2 k2 c := by
+  obtain ⟨_, _, hthird⟩ := mergeKids_spec cf m1 k1 m2 k2 (m1 ||| m2).toNat (m1 ||| m2) rfl #[]
+  have hc' := hthird c hc htb
+  unfold childAt
+  rw [show (#[] : Array (PTree L)).size = 0 from rfl, Nat.zero_add] at hc'
+  rw [hc', Option.getD_some]
+
+/-- The rebuilt child array has exactly one slot per present bit of the merged mask — the compact
+size invariant the merged `bin` needs to stay well-formed. -/
+theorem size_mergeKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) :
+    (mergeKids cf m1 k1 m2 k2 (m1 ||| m2) #[]).size = popCount (m1 ||| m2) := by
+  obtain ⟨hsize, _, _⟩ := mergeKids_spec cf m1 k1 m2 k2 (m1 ||| m2).toNat (m1 ||| m2) rfl #[]
+  rw [hsize, show (#[] : Array (PTree L)).size = 0 from rfl, Nat.zero_add]
+
+/-- Every child the fold produces comes from either the seed `acc` or some present slot's
+`mergeChild`. The membership companion to `mergeKids_spec`; feeds the non-`nil` clause of
+`WF_unionU`'s aligned-`bin` case. -/
+private theorem mergeKids_mem (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) :
+    ∀ (n : Nat) (rem : UInt32), rem.toNat = n → ∀ (acc : Array (PTree L)) (x : PTree L),
+      x ∈ mergeKids cf m1 k1 m2 k2 rem acc →
+        x ∈ acc ∨ ∃ c, testBit rem c = true ∧ x = mergeChild cf m1 k1 m2 k2 c := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro rem hrem acc x hx
+    by_cases h0 : (rem == 0) = true
+    · rw [mergeKids, dif_pos h0] at hx; exact Or.inl hx
+    · have hrem0 : rem ≠ 0 := by intro h; exact h0 (by rw [h]; rfl)
+      rw [mergeKids, dif_neg h0] at hx
+      have hlt : (clearLowest rem).toNat < n := by
+        rw [← hrem]; exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem hrem0)
+      rcases IH (clearLowest rem).toNat hlt (clearLowest rem) rfl
+          (acc.push (mergeChild cf m1 k1 m2 k2 (lowestSetIdx rem))) x hx with hacc | hex
+      · rcases Array.mem_push.mp hacc with hin | heq
+        · exact Or.inl hin
+        · exact Or.inr ⟨lowestSetIdx rem, testBit_lowestSetIdx rem hrem0, heq⟩
+      · obtain ⟨c, htb, hxc⟩ := hex
+        exact Or.inr ⟨c, testBit_of_clearLowest rem c htb, hxc⟩
+
+/-- A `bin`'s children, well-formed, non-`nil`, and compactly stored — the part of `WF` the per-slot
+union reasoning (`mergeChild`/`mergeKids`) consumes, abstracted so the motives can carry it. -/
+def KidsWF (mask : UInt32) (kids : Array (PTree L)) : Prop :=
+  kids.size = popCount mask ∧ (∀ c ∈ kids, WF c) ∧ (∀ c ∈ kids, c ≠ .nil)
+
+/-- A key routing to a slot other than the one a subtree is aligned under is not in that subtree. -/
+theorem contains_false_of_aligned {j : Nat} (l : Nat) (c : UInt32) (p : Nat) (t : PTree L)
+    (h : AlignedAt l c p t) (hj : chunk j l ≠ c) : contains j t = false := by
+  cases hcon : contains j t with
+  | true => exact absurd (h j hcon).1 hj
+  | false => rfl
+
+/-- Descend case shared by all four `unionU` quadrants: when an operand `op` routes to a *present*
+slot `c` of a well-formed `bin`, the result overwrites that slot's child with `unionU child op`.
+Membership splits on whether `j` routes to `c`; off-slot keys of `op` are killed by its alignment. -/
+private theorem contains_descend (cf : V → V → V) (j : Nat) (op : PTree L) (bp bl : Nat) (bm : UInt32)
+    (bk : Array (PTree L)) (c : UInt32) (hc : c < 32) (hbin : WF (.bin bp bl bm bk))
+    (halign : AlignedAt bl c bp op) (htb : testBit bm c = true) (hidx : arrayIndex bm c < bk.size)
+    (IH : contains j (unionU cf (bk[arrayIndex bm c]'hidx) op)
+            = (contains j (bk[arrayIndex bm c]'hidx) || contains j op)) :
+    contains j (.bin bp bl bm (bk.setIfInBounds (arrayIndex bm c) (unionU cf (bk[arrayIndex bm c]'hidx) op)))
+      = (contains j op || contains j (.bin bp bl bm bk)) := by
+  have hsize : bk.size = popCount bm := by rw [WF] at hbin; exact hbin.2.1
+  have hcAc : childAt bm bk c = bk[arrayIndex bm c]'hidx := by
+    unfold childAt; rw [Array.getElem?_eq_getElem hidx, Option.getD_some]
+  rw [contains_bin, contains_bin]
+  by_cases hcj : chunk j bl = c
+  · rw [hcj, childAt_setIfInBounds bm c c bk _ hc hc htb htb hsize, if_pos rfl, IH, htb,
+        Bool.true_and, hcAc, Bool.true_and, Bool.or_comm]
+  · by_cases htcj : testBit bm (chunk j bl) = true
+    · rw [childAt_setIfInBounds bm c (chunk j bl) bk _ hc (chunk_lt j bl) htb htcj hsize, if_neg hcj,
+          contains_false_of_aligned bl c bp op halign hcj, Bool.false_or]
+    · simp only [Bool.not_eq_true] at htcj
+      rw [htcj, contains_false_of_aligned bl c bp op halign hcj]
+      simp only [Bool.false_and, Bool.or_false]
+
+/-- Splice case shared by all four `unionU` quadrants: when an operand `op` routes to an *absent*
+slot `c` of a well-formed `bin`, the result inserts `op` whole at the freshly-set slot. Leaf-
+agnostic — no value combines, `op` is carried over wholesale. -/
+private theorem contains_splice (j : Nat) (op : PTree L) (bp bl : Nat) (bm : UInt32)
+    (bk : Array (PTree L)) (c : UInt32) (hc : c < 32) (hbin : WF (.bin bp bl bm bk))
+    (halign : AlignedAt bl c bp op) (htb : testBit bm c = false) :
+    contains j (.bin bp bl (setBit bm c) (bk.insertIdx! (arrayIndex bm c) op))
+      = (contains j op || contains j (.bin bp bl bm bk)) := by
+  have hsize : bk.size = popCount bm := by rw [WF] at hbin; exact hbin.2.1
+  rw [contains_bin, contains_bin]
+  by_cases hcj : chunk j bl = c
+  · subst hcj
+    rw [testBit_setBit bm (chunk j bl) (chunk j bl) (chunk_lt j bl) (chunk_lt j bl), beq_self_eq_true,
+        Bool.or_true, Bool.true_and, childAt_insertIdx_self bm (chunk j bl) bk op hsize, htb,
+        Bool.false_and, Bool.or_false]
+  · by_cases htcj : testBit bm (chunk j bl) = true
+    · rw [testBit_setBit bm c (chunk j bl) hc (chunk_lt j bl), beq_eq_false_iff_ne.mpr (Ne.symm hcj),
+          Bool.or_false, childAt_insertIdx_of_ne bm c (chunk j bl) bk op hc (chunk_lt j bl) hcj htb
+            htcj hsize, contains_false_of_aligned bl c bp op halign hcj, Bool.false_or]
+    · simp only [Bool.not_eq_true] at htcj
+      rw [testBit_setBit bm c (chunk j bl) hc (chunk_lt j bl), htcj,
+          beq_eq_false_iff_ne.mpr (Ne.symm hcj), contains_false_of_aligned bl c bp op halign hcj]
+      simp only [Bool.or_self, Bool.false_and]
+
 end PTree
 end NatCol
