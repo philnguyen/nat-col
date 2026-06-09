@@ -5670,5 +5670,173 @@ theorem eqList_of_beqList [BEq L] [LawfulBEq L] :
   | _ :: _,   [],       h => by simp [beqList] at h
 end
 
+/-! ### `map`: functorial leaf remap (the `NatMap` functor's structural core)
+
+`map g` rewrites every leaf with `g : L → L'`, leaving the trie's shape — prefixes, levels, masks,
+and which keys are present — untouched; only the leaf type changes (`L` to `L'`). The value
+denotation changes pointwise (`get?_map`: when `g`'s leaf action is `f` under `LeafOps.get?`, then
+`get? k (map g t) = (get? k t).map f`), and the canonical-shape invariant carries over whenever `g`
+preserves leaf emptiness and leaf membership (`WF_map`). `NatMap.map` instantiates this with
+`g := Node.map f`. The recursion mirrors `beq`/`beqList`: `mapList` recurses structurally over
+`kids.toList`, so termination is the same proven pattern. -/
+
+mutual
+/-- Rewrite every leaf of a trie with `g`, preserving all structure. -/
+def map {L' : Type u} (g : L → L') : PTree L → PTree L'
+  | .nil                     => .nil
+  | .tip pfx leaf            => .tip pfx (g leaf)
+  | .bin pfx level mask kids => .bin pfx level mask (mapList g kids.toList).toArray
+/-- `map` over a child list (the `map` companion). -/
+def mapList {L' : Type u} (g : L → L') : List (PTree L) → List (PTree L')
+  | []        => []
+  | c :: rest => map g c :: mapList g rest
+end
+
+/-- `mapList` is `List.map` of `map`. -/
+theorem mapList_eq_map {L' : Type u} (g : L → L') :
+    (l : List (PTree L)) → mapList g l = l.map (map g)
+  | []        => rfl
+  | c :: rest => by rw [mapList, mapList_eq_map g rest, List.map_cons]
+
+/-- The defining `bin` equation, with the children as an honest `Array.map`. -/
+theorem map_bin {L' : Type u} (g : L → L') (pfx level : Nat) (mask : UInt32)
+    (kids : Array (PTree L)) :
+    map g (.bin pfx level mask kids) = .bin pfx level mask (kids.map (map g)) := by
+  have harr : (kids.toList.map (map g)).toArray = kids.map (map g) := by
+    apply Array.toList_inj.mp
+    simp [Array.toList_map]
+  rw [map, mapList_eq_map, harr]
+
+/-- `map` sends `nil` to `nil` and nothing else to `nil`. -/
+theorem map_nil_iff {L' : Type u} (g : L → L') (t : PTree L) :
+    map g t = (.nil : PTree L') ↔ t = .nil := by
+  cases t <;> simp [map]
+
+/-- `childAt` commutes with `map`: routing then mapping equals mapping then routing. -/
+theorem childAt_map {L' : Type u} (g : L → L') (mask : UInt32) (kids : Array (PTree L))
+    (c : UInt32) :
+    childAt mask (kids.map (map g)) c = map g (childAt mask kids c) := by
+  unfold childAt
+  rw [Array.getElem?_map]
+  cases kids[arrayIndex mask c]? with
+  | none   => simp [map]
+  | some x => simp
+
+/-- `map` preserves leaf membership when `g`'s leaf action does. Manual structural recursion (the
+recursive call lands on a genuine child `kids[i]`, so termination is `get?`'s own measure). -/
+theorem contains_map {L' V' : Type u} [LeafOps L' V'] (g : L → L')
+    (hcontains : ∀ l i, (LeafOps.contains (g l) i : Bool) = LeafOps.contains l i) (k : Nat) :
+    (t : PTree L) → contains k (map g t) = contains k t
+  | .nil => by simp [map, contains_nil]
+  | .tip pfx leaf => by rw [map, contains_tip, contains_tip, hcontains]
+  | .bin pfx level mask kids => by
+      rw [map_bin, contains_bin, contains_bin, childAt_map]
+      by_cases hb : arrayIndex mask (chunk k level) < kids.size
+      · have hca : childAt mask kids (chunk k level) = kids[arrayIndex mask (chunk k level)]'hb := by
+          unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]
+        rw [hca, contains_map g hcontains k (kids[arrayIndex mask (chunk k level)]'hb)]
+      · have hca : childAt mask kids (chunk k level) = (.nil : PTree L) := by
+          unfold childAt; rw [Array.getElem?_eq_none (Nat.le_of_not_lt hb), Option.getD_none]
+        rw [hca]; simp [map, contains_nil]
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- **`get?` of a `map`**: looking up a key applies `f` to whatever was there, where `f` is `g`'s
+leaf action under `LeafOps.get?`. The functorial value-denotation seam. Manual structural
+recursion (the recursive call lands on a genuine child). -/
+theorem get?_map {L' V' : Type u} [LeafOps L' V'] (g : L → L') (f : V → V')
+    (hget : ∀ l i, (LeafOps.get? (g l) i : Option V') = (LeafOps.get? l i).map f) (k : Nat) :
+    (t : PTree L) → get? k (map g t) = (get? k t).map f
+  | .nil => by simp [map, get?_nil]
+  | .tip pfx leaf => by
+      rw [map, get?_tip, get?_tip]
+      by_cases hk : (k >>> 5 == pfx) = true
+      · rw [if_pos hk, if_pos hk]; exact hget leaf (chunk k 0)
+      · rw [if_neg hk, if_neg hk]; rfl
+  | .bin pfx level mask kids => by
+      rw [map_bin, get?_bin, get?_bin, childAt_map]
+      by_cases htb : testBit mask (chunk k level) = true
+      · rw [if_pos htb, if_pos htb]
+        by_cases hb : arrayIndex mask (chunk k level) < kids.size
+        · have hca : childAt mask kids (chunk k level) = kids[arrayIndex mask (chunk k level)]'hb := by
+            unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]
+          rw [hca, get?_map g f hget k (kids[arrayIndex mask (chunk k level)]'hb)]
+        · have hca : childAt mask kids (chunk k level) = (.nil : PTree L) := by
+            unfold childAt; rw [Array.getElem?_eq_none (Nat.le_of_not_lt hb), Option.getD_none]
+          rw [hca, map]; simp [get?_nil]
+      · rw [if_neg htb, if_neg htb]; rfl
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- `map` preserves well-formedness when `g` preserves leaf emptiness and leaf membership. Manual
+structural recursion (children recursed via genuine membership). -/
+theorem WF_map {L' V' : Type u} [LeafOps L' V'] (g : L → L')
+    (hempty : ∀ l, (LeafOps.isEmpty (g l) : Bool) = LeafOps.isEmpty l)
+    (hcontains : ∀ l i, (LeafOps.contains (g l) i : Bool) = LeafOps.contains l i) :
+    (t : PTree L) → WF t → WF (map g t)
+  | .nil => fun _ => by rw [map, WF]; trivial
+  | .tip pfx leaf => fun h => by rw [WF] at h; rw [map, WF, hempty]; exact h
+  | .bin pfx level mask kids => fun hwf => by
+      rw [WF] at hwf
+      obtain ⟨hlv, hsz, hpc, hkwf, hknn, halign⟩ := hwf
+      rw [map_bin, WF]
+      refine ⟨hlv, ?_, hpc, ?_, ?_, ?_⟩
+      · rw [Array.size_map]; exact hsz
+      · intro c hc
+        rw [Array.mem_map] at hc
+        obtain ⟨c0, hc0, rfl⟩ := hc
+        exact WF_map g hempty hcontains c0 (hkwf c0 hc0)
+      · intro c hc
+        rw [Array.mem_map] at hc
+        obtain ⟨c0, hc0, rfl⟩ := hc
+        exact fun heq => hknn c0 hc0 ((map_nil_iff g c0).mp heq)
+      · intro c hclt htb
+        rw [childAt_map]
+        intro j hj
+        rw [contains_map g hcontains j (childAt mask kids c)] at hj
+        exact halign c hclt htb j hj
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem hc0; omega
+
+mutual
+/-- `map` respects pointwise equality of the leaf function. -/
+theorem map_congr {L' : Type u} (g₁ g₂ : L → L') (h : ∀ l, g₁ l = g₂ l) :
+    (t : PTree L) → map g₁ t = map g₂ t
+  | .nil                     => rfl
+  | .tip pfx leaf            => by rw [map, map, h]
+  | .bin pfx level mask kids => by rw [map, map, mapList_congr g₁ g₂ h kids.toList]
+/-- `mapList` respects pointwise equality of the leaf function (the `map_congr` companion). -/
+theorem mapList_congr {L' : Type u} (g₁ g₂ : L → L') (h : ∀ l, g₁ l = g₂ l) :
+    (l : List (PTree L)) → mapList g₁ l = mapList g₂ l
+  | []        => rfl
+  | c :: rest => by rw [mapList, mapList, map_congr g₁ g₂ h c, mapList_congr g₁ g₂ h rest]
+end
+
+mutual
+/-- Mapping a pointwise-identity leaf function is the identity (the functor identity law's core). -/
+theorem map_eq_id (g : L → L) (h : ∀ l, g l = l) : (t : PTree L) → map g t = t
+  | .nil                     => rfl
+  | .tip pfx leaf            => by rw [map, h]
+  | .bin pfx level mask kids => by rw [map, mapList_eq_id g h kids.toList]
+/-- `mapList` of a pointwise-identity leaf function is the identity (the `map_eq_id` companion). -/
+theorem mapList_eq_id (g : L → L) (h : ∀ l, g l = l) : (l : List (PTree L)) → mapList g l = l
+  | []        => rfl
+  | c :: rest => by rw [mapList, map_eq_id g h c, mapList_eq_id g h rest]
+end
+
+mutual
+/-- Mapping a composition is the composition of maps (the functor composition law's core). -/
+theorem map_comp {L' L'' : Type u} (g₁ : L → L') (g₂ : L' → L'') :
+    (t : PTree L) → map (fun l => g₂ (g₁ l)) t = map g₂ (map g₁ t)
+  | .nil                     => rfl
+  | .tip pfx leaf            => by rw [map, map, map]
+  | .bin pfx level mask kids => by rw [map, map, map, mapList_comp g₁ g₂ kids.toList]
+/-- `mapList` of a composition is the composition of `mapList`s (the `map_comp` companion). -/
+theorem mapList_comp {L' L'' : Type u} (g₁ : L → L') (g₂ : L' → L'') :
+    (l : List (PTree L)) → mapList (fun l => g₂ (g₁ l)) l = mapList g₂ (mapList g₁ l)
+  | []        => rfl
+  | c :: rest => by rw [mapList, mapList, mapList, map_comp g₁ g₂ c, mapList_comp g₁ g₂ rest]
+end
+
 end PTree
 end NatCol
