@@ -1928,5 +1928,125 @@ theorem contains_union (cf : V → V → V) (j : Nat) (a b : PTree L) (hwa : WF 
     contains j (union cf a b) = (contains j a || contains j b) := by
   rw [union]; exact contains_unionU cf j a b hwa hwb
 
+/-- Membership in a merged slot is membership in either operand's slot child — the per-slot form of
+`contains_union`, now standalone (the `unionU` recursion it rests on is closed). Drives the routing
+clause of `WF_union`: a merged child's keys come from one operand's child, so they stay aligned. -/
+theorem contains_mergeChild (cf : V → V → V) (j : Nat) (m1 : UInt32) (k1 : Array (PTree L))
+    (m2 : UInt32) (k2 : Array (PTree L)) (i : UInt32) (hkw1 : KidsWF m1 k1) (hkw2 : KidsWF m2 k2)
+    (hpre : (testBit m1 i || testBit m2 i) = true) :
+    contains j (mergeChild cf m1 k1 m2 k2 i)
+      = ((testBit m1 i && contains j (childAt m1 k1 i))
+          || (testBit m2 i && contains j (childAt m2 k2 i))) := by
+  have hc1 : ∀ (h : arrayIndex m1 i < k1.size), childAt m1 k1 i = k1[arrayIndex m1 i]'h := fun h => by
+    unfold childAt; rw [Array.getElem?_eq_getElem h, Option.getD_some]
+  have hc2 : ∀ (h : arrayIndex m2 i < k2.size), childAt m2 k2 i = k2[arrayIndex m2 i]'h := fun h => by
+    unfold childAt; rw [Array.getElem?_eq_getElem h, Option.getD_some]
+  rw [mergeChild]
+  by_cases ht1 : testBit m1 i = true
+  · have h1 : arrayIndex m1 i < k1.size := by rw [hkw1.1]; exact arrayIndex_lt m1 i ht1
+    by_cases ht2 : testBit m2 i = true
+    · have h2 : arrayIndex m2 i < k2.size := by rw [hkw2.1]; exact arrayIndex_lt m2 i ht2
+      rw [if_pos ht1, if_pos ht2, dif_pos h1, dif_pos h2,
+          contains_unionU cf j _ _ (hkw1.2.1 _ (Array.getElem_mem h1)) (hkw2.2.1 _ (Array.getElem_mem h2)),
+          ht1, ht2, Bool.true_and, Bool.true_and, hc1 h1, hc2 h2]
+    · have hf2 : testBit m2 i = false := by simpa using ht2
+      rw [if_pos ht1, if_neg ht2, dif_pos h1, ht1, hf2, Bool.true_and, Bool.false_and,
+          Bool.or_false, hc1 h1]
+  · have hf1 : testBit m1 i = false := by simpa using ht1
+    have ht2 : testBit m2 i = true := by rw [hf1, Bool.false_or] at hpre; exact hpre
+    have h2 : arrayIndex m2 i < k2.size := by rw [hkw2.1]; exact arrayIndex_lt m2 i ht2
+    rw [if_neg ht1, dif_pos h2, hf1, ht2, Bool.false_and, Bool.true_and, Bool.false_or, hc2 h2]
+
+/-- A *present* slot's `mergeChild` is never `nil`: it is a real (non-`nil`) child of an operand or
+their `unionU` (which inherits a non-`nil` left child). Discharges `WF_unionU`'s non-`nil` clause. -/
+theorem mergeChild_ne_nil (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) (i : UInt32) (hkw1 : KidsWF m1 k1) (hkw2 : KidsWF m2 k2)
+    (hpre : (testBit m1 i || testBit m2 i) = true) :
+    mergeChild cf m1 k1 m2 k2 i ≠ .nil := by
+  rw [mergeChild]
+  by_cases ht1 : testBit m1 i = true
+  · have h1 : arrayIndex m1 i < k1.size := by rw [hkw1.1]; exact arrayIndex_lt m1 i ht1
+    by_cases ht2 : testBit m2 i = true
+    · have h2 : arrayIndex m2 i < k2.size := by rw [hkw2.1]; exact arrayIndex_lt m2 i ht2
+      rw [if_pos ht1, if_pos ht2, dif_pos h1, dif_pos h2]
+      exact unionU_ne_nil_of_left cf _ _ (hkw1.2.2 _ (Array.getElem_mem h1))
+    · rw [if_pos ht1, if_neg ht2, dif_pos h1]
+      exact hkw1.2.2 _ (Array.getElem_mem h1)
+  · have hf1 : testBit m1 i = false := by simpa using ht1
+    have ht2 : testBit m2 i = true := by rw [hf1, Bool.false_or] at hpre; exact hpre
+    have h2 : arrayIndex m2 i < k2.size := by rw [hkw2.1]; exact arrayIndex_lt m2 i ht2
+    rw [if_neg ht1, dif_pos h2]
+    exact hkw2.2.2 _ (Array.getElem_mem h2)
+
+/-- `WF` descend case: overwriting a present slot of a well-formed `bin` with `unionU child op`
+keeps it canonical. Size/minimality are preserved; the new child is well-formed by the recursive
+`WF`, and its keys stay aligned because (via `contains_union`) they are the old child's keys plus
+`op`'s, both routed to slot `c`. -/
+private theorem WF_descend (cf : V → V → V) (op : PTree L) (bp bl : Nat) (bm : UInt32)
+    (bk : Array (PTree L)) (c : UInt32) (hc : c < 32) (hbin : WF (.bin bp bl bm bk))
+    (halign : AlignedAt bl c bp op) (hwop : WF op) (htb : testBit bm c = true)
+    (hidx : arrayIndex bm c < bk.size) (hwu : WF (unionU cf (bk[arrayIndex bm c]'hidx) op)) :
+    WF (.bin bp bl bm (bk.setIfInBounds (arrayIndex bm c) (unionU cf (bk[arrayIndex bm c]'hidx) op))) := by
+  rw [WF] at hbin ⊢
+  obtain ⟨hlvl, hsize, hpc, hkidswf, hnonnil, hrout⟩ := hbin
+  have hcAc : childAt bm bk c = bk[arrayIndex bm c]'hidx := by
+    unfold childAt; rw [Array.getElem?_eq_getElem hidx, Option.getD_some]
+  refine ⟨hlvl, ?_, hpc, ?_, ?_, ?_⟩
+  · rw [Array.size_setIfInBounds]; exact hsize
+  · intro c' hc'
+    rcases Array.mem_or_eq_of_mem_setIfInBounds hc' with hmem | heq
+    · exact hkidswf c' hmem
+    · rw [heq]; exact hwu
+  · intro c' hc'
+    rcases Array.mem_or_eq_of_mem_setIfInBounds hc' with hmem | heq
+    · exact hnonnil c' hmem
+    · rw [heq]; exact unionU_ne_nil_of_left cf _ op (hnonnil _ (Array.getElem_mem hidx))
+  · intro c'' hc''lt htc''
+    by_cases hc''c : c'' = c
+    · rw [hc''c, childAt_setIfInBounds bm c c bk _ hc hc htb htb hsize, if_pos rfl]
+      intro k hk
+      rw [contains_unionU cf k _ op (hkidswf _ (Array.getElem_mem hidx)) hwop, Bool.or_eq_true] at hk
+      rcases hk with hkc | hko
+      · have := hrout c hc htb; rw [hcAc] at this; exact this k hkc
+      · exact halign k hko
+    · rw [childAt_setIfInBounds bm c c'' bk _ hc hc''lt htb htc'' hsize, if_neg hc''c]
+      exact hrout c'' hc''lt htc''
+
+/-- `WF` splice case: inserting an aligned, well-formed operand `op` whole at an absent slot keeps
+the `bin` canonical (one more child, mask gains its bit, the new slot's keys align by `op`). Leaf-
+agnostic — `op` is carried over wholesale. -/
+private theorem WF_splice (op : PTree L) (bp bl : Nat) (bm : UInt32) (bk : Array (PTree L))
+    (c : UInt32) (hc : c < 32) (hbin : WF (.bin bp bl bm bk)) (halign : AlignedAt bl c bp op)
+    (hwop : WF op) (hopne : op ≠ .nil) (htb : testBit bm c = false) :
+    WF (.bin bp bl (setBit bm c) (bk.insertIdx! (arrayIndex bm c) op)) := by
+  rw [WF] at hbin ⊢
+  obtain ⟨hlvl, hsize, hpc, hkidswf, hnonnil, hrout⟩ := hbin
+  have hpcnew : popCount (setBit bm c) = popCount bm + 1 := popCount_setBit bm c htb
+  have hle : arrayIndex bm c ≤ bk.size := by rw [hsize]; exact arrayIndex_le _ _
+  have hidx : bk.insertIdx! (arrayIndex bm c) op = bk.insertIdx (arrayIndex bm c) op hle := dif_pos hle
+  refine ⟨hlvl, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [hidx, Array.size_insertIdx, hsize, hpcnew]
+  · rw [hpcnew]; omega
+  · intro c' hc'
+    rw [hidx] at hc'
+    rcases Array.mem_insertIdx.mp hc' with heq | hmem
+    · rw [heq]; exact hwop
+    · exact hkidswf c' hmem
+  · intro c' hc'
+    rw [hidx] at hc'
+    rcases Array.mem_insertIdx.mp hc' with heq | hmem
+    · rw [heq]; exact hopne
+    · exact hnonnil c' hmem
+  · intro c'' hc''lt htc''
+    by_cases hc''c : c'' = c
+    · rw [hc''c, childAt_insertIdx_self bm c bk op hsize]
+      exact halign
+    · have htcm : testBit bm c'' = true := by
+        rw [testBit_setBit bm c c'' hc hc''lt, beq_eq_false_iff_ne.mpr (Ne.symm hc''c),
+            Bool.or_false] at htc''
+        exact htc''
+      rw [childAt_insertIdx_of_ne bm c c'' bk op hc hc''lt hc''c htb htcm hsize]
+      exact hrout c'' hc''lt htcm
+
 end PTree
 end NatCol
