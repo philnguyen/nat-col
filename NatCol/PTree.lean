@@ -171,7 +171,7 @@ def unionU (c : V → V → V) : PTree L → PTree L → PTree L
         if testBit bm (chunk (someKey (.tip p1 b1)) bl) then
           if h : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size then
             .bin bp bl bm (bk.setIfInBounds (arrayIndex bm (chunk (someKey (.tip p1 b1)) bl))
-              (unionU c (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h) (.tip p1 b1)))
+              (unionU c (.tip p1 b1) (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h)))
           else .bin bp bl bm bk
         else .bin bp bl (setBit bm (chunk (someKey (.tip p1 b1)) bl))
           (bk.insertIdx! (arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)) (.tip p1 b1))
@@ -206,7 +206,7 @@ def unionU (c : V → V → V) : PTree L → PTree L → PTree L
         if testBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) then
           if h : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size then
             .bin p2 l2 m2 (k2.setIfInBounds (arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2))
-              (unionU c (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h) (.bin p1 l1 m1 k1)))
+              (unionU c (.bin p1 l1 m1 k1) (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h)))
           else .bin p2 l2 m2 k2
         else .bin p2 l2 (setBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2))
           (k2.insertIdx! (arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)) (.bin p1 l1 m1 k1))
@@ -1534,6 +1534,31 @@ private theorem contains_descend (cf : V → V → V) (j : Nat) (op : PTree L) (
       rw [htcj, contains_false_of_aligned bl c bp op halign hcj]
       simp only [Bool.false_and, Bool.or_false]
 
+/-- The op-first mirror of `contains_descend`: when the *left* operand `op` is routed into the right
+operand's `bin` (`unionU cf op child`), so the combine fires `cf op-value child-value`. Membership
+is identical to `contains_descend` (`||` is symmetric); the op-first union order is what keeps the
+map value seam `optVjoin cf (get? a) (get? b)` faithful across taller-right descents. -/
+private theorem contains_descend_left (cf : V → V → V) (j : Nat) (op : PTree L) (bp bl : Nat)
+    (bm : UInt32) (bk : Array (PTree L)) (c : UInt32) (hc : c < 32) (hbin : WF (.bin bp bl bm bk))
+    (halign : AlignedAt bl c bp op) (htb : testBit bm c = true) (hidx : arrayIndex bm c < bk.size)
+    (IH : contains j (unionU cf op (bk[arrayIndex bm c]'hidx))
+            = (contains j op || contains j (bk[arrayIndex bm c]'hidx))) :
+    contains j (.bin bp bl bm (bk.setIfInBounds (arrayIndex bm c) (unionU cf op (bk[arrayIndex bm c]'hidx))))
+      = (contains j op || contains j (.bin bp bl bm bk)) := by
+  have hsize : bk.size = popCount bm := by rw [WF] at hbin; exact hbin.2.1
+  have hcAc : childAt bm bk c = bk[arrayIndex bm c]'hidx := by
+    unfold childAt; rw [Array.getElem?_eq_getElem hidx, Option.getD_some]
+  rw [contains_bin, contains_bin]
+  by_cases hcj : chunk j bl = c
+  · rw [hcj, childAt_setIfInBounds bm c c bk _ hc hc htb htb hsize, if_pos rfl, IH, htb,
+        Bool.true_and, hcAc, Bool.true_and]
+  · by_cases htcj : testBit bm (chunk j bl) = true
+    · rw [childAt_setIfInBounds bm c (chunk j bl) bk _ hc (chunk_lt j bl) htb htcj hsize, if_neg hcj,
+          contains_false_of_aligned bl c bp op halign hcj, Bool.false_or]
+    · simp only [Bool.not_eq_true] at htcj
+      rw [htcj, contains_false_of_aligned bl c bp op halign hcj]
+      simp only [Bool.false_and, Bool.or_false]
+
 /-- Splice case shared by all four `unionU` quadrants: when an operand `op` routes to an *absent*
 slot `c` of a well-formed `bin`, the result inserts `op` whole at the freshly-set slot. Leaf-
 agnostic — no value combines, `op` is carried over wholesale. -/
@@ -1618,8 +1643,8 @@ theorem contains_unionU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF
     have halign : AlignedAt bl (chunk (someKey (.tip p1 b1)) bl) bp (.tip p1 b1) :=
       by rw [← hpfxeq]; exact aligned_tip p1 b1 hb1 bl hbl0
     rw [unionU, if_pos hpfx, if_pos htb, dif_pos h]
-    exact contains_descend cf j (.tip p1 b1) bp bl bm bk (chunk (someKey (.tip p1 b1)) bl)
-      (chunk_lt _ _) hwf2 halign htb h (IH hwfchild hwf1)
+    exact contains_descend_left cf j (.tip p1 b1) bp bl bm bk (chunk (someKey (.tip p1 b1)) bl)
+      (chunk_lt _ _) hwf2 halign htb h (IH hwf1 hwfchild)
   | case6 p1 b1 bp bl bm bk hpfx htb hnh =>
     intro _ hwf2
     have hsize : bk.size = popCount bm := by rw [WF] at hwf2; exact hwf2.2.1
@@ -1819,8 +1844,8 @@ theorem contains_unionU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF
     have halign : AlignedAt l2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) p2 (.bin p1 l1 m1 k1) :=
       by rw [← hpfxeq]; exact aligned_bin p1 l1 m1 k1 hwf1 l2 hl12
     rw [unionU, if_neg hne, if_neg hlne, if_neg hnlt, if_pos hpfx, if_pos htb, dif_pos h]
-    exact contains_descend cf j (.bin p1 l1 m1 k1) p2 l2 m2 k2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)
-      (chunk_lt _ _) hwf2 halign htb h (IH hwfchild hwf1)
+    exact contains_descend_left cf j (.bin p1 l1 m1 k1) p2 l2 m2 k2
+      (chunk (someKey (.bin p1 l1 m1 k1)) l2) (chunk_lt _ _) hwf2 halign htb h (IH hwf1 hwfchild)
   | case20 p1 l1 m1 k1 p2 l2 m2 k2 hne hlne hnlt hpfx htb hnh =>
     intro _ hwf2
     have hsize : k2.size = popCount m2 := by rw [WF] at hwf2; exact hwf2.2.1
@@ -2012,6 +2037,38 @@ private theorem WF_descend (cf : V → V → V) (op : PTree L) (bp bl : Nat) (bm
     · rw [childAt_setIfInBounds bm c c'' bk _ hc hc''lt htb htc'' hsize, if_neg hc''c]
       exact hrout c'' hc''lt htc''
 
+/-- The op-first mirror of `WF_descend` (`unionU cf op child`). `op` is the left operand routed into
+the right's `bin`, so it must be non-`nil` (the left-`nil` quadrant is handled separately). -/
+private theorem WF_descend_left (cf : V → V → V) (op : PTree L) (bp bl : Nat) (bm : UInt32)
+    (bk : Array (PTree L)) (c : UInt32) (hc : c < 32) (hbin : WF (.bin bp bl bm bk))
+    (halign : AlignedAt bl c bp op) (hwop : WF op) (hopne : op ≠ .nil) (htb : testBit bm c = true)
+    (hidx : arrayIndex bm c < bk.size) (hwu : WF (unionU cf op (bk[arrayIndex bm c]'hidx))) :
+    WF (.bin bp bl bm (bk.setIfInBounds (arrayIndex bm c) (unionU cf op (bk[arrayIndex bm c]'hidx)))) := by
+  rw [WF] at hbin ⊢
+  obtain ⟨hlvl, hsize, hpc, hkidswf, hnonnil, hrout⟩ := hbin
+  have hcAc : childAt bm bk c = bk[arrayIndex bm c]'hidx := by
+    unfold childAt; rw [Array.getElem?_eq_getElem hidx, Option.getD_some]
+  refine ⟨hlvl, ?_, hpc, ?_, ?_, ?_⟩
+  · rw [Array.size_setIfInBounds]; exact hsize
+  · intro c' hc'
+    rcases Array.mem_or_eq_of_mem_setIfInBounds hc' with hmem | heq
+    · exact hkidswf c' hmem
+    · rw [heq]; exact hwu
+  · intro c' hc'
+    rcases Array.mem_or_eq_of_mem_setIfInBounds hc' with hmem | heq
+    · exact hnonnil c' hmem
+    · rw [heq]; exact unionU_ne_nil_of_left cf op _ hopne
+  · intro c'' hc''lt htc''
+    by_cases hc''c : c'' = c
+    · rw [hc''c, childAt_setIfInBounds bm c c bk _ hc hc htb htb hsize, if_pos rfl]
+      intro k hk
+      rw [contains_unionU cf k op _ hwop (hkidswf _ (Array.getElem_mem hidx)), Bool.or_eq_true] at hk
+      rcases hk with hko | hkc
+      · exact halign k hko
+      · have := hrout c hc htb; rw [hcAc] at this; exact this k hkc
+    · rw [childAt_setIfInBounds bm c c'' bk _ hc hc''lt htb htc'' hsize, if_neg hc''c]
+      exact hrout c'' hc''lt htc''
+
 /-- `WF` splice case: inserting an aligned, well-formed operand `op` whole at an absent slot keeps
 the `bin` canonical (one more child, mask gains its bit, the new slot's keys align by `op`). Leaf-
 agnostic — `op` is carried over wholesale. -/
@@ -2103,8 +2160,8 @@ theorem WF_unionU (cf : V → V → V) : ∀ (a b : PTree L), WF a → WF b → 
     have halign : AlignedAt bl (chunk (someKey (.tip p1 b1)) bl) bp (.tip p1 b1) :=
       by rw [← hpfxeq]; exact aligned_tip p1 b1 hb1 bl hbl0
     rw [unionU, if_pos hpfx, if_pos htb, dif_pos h]
-    exact WF_descend cf (.tip p1 b1) bp bl bm bk (chunk (someKey (.tip p1 b1)) bl) (chunk_lt _ _)
-      hwf2 halign hwf1 htb h (IH hwfchild hwf1)
+    exact WF_descend_left cf (.tip p1 b1) bp bl bm bk (chunk (someKey (.tip p1 b1)) bl) (chunk_lt _ _)
+      hwf2 halign hwf1 (by simp) htb h (IH hwf1 hwfchild)
   | case6 p1 b1 bp bl bm bk hpfx htb hnh =>
     intro _ hwf2
     have hsize : bk.size = popCount bm := by rw [WF] at hwf2; exact hwf2.2.1
@@ -2321,8 +2378,8 @@ theorem WF_unionU (cf : V → V → V) : ∀ (a b : PTree L), WF a → WF b → 
     have halign : AlignedAt l2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) p2 (.bin p1 l1 m1 k1) :=
       by rw [← hpfxeq]; exact aligned_bin p1 l1 m1 k1 hwf1 l2 hl12
     rw [unionU, if_neg hne, if_neg hlne, if_neg hnlt, if_pos hpfx, if_pos htb, dif_pos h]
-    exact WF_descend cf (.bin p1 l1 m1 k1) p2 l2 m2 k2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)
-      (chunk_lt _ _) hwf2 halign hwf1 htb h (IH hwfchild hwf1)
+    exact WF_descend_left cf (.bin p1 l1 m1 k1) p2 l2 m2 k2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)
+      (chunk_lt _ _) hwf2 halign hwf1 (by simp) htb h (IH hwf1 hwfchild)
   | case20 p1 l1 m1 k1 p2 l2 m2 k2 hne hlne hnlt hpfx htb hnh =>
     intro _ hwf2
     have hsize : k2.size = popCount m2 := by rw [WF] at hwf2; exact hwf2.2.1
