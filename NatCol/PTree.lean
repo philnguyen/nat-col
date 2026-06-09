@@ -5343,6 +5343,61 @@ theorem meet_comm (cf : V → V → V) (hc : ∀ x y, cf x y = cf y x) (a b : PT
   ext_get? (meet cf a b) (meet cf b a) (WF_meet cf a b hwa hwb) (WF_meet cf b a hwb hwa)
     (fun j => by rw [get?_meet cf j a b hwa hwb, get?_meet cf j b a hwb hwa, optVmeet_comm cf hc])
 
+private theorem optVjoin_assoc (cf : V → V → V) (hassoc : ∀ x y z, cf (cf x y) z = cf x (cf y z))
+    (oa ob oc : Option V) :
+    optVjoin cf (optVjoin cf oa ob) oc = optVjoin cf oa (optVjoin cf ob oc) := by
+  cases oa <;> cases ob <;> cases oc <;> simp only [optVjoin] <;> first | rfl | rw [hassoc]
+
+/-- `union` is associative when its combine is. -/
+theorem union_assoc (cf : V → V → V) (hassoc : ∀ x y z, cf (cf x y) z = cf x (cf y z))
+    (a b c : PTree L) (hwa : WF a) (hwb : WF b) (hwc : WF c) :
+    union cf (union cf a b) c = union cf a (union cf b c) :=
+  ext_get? _ _ (WF_union cf (union cf a b) c (WF_union cf a b hwa hwb) hwc)
+    (WF_union cf a (union cf b c) hwa (WF_union cf b c hwb hwc)) (fun j => by
+      rw [get?_union cf j (union cf a b) c (WF_union cf a b hwa hwb) hwc,
+          get?_union cf j a (union cf b c) hwa (WF_union cf b c hwb hwc),
+          get?_union cf j a b hwa hwb, get?_union cf j b c hwb hwc, optVjoin_assoc cf hassoc])
+
+/-- `meet` is associative when its combine is. -/
+theorem meet_assoc (cf : V → V → V) (hassoc : ∀ x y z, cf (cf x y) z = cf x (cf y z))
+    (a b c : PTree L) (hwa : WF a) (hwb : WF b) (hwc : WF c) :
+    meet cf (meet cf a b) c = meet cf a (meet cf b c) :=
+  ext_get? _ _ (WF_meet cf (meet cf a b) c (WF_meet cf a b hwa hwb) hwc)
+    (WF_meet cf a (meet cf b c) hwa (WF_meet cf b c hwb hwc)) (fun j => by
+      rw [get?_meet cf j (meet cf a b) c (WF_meet cf a b hwa hwb) hwc,
+          get?_meet cf j a (meet cf b c) hwa (WF_meet cf b c hwb hwc),
+          get?_meet cf j a b hwa hwb, get?_meet cf j b c hwb hwc, optVmeet_assoc cf hassoc])
+
+/-- `meet` distributes over `union` from the left (when the meet combine distributes over the join
+combine pointwise). -/
+theorem meet_union_distrib (cm cj : V → V → V)
+    (hdist : ∀ x y z, cm x (cj y z) = cj (cm x y) (cm x z))
+    (a b c : PTree L) (hwa : WF a) (hwb : WF b) (hwc : WF c) :
+    meet cm a (union cj b c) = union cj (meet cm a b) (meet cm a c) :=
+  ext_get? _ _ (WF_meet cm a (union cj b c) hwa (WF_union cj b c hwb hwc))
+    (WF_union cj (meet cm a b) (meet cm a c) (WF_meet cm a b hwa hwb) (WF_meet cm a c hwa hwc))
+    (fun j => by
+      rw [get?_meet cm j a (union cj b c) hwa (WF_union cj b c hwb hwc),
+          get?_union cj j b c hwb hwc,
+          get?_union cj j (meet cm a b) (meet cm a c) (WF_meet cm a b hwa hwb) (WF_meet cm a c hwa hwc),
+          get?_meet cm j a b hwa hwb, get?_meet cm j a c hwa hwc,
+          optVmeet_optVjoin_distrib cm cj hdist])
+
+/-- `union` distributes over `meet` from the left (given the full lattice algebra on the combines). -/
+theorem union_meet_distrib (cj cm : V → V → V) (hidem : ∀ x, cm x x = x)
+    (habs1 : ∀ x y, cm (cj x y) x = x) (habs2 : ∀ x y, cm x (cj x y) = x)
+    (hdist : ∀ x y z, cj x (cm y z) = cm (cj x y) (cj x z))
+    (a b c : PTree L) (hwa : WF a) (hwb : WF b) (hwc : WF c) :
+    union cj a (meet cm b c) = meet cm (union cj a b) (union cj a c) :=
+  ext_get? _ _ (WF_union cj a (meet cm b c) hwa (WF_meet cm b c hwb hwc))
+    (WF_meet cm (union cj a b) (union cj a c) (WF_union cj a b hwa hwb) (WF_union cj a c hwa hwc))
+    (fun j => by
+      rw [get?_union cj j a (meet cm b c) hwa (WF_meet cm b c hwb hwc),
+          get?_meet cm j b c hwb hwc,
+          get?_meet cm j (union cj a b) (union cj a c) (WF_union cj a b hwa hwb) (WF_union cj a c hwa hwc),
+          get?_union cj j a b hwa hwb, get?_union cj j a c hwa hwc,
+          optVjoin_optVmeet_distrib cj cm hidem habs1 habs2 hdist])
+
 /-- `union` is idempotent when its combine is. -/
 theorem union_self (cf : V → V → V) (hidem : ∀ x, cf x x = x) (a : PTree L) (hwa : WF a) :
     union cf a a = a :=
