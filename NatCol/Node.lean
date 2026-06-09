@@ -66,6 +66,238 @@ def optRel {V : Type u} (rel : V → V → Bool) : Option V → Option V → Boo
   | some _, none   => false
   | none,   _      => true
 
+/-- Value-level intersection of two lookups: a key survives only if present on *both* sides.
+The total-`combine` companion of `Node.optMeet`, used at the leaf/tree/collection levels where
+the merge never prunes a present-on-both key. -/
+def optVmeet {V : Type u} (c : V → V → V) : Option V → Option V → Option V
+  | some x, some y => some (c x y)
+  | _,      _      => none
+
+/-- Value-level union of two lookups: a key survives if present on *either* side. Values present
+on both are combined with `c`; a value present on one side is copied. The total-`combine` companion
+of `Node.optJoin` (`combine x y = some (c x y)`), used at the leaf/tree/collection levels. -/
+def optVjoin {V : Type u} (c : V → V → V) : Option V → Option V → Option V
+  | some x, some y => some (c x y)
+  | some x, none   => some x
+  | none,   oy     => oy
+
+/-- A leaf collection: maps 5-bit slot indices to values of type `V`. This is the single
+seam that distinguishes sets (`UInt32` leaves, `V = Unit`) from maps (`Node α` leaves,
+`V = α`); everything else is shared. -/
+class LeafOps (L : Type u) (V : outParam (Type u)) where
+  empty     : L
+  isEmpty   : L → Bool
+  size      : L → Nat
+  get?      : L → UInt32 → Option V
+  /-- Membership test at a slot, returning `Bool` directly so the lookup path avoids boxing an
+  `Option` it only inspects for presence. Tied to `get?` by `contains_eq_isSome`. -/
+  contains  : L → UInt32 → Bool
+  insert    : L → UInt32 → V → L
+  erase     : L → UInt32 → L
+  modify    : L → UInt32 → (V → V) → L
+  join      : (V → V → V) → L → L → L
+  meet      : (V → V → V) → L → L → L
+  restricts : (V → V → Bool) → L → L → Bool
+  /-- Present `(slot, value)` pairs in ascending slot order. -/
+  toArray   : L → Array (UInt32 × V)
+  /-- Keep only the slots whose `(slot, value)` satisfies `p`. The leaf base case of
+  `Tree.filter`; a fully-filtered leaf becomes empty, but that emptiness is governed at the node
+  above (or the collection top), so this carries no canonical-shape obligation of its own. -/
+  filter    : (UInt32 → V → Bool) → L → L
+  /-- A representative present slot of a non-empty leaf (the lowest set slot). The path-compressed
+  successor `NatCol.PTree` reconstructs a representative key for a `tip` from this (`someKey`,
+  `witnessKey`), which its branch/`join` routing needs to recover a node's shared prefix. The old
+  height-indexed `Tree` never probes a representative key, so it ignores this field. -/
+  someSlot  : L → UInt32
+  /-- `contains` agrees with `get?`'s presence: the `Bool` fast path matches the denotational
+  lookup. Lets the collection layer keep its `get?`-based membership lemmas after routing
+  `contains` through the boxing-free path. -/
+  contains_eq_isSome : ∀ (l : L) (i : UInt32), contains l i = (get? l i).isSome
+  /-- Inserting a value yields a non-empty leaf, so freshly-built subtrees are never empty.
+  Part of the canonical-shape invariant (`Tree.Full`). -/
+  insert_ne_empty : ∀ (l : L) (i : UInt32) (v : V), isEmpty (insert l i v) = false
+  /-- Modifying a value never changes whether a leaf is empty (it touches values, not
+  presence), so `modify` preserves canonical shape. -/
+  isEmpty_modify : ∀ (l : L) (i : UInt32) (g : V → V), isEmpty (modify l i g) = isEmpty l
+  /-- The empty leaf reads as empty. Lets the collection layer prove `empty.isEmpty = true`,
+  which the lattice identities (e.g. left identity of `join`) bottom out in. -/
+  isEmpty_empty : isEmpty (empty : L) = true
+  /-- An empty leaf *is* the empty leaf (the canonical converse of `isEmpty_empty`). Lets the
+  collection layer recover `c = empty` from `c.isEmpty = true` at height 0, which the right
+  identity of `join` (`join a empty = a`) bottoms out in. -/
+  eq_empty_of_isEmpty : ∀ (l : L), isEmpty l = true → l = empty
+  /-- `restricts` is reflexive on a leaf when `rel` is reflexive on values: a leaf's keys are
+  trivially a subset of its own, and `rel` holds on every coinciding value. Lets the collection
+  layer prove reflexivity of `restricts`. -/
+  restricts_refl : ∀ (rel : V → V → Bool), (∀ x, rel x x = true) →
+    ∀ (l : L), restricts rel l l = true
+  /-- `join` commutes when the combine is flipped: merging `a` into `b` with `f` equals
+  merging `b` into `a` with `f`'s arguments swapped. Lets the collection layer derive
+  commutativity of `join`; `joinEq_comm` lifts it through the tree. -/
+  join_comm : ∀ (f g : V → V → V), (∀ x y, f x y = g y x) →
+    ∀ (a b : L), join f a b = join g b a
+  /-- `meet` commutes when the combine is flipped (the `meet` analogue of `join_comm`). Lets the
+  collection layer derive commutativity of `meet`; `meetEq_comm` lifts it through the tree. -/
+  meet_comm : ∀ (f g : V → V → V), (∀ x y, f x y = g y x) →
+    ∀ (a b : L), meet f a b = meet g b a
+  /-- `join` is associative when the combine is associative. Lets the collection layer derive
+  associativity of `join`; `joinEq_assoc` lifts it through the tree. -/
+  join_assoc : ∀ (c : V → V → V), (∀ x y z, c (c x y) z = c x (c y z)) →
+    ∀ (a b d : L), join c (join c a b) d = join c a (join c b d)
+  /-- Joining (with any combine) onto a non-empty leaf stays non-empty. Backs
+  `Tree.isEmpty_joinEq_eq_false`, which the canonical-shape side of `join` associativity needs. -/
+  isEmpty_join : ∀ (c : V → V → V) (a b : L), isEmpty a = false → isEmpty (join c a b) = false
+  /-- The empty leaf reads `none` everywhere. Backs the `get?`-based denotational semantics the
+  `meet`-associativity proof is built against. -/
+  get?_empty : ∀ (i : UInt32), get? (empty : L) i = none
+  /-- `get?` reads a `meet` as the value-level intersection (`optVmeet`) of the two lookups: a
+  slot survives only if present on both leaves. The leaf base case of `Tree.get?_meetEq`. Stated
+  on in-range slots (`< 32`); leaf `get?` only ever reads `chunk`s, which are. -/
+  get?_meet : ∀ (c : V → V → V) (a b : L) (i : UInt32), i < 32 →
+    get? (meet c a b) i = optVmeet c (get? a i) (get? b i)
+  /-- `get?` of an equal-height `join` is the value-level union of the two lookups. The leaf base
+  case of `Tree.get?_joinEq`. -/
+  get?_join : ∀ (c : V → V → V) (a b : L) (i : UInt32), i < 32 →
+    get? (join c a b) i = optVjoin c (get? a i) (get? b i)
+  /-- `get?` reads an `insert` pointwise: the inserted slot reads the new value, every other slot
+  is unchanged. Stated on in-range slots (`< 32`); leaf `get?`/`insert` only ever touch `chunk`s,
+  which are. The leaf base case of `Tree.get?_insert`. -/
+  get?_insert : ∀ (l : L) (i j : UInt32) (v : V), i < 32 → j < 32 →
+    get? (insert l i v) j = if j = i then some v else get? l j
+  /-- A leaf is determined by its `get?` at in-range slots. The leaf base case of `Tree.ext`. -/
+  get?_ext : ∀ (a b : L), (∀ i, i < 32 → get? a i = get? b i) → a = b
+  /-- A non-empty leaf has a present slot (`< 32`). The leaf base case of `Tree.exists_get?`. -/
+  exists_get?_of_ne_empty : ∀ (l : L), isEmpty l = false → ∃ i, i < 32 ∧ (get? l i).isSome
+  /-- `restricts` reads denotationally: it holds exactly when, slot by slot, a present left value
+  forces a related right value (`optRel`). The reflexivity hypothesis lets the *set* leaf — whose
+  `restricts` discards `rel`, comparing only the bitsets — still satisfy this (its sole value is
+  `()`, so reflexivity makes `rel` vacuous on shared slots). The leaf base case of
+  `Tree.restrictsEq_iff`, which drives `restricts` transitivity. -/
+  get?_restricts : ∀ (rel : V → V → Bool), (∀ x, rel x x = true) → ∀ (a b : L),
+    (restricts rel a b = true ↔ ∀ i, i < 32 → optRel rel (get? a i) (get? b i) = true)
+  /-- The representative slot of a non-empty leaf is in range (`< 32`). Backs the in-range
+  reasoning `PTree.someKey`/`witnessKey` need (the low chunk must not bleed into the prefix). -/
+  someSlot_lt : ∀ (l : L), isEmpty l = false → someSlot l < 32
+  /-- The representative slot of a non-empty leaf is actually present. Backs `PTree.witnessKey`,
+  which must exhibit a real member of the leaf. -/
+  contains_someSlot : ∀ (l : L), isEmpty l = false → contains l (someSlot l) = true
+
+/-- Leaf operations for sets: a `UInt32` is a 32-element bitset; the value type is `Unit`. This is
+the set leaf instance the path-compressed `PTree` (and `NatSet`) instantiates at; it lives here in
+the leaf foundation so it sits below `PTree`. -/
+instance : LeafOps UInt32 Unit where
+  empty := 0
+  isEmpty u := u == 0
+  size := popCount
+  get? u i := if testBit u i then some () else none
+  contains u i := testBit u i
+  insert u i _ := setBit u i
+  erase := clearBit
+  modify u _ _ := u
+  join _ a b := a ||| b
+  meet _ a b := a &&& b
+  restricts _ a b := (a &&& b) == a
+  toArray u := Nat.fold 32 (fun i _ acc =>
+    let iu := UInt32.ofNat i
+    if testBit u iu then acc.push (iu, ()) else acc) #[]
+  filter p u := Nat.fold 32 (fun i _ acc =>
+    let iu := UInt32.ofNat i
+    if testBit u iu && p iu () then setBit acc iu else acc) (0 : UInt32)
+  someSlot := lowestSetIdx
+  contains_eq_isSome u i := by
+    show testBit u i = (if testBit u i then some () else none).isSome
+    cases testBit u i <;> rfl
+  insert_ne_empty u i _ := beq_eq_false_iff_ne.mpr (setBit_ne_zero u i)
+  isEmpty_modify _ _ _ := rfl
+  isEmpty_empty := by decide
+  eq_empty_of_isEmpty _ h := eq_of_beq h
+  restricts_refl _ _ u := by
+    show ((u &&& u) == u) = true
+    simp [show u &&& u = u from by bv_decide]
+  join_comm _ _ _ a b := by
+    show (a ||| b) = (b ||| a)
+    bv_decide
+  meet_comm _ _ _ a b := by
+    show (a &&& b) = (b &&& a)
+    bv_decide
+  join_assoc _ _ a b d := by
+    show (a ||| b) ||| d = a ||| (b ||| d)
+    bv_decide
+  isEmpty_join _ a b hne := by
+    show ((a ||| b) == 0) = false
+    have : (a == 0) = false := hne
+    bv_decide
+  get?_empty i := by simp [testBit_zero]
+  get?_meet _ a b i _ := by
+    have htb : testBit (a &&& b) i = (testBit a i && testBit b i) := by unfold testBit; bv_decide
+    show (if testBit (a &&& b) i then some () else none)
+        = optVmeet _ (if testBit a i then some () else none) (if testBit b i then some () else none)
+    rw [htb]
+    by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;> simp [ha, hb, optVmeet]
+  get?_join c a b i _ := by
+    have htb : testBit (a ||| b) i = (testBit a i || testBit b i) := testBit_or a b i
+    show (if testBit (a ||| b) i then some () else none)
+        = optVjoin c (if testBit a i then some () else none) (if testBit b i then some () else none)
+    rw [htb]
+    by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;> simp [ha, hb, optVjoin]
+  get?_insert l i j v hi hj := by
+    cases v
+    show (if testBit (setBit l i) j then some () else none)
+        = if j = i then some () else (if testBit l j then some () else none)
+    rw [testBit_setBit l i j hi hj]
+    by_cases hji : j = i
+    · subst hji
+      simp
+    · rw [if_neg hji, beq_eq_false_iff_ne.mpr (fun hc => hji hc.symm), Bool.or_false]
+  get?_ext a b h := by
+    apply eq_of_testBit_eq
+    intro i hi
+    have hi' := h i hi
+    by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;> simp_all
+  exists_get?_of_ne_empty u h := by
+    have hu : u ≠ 0 := beq_eq_false_iff_ne.mp h
+    rcases Classical.em (∃ i, i < 32 ∧ testBit u i = true) with ⟨i, hi, hb⟩ | hno
+    · exact ⟨i, hi, by simp [hb]⟩
+    · exfalso
+      apply hu
+      apply eq_of_testBit_eq
+      intro i hi
+      rw [testBit_zero]
+      cases hb : testBit u i with
+      | false => rfl
+      | true => exact absurd ⟨i, hi, hb⟩ hno
+  get?_restricts rel hrefl a b := by
+    show ((a &&& b) == a) = true ↔
+      ∀ i, i < 32 → optRel rel (if testBit a i then some () else none)
+        (if testBit b i then some () else none) = true
+    have hrefl' : rel () () = true := hrefl ()
+    rw [beq_iff_eq]
+    constructor
+    · -- mask subset ⇒ every present-on-left slot is present (and `rel` is vacuous via reflexivity)
+      intro hM i _
+      cases hai : testBit a i with
+      | false => simp [optRel]
+      | true =>
+        have hbi : testBit b i = true := by
+          have hh : testBit (a &&& b) i = testBit a i := by rw [hM]
+          rw [testBit_and, hai] at hh; simpa using hh
+        simp [hbi, optRel, hrefl']
+    · -- per-slot `optRel` ⇒ mask subset (a present-on-left/absent-on-right slot would be `false`)
+      intro hrhs
+      apply eq_of_testBit_eq
+      intro i hi
+      rw [testBit_and]
+      cases hai : testBit a i with
+      | false => simp
+      | true =>
+        have hbi : testBit b i = true := by
+          cases hb : testBit b i with
+          | true => rfl
+          | false => exfalso; have hh := hrhs i hi; simp [hai, hb, optRel] at hh
+        simp [hbi]
+  someSlot_lt u h := lowestSetIdx_lt u (beq_eq_false_iff_ne.mp h)
+  contains_someSlot u h := testBit_lowestSetIdx u (beq_eq_false_iff_ne.mp h)
+
 namespace Node
 
 def empty : Node α := ⟨0, Array.emptyWithCapacity 0, by simp [show popCount 0 = 0 from rfl]⟩
@@ -460,6 +692,49 @@ theorem optRel_antisymm {V : Type u} (rel : V → V → Bool)
   | none, some _, _, h => absurd h (by simp [optRel])
   | some _, none, h, _ => absurd h (by simp [optRel])
   | some x, some y, hxy, hyx => by rw [hantisymm x y hxy hyx]
+
+/-- `optVmeet` is associative when the value combine is. -/
+theorem optVmeet_assoc {V : Type u} (c : V → V → V) (hc : ∀ x y z, c (c x y) z = c x (c y z))
+    (oa ob od : Option V) :
+    optVmeet c (optVmeet c oa ob) od = optVmeet c oa (optVmeet c ob od) := by
+  cases oa <;> cases ob <;> cases od <;> simp only [optVmeet]
+  rw [hc]
+
+/-- `optVmeet` with the combine's arguments flipped swaps the operands. -/
+theorem optVmeet_flip {V : Type u} (c : V → V → V) (ox oy : Option V) :
+    optVmeet (fun x y => c y x) oy ox = optVmeet c ox oy := by
+  cases ox <;> cases oy <;> rfl
+
+/-- A value present only on the left is copied through a `join`. -/
+@[simp] theorem optVjoin_none_right {V : Type u} (c : V → V → V) (ox : Option V) :
+    optVjoin c ox none = ox := by
+  cases ox <;> rfl
+
+/-- `optVjoin` with the combine's arguments flipped swaps the operands. -/
+theorem optVjoin_flip {V : Type u} (c : V → V → V) (ox oy : Option V) :
+    optVjoin (fun x y => c y x) oy ox = optVjoin c ox oy := by
+  cases ox <;> cases oy <;> rfl
+
+/-- `optVmeet` distributes over `optVjoin` from the left when the meet combine distributes over the
+join combine pointwise (`hdist : cm x (cj y z) = cj (cm x y) (cm x z)`). One-sided keys are dropped
+by `optVmeet` on both sides, so only the all-present case actually uses `hdist`. -/
+theorem optVmeet_optVjoin_distrib {V : Type u} (cm cj : V → V → V)
+    (hdist : ∀ x y z, cm x (cj y z) = cj (cm x y) (cm x z)) (oa ob oc : Option V) :
+    optVmeet cm oa (optVjoin cj ob oc) = optVjoin cj (optVmeet cm oa ob) (optVmeet cm oa oc) := by
+  cases oa <;> cases ob <;> cases oc <;> simp only [optVmeet, optVjoin] <;>
+    first | rfl | rw [hdist]
+
+/-- `optVjoin` distributes over `optVmeet` from the left, given the full lattice algebra on the
+combines: the meet combine is idempotent (`hidem`) and absorbs the join combine (`habs1`/`habs2`),
+and the join combine distributes over the meet combine (`hdist`). Unlike the dual law, *every*
+mixed-presence case is non-trivial here, because `optVjoin` copies (rather than drops) one-sided
+keys. -/
+theorem optVjoin_optVmeet_distrib {V : Type u} (cj cm : V → V → V)
+    (hidem : ∀ x, cm x x = x) (habs1 : ∀ x y, cm (cj x y) x = x) (habs2 : ∀ x y, cm x (cj x y) = x)
+    (hdist : ∀ x y z, cj x (cm y z) = cm (cj x y) (cj x z)) (oa ob oc : Option V) :
+    optVjoin cj oa (optVmeet cm ob oc) = optVmeet cm (optVjoin cj oa ob) (optVjoin cj oa oc) := by
+  cases oa <;> cases ob <;> cases oc <;> simp only [optVmeet, optVjoin] <;>
+    first | rfl | rw [hidem] | rw [habs1] | rw [habs2] | rw [hdist]
 
 namespace Node
 

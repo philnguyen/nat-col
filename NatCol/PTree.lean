@@ -13,7 +13,7 @@
 -- `~/.claude/.../path-compression-termination-recipe.md`). This iteration is implementation +
 -- `#guard` cross-checks against the verified `NatSet` (at the set instance); the well-formedness
 -- predicate and the denotational/lattice proofs are layered on top in later stages.
-import NatCol
+import NatCol.Node
 
 namespace NatCol
 
@@ -456,59 +456,63 @@ end
 @[inline] def meet (c : V → V → V) (a b : PTree L) : PTree L := meetU c a b
 
 ----------------------------------------------------------------------------------------------------
--- Validation: `PTree` must agree with the verified `NatSet` (implementation-level cross-checks at
--- the `UInt32`/`Unit` set instance; proofs are added in later stages). The set-specialized helpers
--- below fix the trivial `Unit` combine/relation so the checks read like the original set ops.
+-- Validation: `PTree`'s set ops must agree with a plain-list reference semantics — an oracle
+-- independent of the trie, at the `UInt32`/`Unit` set instance (proofs are added in later stages).
+-- The set-specialized helpers fix the trivial `Unit` combine/relation so the checks read like the
+-- original set ops; `refCount` counts distinct keys via a `List.contains` fold (the `size` oracle).
 ----------------------------------------------------------------------------------------------------
 
 private def ofSet (ks : List Nat) : PTree UInt32 := ks.foldl (fun s k => s.insert k ()) .nil
 private def unionSet (a b : PTree UInt32) : PTree UInt32 := union (fun _ _ => ()) a b
 private def meetSet (a b : PTree UInt32) : PTree UInt32 := meet (fun _ _ => ()) a b
 private def subsetSet (a b : PTree UInt32) : Bool := subset (fun _ _ => true) a b
+/-- Number of distinct keys in `xs` — the reference `size` oracle (no trie involved). -/
+private def refCount (xs : List Nat) : Nat :=
+  (xs.foldl (fun acc k => if acc.contains k then acc else k :: acc) []).length
 
 private def seqK : List Nat := List.range 1000
 private def sparseK : List Nat :=
   [0, 31, 32, 1023, 1024, 42, 1000000, 999999999, 4294967296, 9223372036854775807, 7]
 
-#guard (ofSet seqK).size == (NatSet.ofList seqK).size
+#guard (ofSet seqK).size == refCount seqK
 #guard (ofSet seqK).size == 1000
-#guard (ofSet sparseK).size == (NatSet.ofList sparseK).size
+#guard (ofSet sparseK).size == refCount sparseK
 -- membership agrees for present keys
-#guard sparseK.all fun k => (ofSet sparseK).contains k == (NatSet.ofList sparseK).contains k
+#guard sparseK.all fun k => (ofSet sparseK).contains k == sparseK.contains k
 -- …and for absent keys (incl. a near-miss of the 63-bit key)
 #guard [1, 33, 1025, 5, 123456, 8, 12345, 9223372036854775806].all fun k =>
-  (ofSet sparseK).contains k == (NatSet.ofList sparseK).contains k
+  (ofSet sparseK).contains k == sparseK.contains k
 -- idempotent re-insert
 #guard (((empty : PTree UInt32).insert 42 ()).insert 42 ()).size == 1
 
 private def evenK : List Nat := (List.range 400).map (2 * ·)
 private def oddK : List Nat := (List.range 400).map (2 * · + 1)
 
--- union sizes agree with `NatSet.union` across dense/overlapping/sparse mixes
-#guard (unionSet (ofSet evenK) (ofSet oddK)).size == (NatSet.ofList (evenK ++ oddK)).size
-#guard (unionSet (ofSet sparseK) (ofSet (List.range 50))).size == (NatSet.ofList (sparseK ++ List.range 50)).size
+-- union sizes agree with the reference across dense/overlapping/sparse mixes
+#guard (unionSet (ofSet evenK) (ofSet oddK)).size == refCount (evenK ++ oddK)
+#guard (unionSet (ofSet sparseK) (ofSet (List.range 50))).size == refCount (sparseK ++ List.range 50)
 #guard (unionSet (ofSet sparseK) (ofSet sparseK)).size == (ofSet sparseK).size       -- idempotent
 #guard (unionSet (ofSet (List.range 500)) (ofSet ((List.range 500).map (· + 250)))).size == 750
-#guard (unionSet (ofSet sparseK) (ofSet evenK)).size == (NatSet.ofList (sparseK ++ evenK)).size
--- membership after union agrees with NatSet
+#guard (unionSet (ofSet sparseK) (ofSet evenK)).size == refCount (sparseK ++ evenK)
+-- membership after union: every key of either operand is present
 #guard (sparseK ++ List.range 50).all fun k =>
   (unionSet (ofSet sparseK) (ofSet (List.range 50))).contains k == true
 
--- subset agrees with `NatSet.subset` across dense/sparse/overlapping mixes (both directions)
+-- subset agrees with the reference (`a ⊆ b` iff every key of `a` lies in `b`), both directions
 private def subsetCorpus : List (List Nat) :=
   [[], [0], List.range 500, seqK, sparseK, evenK, oddK, sparseK ++ List.range 50,
    (List.range 300).map (· + 1)]
 #guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
-  subsetSet (ofSet a) (ofSet b) == (NatSet.ofList a).subset (NatSet.ofList b)
+  subsetSet (ofSet a) (ofSet b) == a.all (b.contains ·)
 -- explicit anchors: dense reflexive (the prototype's regression cell), proper ⊆, and a near-miss
 #guard subsetSet (ofSet seqK) (ofSet seqK)
 #guard subsetSet (ofSet (List.range 500)) (ofSet seqK)
 #guard !(subsetSet (ofSet seqK) (ofSet (List.range 500)))
 #guard !(subsetSet (ofSet sparseK) (ofSet (List.range 50)))
 
--- intersection agrees with `NatSet.inter` across dense/sparse/overlapping mixes
+-- intersection sizes agree with the reference (distinct keys of `a` that also lie in `b`)
 #guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
-  (meetSet (ofSet a) (ofSet b)).size == (NatSet.inter (NatSet.ofList a) (NatSet.ofList b)).size
+  (meetSet (ofSet a) (ofSet b)).size == refCount (a.filter (b.contains ·))
 -- membership after intersection = membership in both operands
 #guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
   (a ++ b).all fun k =>
