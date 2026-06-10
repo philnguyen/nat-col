@@ -267,17 +267,10 @@ theorem testBit_zero (i : UInt32) : testBit 0 i = false := by unfold testBit; bv
 
 /-! ### Mask lemmas backing the `NatCollection` canonical-shape invariant
 
-The collection layer keeps each trie *canonical*, in particular height-minimal: the top
-node has a slot ≥ 1 set, encoded as `2 ≤ positionsMask`. These `bv_decide`-discharged facts
-about `setBit` and that bound feed the `Node`/`Tree`/`Collection` proofs. -/
-
-theorem two_le_of_ne (m : UInt32) (h0 : m ≠ 0) (h1 : m ≠ 1) : 2 ≤ m := by bv_decide
+The collection layer keeps each trie *canonical* — in particular no empty leaves. These
+`bv_decide`-discharged facts about `setBit` feed the `Node`/`PTree` proofs. -/
 
 theorem setBit_ne_zero (m i : UInt32) : setBit m i ≠ 0 := by unfold setBit; bv_decide
-
-/-- A `|||` with a nonzero operand is nonzero — the merged `tip` of a union keeps a set bit. -/
-theorem or_ne_zero_left (a b : UInt32) (h : a ≠ 0) : (a ||| b) ≠ 0 := by
-  intro h0; apply h; bv_decide
 
 /-- Setting an already-set bit is a no-op (so `insert` leaves the mask unchanged when the
 slot is already present). -/
@@ -394,7 +387,7 @@ theorem lowestSetIdx_le_of_testBit (m c : UInt32) (hc : c < 32) (h : testBit m c
   · exact UInt32.le_iff_toNat_le.mpr hge
 
 /-- A slot below `i` is set in the low-mask `lowerMask i` (for in-range `i`). -/
-theorem testBit_lowerMask_lt (i c : UInt32) (hi : i < 32) (hlt : c < i) :
+private theorem testBit_lowerMask_lt (i c : UInt32) (hi : i < 32) (hlt : c < i) :
     testBit (lowerMask i) c = true := by
   unfold testBit lowerMask; bv_decide
 
@@ -409,19 +402,6 @@ theorem arrayIndex_eq_popCount_of_below (m i : UInt32) (hi : i < 32)
     · rw [hb, testBit_lowerMask_lt i c hi (h c hc hb)]; rfl
     · simp only [Bool.not_eq_true] at hb; rw [hb]; rfl
   unfold arrayIndex; rw [hand]
-
-/-- A mask that is height-minimal (`2 ≤ m`) has a set bit above slot 0 — that high bit is what
-forces the height in the canonical-shape invariant. The witness is the lowest set bit of `m`
-with slot 0 masked off. -/
-theorem exists_high_bit (m : UInt32) (h : 2 ≤ m) :
-    ∃ s, 1 ≤ s ∧ s < 32 ∧ testBit m s = true := by
-  have hm' : m &&& ~~~1 ≠ 0 := by bv_decide
-  have hset := testBit_lowestSetIdx (m &&& ~~~1) hm'
-  rw [testBit_and, Bool.and_eq_true] at hset
-  refine ⟨lowestSetIdx (m &&& ~~~1), ?_, lowestSetIdx_lt _ hm', hset.1⟩
-  -- ≥ 1 because slot 0 of `~~~1` is clear, yet the witness slot of `~~~1` is set
-  have hne : lowestSetIdx (m &&& ~~~1) ≠ 0 := fun h0 => absurd (h0 ▸ hset.2) (by decide)
-  revert hne; bv_decide
 
 /-- A 5-bit chunk is always a valid slot index (`< 32`). -/
 theorem chunk_lt (k level : Nat) : chunk k level < 32 := by
@@ -478,17 +458,6 @@ theorem requiredHeight_le_of_lt_pow {k h : Nat} (hk : k < 32^(h+1)) : requiredHe
 theorem lt_pow_of_requiredHeight_le {k h : Nat} (hk : requiredHeight k ≤ h) : k < 32^(h+1) :=
   (requiredHeight_le_iff_lt_pow h k).mp hk
 
-/-- A key smaller than `32^j` has a zero chunk at level `j` (no bits reach that window). -/
-private theorem chunk_eq_zero_of_lt {k j : Nat} (hk : k < 32^j) : chunk k j = 0 := by
-  rw [chunk_eq_div_mod, Nat.div_eq_of_lt hk]
-  rfl
-
-/-- Chunks above the required height are zero. -/
-theorem chunk_eq_zero_of_requiredHeight_lt {k h j : Nat} (hk : requiredHeight k ≤ h) (hj : h < j) :
-    chunk k j = 0 :=
-  chunk_eq_zero_of_lt (Nat.lt_of_lt_of_le (lt_pow_of_requiredHeight_le hk)
-    (Nat.pow_le_pow_right (by decide) (by omega)))
-
 /-- At its own required height (`> 0`), a key's chunk is non-zero — that is what makes the height
 minimal. -/
 theorem chunk_ne_zero_of_requiredHeight_eq {k h : Nat} (hk : requiredHeight k = h + 1) :
@@ -513,46 +482,6 @@ theorem chunk_toNat_zero (i : UInt32) (hi : i < 32) : chunk i.toNat 0 = i := by
   rw [chunk_eq_div_mod, Nat.pow_zero, Nat.div_one, Nat.mod_eq_of_lt hlt]
   apply UInt32.toNat_inj.mp
   rw [UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hlt (by decide))]
-
-/-- Probe key for slot `s` at level `h+1`, carrying lower bits `k'`: its top chunk reads `s`. -/
-theorem chunk_probe_high (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) (hs : s < 32) :
-    chunk (k' + s.toNat * 32^(h+1)) (h+1) = s := by
-  have hslt : s.toNat < 32 := UInt32.lt_iff_toNat_lt.mp hs
-  rw [chunk_eq_div_mod, Nat.add_mul_div_right _ _ (pow32_pos _), Nat.div_eq_of_lt hk',
-      Nat.zero_add, Nat.mod_eq_of_lt hslt]
-  apply UInt32.toNat_inj.mp
-  rw [UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hslt (by decide))]
-
-theorem chunk_probe_low (s : UInt32) (k' h j : Nat) (hj : j ≤ h) :
-    chunk (k' + s.toNat * 32^(h+1)) j = chunk k' j := by
-  rw [chunk_eq_div_mod, chunk_eq_div_mod]
-  congr 1
-  have e1 : s.toNat * 32^(h+1) = (s.toNat * 32^(h+1-j)) * 32^j := by
-    rw [Nat.mul_assoc, ← Nat.pow_add, show (h+1-j)+j = h+1 from by omega]
-  have e2 : s.toNat * 32^(h+1-j) = (s.toNat * 32^(h-j)) * 32 := by
-    rw [show h+1-j = h-j+1 from by omega, Nat.pow_succ, Nat.mul_assoc]
-  rw [e1, Nat.add_mul_div_right _ _ (pow32_pos j), e2, Nat.add_mul_mod_self_right]
-
-/-- Reducing a key modulo `32^(h+1)` leaves its chunks `0..h` unchanged: those chunks read the
-low `h+1` base-32 digits, which the reduction preserves. Lets a lookup at height `h` ignore a
-key's high digits (used in the forward direction of `restrictsEq_iff`). -/
-theorem chunk_mod_pow (k h j : Nat) (hj : j ≤ h) : chunk (k % 32^(h+1)) j = chunk k j := by
-  rw [chunk_eq_div_mod, chunk_eq_div_mod]
-  congr 1
-  have hsplit : (32 : Nat)^(h+1) = 32^j * 32^(h+1-j) := by rw [← Nat.pow_add]; congr 1; omega
-  have hdvd : (32 : Nat) ∣ 32^(h+1-j) :=
-    ⟨32^(h-j), by rw [show h+1-j = (h-j)+1 from by omega, Nat.pow_succ, Nat.mul_comm]⟩
-  rw [hsplit, Nat.mod_mul_right_div_self, Nat.mod_mod_of_dvd _ hdvd]
-
-theorem requiredHeight_probe_le (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) (hs : s < 32) :
-    requiredHeight (k' + s.toNat * 32^(h+1)) ≤ h + 1 := by
-  have hslt : s.toNat < 32 := UInt32.lt_iff_toNat_lt.mp hs
-  apply requiredHeight_le_of_lt_pow
-  rw [show (32:Nat)^(h+1+1) = 32^(h+1) * 32 from by rw [Nat.pow_succ]]
-  calc k' + s.toNat * 32^(h+1) < 32^(h+1) + s.toNat * 32^(h+1) := by omega
-    _ = (1 + s.toNat) * 32^(h+1) := by rw [Nat.add_mul, Nat.one_mul]
-    _ = 32^(h+1) * (1 + s.toNat) := by rw [Nat.mul_comm]
-    _ ≤ 32^(h+1) * 32 := Nat.mul_le_mul (Nat.le_refl _) (by omega)
 
 private theorem digit_eq_of_chunk_eq {j k i : Nat} (h : chunk j i = chunk k i) :
     j / 32^i % 32 = k / 32^i % 32 := by

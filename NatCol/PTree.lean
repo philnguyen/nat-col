@@ -40,16 +40,16 @@ variable {L : Type u} {V : Type u} [LeafOps L V]
 
 /-- The prefix of `k` strictly above `level` — the bits shared by everything under a `bin`
 branching at `level`. -/
-@[inline] def prefixAbove (k level : Nat) : Nat := k >>> (5 * (level + 1))
+@[inline] private def prefixAbove (k level : Nat) : Nat := k >>> (5 * (level + 1))
 
 /-- The highest 5-bit chunk index at which `a` and `b` differ (meaningful only for `a ≠ b`):
 the chunk holding the top set bit of `a ^^^ b`. -/
-@[inline] def branchLevel (a b : Nat) : Nat := requiredHeight (a ^^^ b)
+@[inline] private def branchLevel (a b : Nat) : Nat := requiredHeight (a ^^^ b)
 
 /-- An arbitrary member key (O(1); bits below the node's level are left `0`, which is all
 `branchLevel`/prefix comparisons need). A `tip`'s representative slot comes from the leaf
 (`LeafOps.someSlot`). -/
-def someKey : PTree L → Nat
+private def someKey : PTree L → Nat
   | .nil                  => 0
   | .tip pfx leaf         => (pfx <<< 5) ||| (LeafOps.someSlot leaf).toNat
   | .bin pfx level mask _ => (pfx <<< (5 * (level + 1))) ||| ((lowestSetIdx mask).toNat <<< (5 * level))
@@ -58,12 +58,12 @@ def someKey : PTree L → Nat
 @[inline] def empty : PTree L := .nil
 
 /-- The singleton `{k ↦ v}` — a single `tip`, no interior nodes. -/
-@[inline] def singleton (k : Nat) (v : V) : PTree L :=
+@[inline] private def singleton (k : Nat) (v : V) : PTree L :=
   .tip (k >>> 5) (LeafOps.insert LeafOps.empty (chunk k 0) v)
 
 /-- Combine two subtrees with **disjoint** prefixes (representative keys `ka ≠ kb`) under a fresh
 `bin` branching at their first differing chunk. -/
-@[inline] def join (ka : Nat) (a : PTree L) (kb : Nat) (b : PTree L) : PTree L :=
+@[inline] private def join (ka : Nat) (a : PTree L) (kb : Nat) (b : PTree L) : PTree L :=
   let l := branchLevel ka kb
   let ca := chunk ka l
   let cb := chunk kb l
@@ -149,7 +149,7 @@ decreasing_by
 visits its children left-to-right (children sit in ascending chunk-at-level order), so the whole
 walk is ascending. The one structural traversal the higher-level folds/filters/monadic ops reduce
 to (via `toArray`). -/
-def toArrayAux : Array (Nat × V) → PTree L → Array (Nat × V)
+private def toArrayAux : Array (Nat × V) → PTree L → Array (Nat × V)
   | acc, .nil            => acc
   | acc, .tip pfx leaf   =>
       (LeafOps.toArray leaf).foldl (fun a sv => a.push ((pfx <<< 5) ||| sv.1.toNat, sv.2)) acc
@@ -177,7 +177,7 @@ mutual
       (p1 == p2) && (v1 == v2) && (m1 == m2) && beqList k1.toList k2.toList
   | _,                _                => false
 /-- Element-wise structural equality of two child lists (the `beq` companion). -/
-@[specialize] def beqList [BEq L] : List (PTree L) → List (PTree L) → Bool
+@[specialize] private def beqList [BEq L] : List (PTree L) → List (PTree L) → Bool
   | [],       []       => true
   | c1 :: r1, c2 :: r2 => beq c1 c2 && beqList r1 r2
   | _,        _        => false
@@ -186,7 +186,7 @@ end
 /-- Total child accessor: the subtree a `bin`'s mask routes slot `c` to, `nil` when the slot is
 absent (or the compact index is out of range). Gives every membership/merge proof one total
 accessor in place of the raw `dite` bounds juggling. -/
-@[inline] def childAt (mask : UInt32) (kids : Array (PTree L)) (c : UInt32) : PTree L :=
+@[inline] private def childAt (mask : UInt32) (kids : Array (PTree L)) (c : UInt32) : PTree L :=
   (kids[arrayIndex mask c]?).getD .nil
 
 -- Union — three mutually-recursive pieces, total via a shared lexicographic measure on combined
@@ -199,7 +199,7 @@ set_option linter.unusedVariables false in
 mutual
 /-- Union driver: merge matching `tip`/`bin` shapes in place, `join` mismatched prefixes under a
 fresh branch, and combine two aligned `bin`s child-by-child through `mergeKids`. -/
-def unionU (c : V → V → V) : PTree L → PTree L → PTree L
+private def unionU (c : V → V → V) : PTree L → PTree L → PTree L
   | .nil, t => t
   | s, .nil => s
   | .tip p1 b1, .tip p2 b2 =>
@@ -260,7 +260,7 @@ decreasing_by
 
 /-- The merged child at one mask position `i`: present in both operands → recurse with `unionU`;
 present in just one → carry that side over. -/
-def mergeChild (c : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L)) (i : UInt32) : PTree L :=
+private def mergeChild (c : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L)) (i : UInt32) : PTree L :=
   if testBit m1 i then
     if testBit m2 i then
       if h1 : arrayIndex m1 i < k1.size then
@@ -278,7 +278,7 @@ decreasing_by
 
 /-- Fold over the leftover union mask `rem`, appending each present position's `mergeChild` to
 `acc` (one bit per step, lowest first). -/
-def mergeKids (c : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L))
+private def mergeKids (c : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L))
     (rem : UInt32) (acc : Array (PTree L)) : Array (PTree L) :=
   if hrem : rem == 0 then acc
   else
@@ -340,7 +340,7 @@ decreasing_by
 
 /-- Confirm every `a`-child is a subset of the aligned `b`-child for two equal-level/prefix bins
 with `m1 ⊆ m2` checked, bit-scanning the shared mask `rem` (= `m1`) lowest-first. -/
-def subsetKids (rel : V → V → Bool) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L)) (rem : UInt32) :
+private def subsetKids (rel : V → V → Bool) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L)) (rem : UInt32) :
     Bool :=
   if hrem : rem == 0 then true
   else
@@ -381,7 +381,7 @@ trips the kernel inside a well-founded recursion). -/
 /-- Drop the empty (`nil`) children from a mask-compact array and recompute the surviving mask: fold
 the mask `rem` lowest-first, keeping each non-empty child and setting its bit. Re-establishes the
 "no nil children" / "compact" invariants after an intersection thins a branch. -/
-def compactify (mask : UInt32) (kids : Array (PTree L)) (rem : UInt32) (accM : UInt32)
+private def compactify (mask : UInt32) (kids : Array (PTree L)) (rem : UInt32) (accM : UInt32)
     (acc : Array (PTree L)) : UInt32 × Array (PTree L) :=
   if _hrem : rem == 0 then (accM, acc)
   else
@@ -399,7 +399,7 @@ decreasing_by
 
 /-- Re-wrap a re-compressed branch: empty → `nil`, a single survivor → that child (lift the
 collapsed level — the path-compression step), otherwise a `bin`. -/
-def finalize (p l : Nat) (mask : UInt32) (kids : Array (PTree L)) : PTree L :=
+private def finalize (p l : Nat) (mask : UInt32) (kids : Array (PTree L)) : PTree L :=
   match compactify mask kids mask 0 #[] with
   | (m, ks) =>
     if m == 0 then .nil
@@ -411,7 +411,7 @@ mutual
 /-- Intersection driver: empty on either `nil`; two `tip`s meet their leaves (drop if disjoint or
 empty); a `tip` or off-level `bin` descends into the one matching child; two equal-level `bin`s
 intersect the shared mask child-by-child (`meetKids`) then re-compress (`finalize`). -/
-def meetU (c : V → V → V) : PTree L → PTree L → PTree L
+private def meetU (c : V → V → V) : PTree L → PTree L → PTree L
   | .nil, _ => .nil
   | .tip _ _, .nil => .nil
   | .bin _ _ _ _, .nil => .nil
@@ -463,7 +463,7 @@ decreasing_by
 
 /-- The intersected child at a shared slot `i`: recurse with `meetU` on the two children (the `nil`
 fallbacks never fire for a slot actually present in both masks). -/
-def meetChild (c : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L)) (i : UInt32) :
+private def meetChild (c : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L)) (i : UInt32) :
     PTree L :=
   if h1 : arrayIndex m1 i < k1.size then
     if h2 : arrayIndex m2 i < k2.size then
@@ -479,7 +479,7 @@ decreasing_by
 /-- Fold over the shared mask `rem` (= `m1 &&& m2`), appending each slot's `meetChild` to `acc`
 (lowest first); the result is compact under the shared mask, `nil` where the intersection is empty
 (those are pruned later by `compactify`). -/
-def meetKids (c : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L))
+private def meetKids (c : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L))
     (rem : UInt32) (acc : Array (PTree L)) : Array (PTree L) :=
   if hrem : rem == 0 then acc
   else
@@ -613,7 +613,7 @@ theorem get?_tip (j pfx : Nat) (leaf : L) :
 /-- Membership on a `bin` factors through `childAt`: route by the level's chunk, then recurse.
 Holds unconditionally — an absent slot and an out-of-range index both read `nil`, which contains
 nothing — so it is the structural rewrite every `bin` membership proof opens with. -/
-theorem contains_bin (k pfx level : Nat) (mask : UInt32) (kids : Array (PTree L)) :
+private theorem contains_bin (k pfx level : Nat) (mask : UInt32) (kids : Array (PTree L)) :
     contains k (.bin pfx level mask kids)
       = (testBit mask (chunk k level) && contains k (childAt mask kids (chunk k level))) := by
   rw [contains]; simp only [childAt]
@@ -628,7 +628,7 @@ theorem contains_bin (k pfx level : Nat) (mask : UInt32) (kids : Array (PTree L)
     rw [hb, Bool.false_and]
 
 /-- Lookup on a `bin` factors through `childAt` (the `get?` analogue of `contains_bin`). -/
-theorem get?_bin (k pfx level : Nat) (mask : UInt32) (kids : Array (PTree L)) :
+private theorem get?_bin (k pfx level : Nat) (mask : UInt32) (kids : Array (PTree L)) :
     get? k (.bin pfx level mask kids)
       = (if testBit mask (chunk k level) then get? k (childAt mask kids (chunk k level)) else none) := by
   rw [get?]; simp only [childAt]
@@ -666,7 +666,7 @@ theorem contains_eq_isSome (k : Nat) (t : PTree L) : contains k t = (get? k t).i
 
 /-- Every key a subtree holds hangs under slot `c` at level `l` and shares prefix `p`. The routing
 content of `WF`'s `bin` clause, named so the merge proofs (`join`/`insert`/`union`) can carry it. -/
-def AlignedAt (l : Nat) (c : UInt32) (p : Nat) (t : PTree L) : Prop :=
+private def AlignedAt (l : Nat) (c : UInt32) (p : Nat) (t : PTree L) : Prop :=
   ∀ k, contains k t = true → chunk k l = c ∧ prefixAbove k l = p
 
 /-- Well-formedness: the canonical-shape invariant `contains` relies on.
@@ -696,7 +696,7 @@ decreasing_by
 theorem WF_empty : WF (empty : PTree L) := by rw [empty, WF]; trivial
 
 /-- A singleton is well-formed (one non-empty `tip`). -/
-theorem WF_singleton (k : Nat) (v : V) : WF (singleton k v : PTree L) := by
+private theorem WF_singleton (k : Nat) (v : V) : WF (singleton k v : PTree L) := by
   rw [singleton, WF]; exact LeafOps.insert_ne_empty _ _ _
 
 /-- `k >>> 5` is `k / 32` — the high bits a `tip` stores as its prefix. -/
@@ -732,7 +732,7 @@ private theorem leaf_contains_singleton (i j : UInt32) (v : V) (hi : i < 32) (hj
   · rw [if_neg h, LeafOps.get?_empty, beq_eq_false_iff_ne.mpr h]; rfl
 
 /-- Membership in a singleton is key equality — the `get?_singleton` seam for the set. -/
-theorem contains_singleton (k j : Nat) (v : V) : contains k (singleton j v : PTree L) = true ↔ k = j := by
+private theorem contains_singleton (k j : Nat) (v : V) : contains k (singleton j v : PTree L) = true ↔ k = j := by
   rw [singleton, contains_tip,
       leaf_contains_singleton (chunk j 0) (chunk k 0) v (chunk_lt _ _) (chunk_lt _ _),
       Bool.and_eq_true, beq_iff_eq, beq_iff_eq, key_eq_iff k j]
@@ -745,7 +745,7 @@ structural facts let the merge/insert proofs discharge that clause: the operatio
 `nil`. -/
 
 /-- A singleton is a `tip`, never empty. -/
-theorem singleton_ne_nil (k : Nat) (v : V) : (singleton k v : PTree L) ≠ .nil := by
+private theorem singleton_ne_nil (k : Nat) (v : V) : (singleton k v : PTree L) ≠ .nil := by
   simp [singleton]
 
 /-- `insert` always yields a `tip` or a `bin`, never `nil`. -/
@@ -754,7 +754,7 @@ theorem insert_ne_nil (k : Nat) (v : V) (t : PTree L) : insert k v t ≠ .nil :=
 
 /-- Union with a non-empty operand is non-empty: every non-`nil` shape feeds a `tip`/`bin`/`join`
 result. -/
-theorem unionU_ne_nil_of_left (c : V → V → V) (a b : PTree L) (h : a ≠ .nil) :
+private theorem unionU_ne_nil_of_left (c : V → V → V) (a b : PTree L) (h : a ≠ .nil) :
     unionU c a b ≠ .nil := by
   cases a with
   | nil => exact absurd rfl h
@@ -831,7 +831,7 @@ private theorem mem_pair {c x y : PTree L} (h : c ∈ (#[x, y] : Array (PTree L)
 /-- Membership in a `join` of two slot-aligned subtrees is membership in either. The `get?_join`
 seam for a prefix-divergent insert/union: the two subtrees route to distinct slots, so no key can
 sit in both. -/
-theorem contains_join (j p l : Nat) (ca cb : UInt32) (a b : PTree L)
+private theorem contains_join (j p l : Nat) (ca cb : UInt32) (a b : PTree L)
     (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb)
     (ha : AlignedAt l ca p a) (hb : AlignedAt l cb p b) :
     contains j (.bin p l (setBit (setBit 0 ca) cb) (if ca < cb then #[a, b] else #[b, a]))
@@ -868,7 +868,7 @@ theorem contains_join (j p l : Nat) (ca cb : UInt32) (a b : PTree L)
 /-- A `join` of two well-formed, slot-aligned subtrees is well-formed. The `bin` it builds is
 2-child path-compression-minimal by construction, and its routing invariant is exactly the two
 alignments. -/
-theorem WF_join (p l : Nat) (ca cb : UInt32) (a b : PTree L)
+private theorem WF_join (p l : Nat) (ca cb : UInt32) (a b : PTree L)
     (hl : 0 < l) (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb)
     (ha : AlignedAt l ca p a) (hb : AlignedAt l cb p b) (hwa : WF a) (hwb : WF b)
     (hane : a ≠ .nil) (hbne : b ≠ .nil) :
@@ -954,7 +954,7 @@ private theorem someKey_bin_prefixAbove (pfx level : Nat) (mask : UInt32) (kids 
 
 /-- A non-empty `tip` is aligned at every level `≥ 1`: all its keys agree with the representative
 above the bottom chunk. -/
-theorem aligned_tip (pfx : Nat) (leaf : L) (hb : LeafOps.isEmpty leaf = false) (l : Nat) (hl : 0 < l) :
+private theorem aligned_tip (pfx : Nat) (leaf : L) (hb : LeafOps.isEmpty leaf = false) (l : Nat) (hl : 0 < l) :
     AlignedAt l (chunk (someKey (.tip pfx leaf)) l) (prefixAbove (someKey (.tip pfx leaf)) l)
       (.tip pfx leaf) := by
   intro k hk
@@ -966,7 +966,7 @@ theorem aligned_tip (pfx : Nat) (leaf : L) (hb : LeafOps.isEmpty leaf = false) (
 
 /-- A well-formed `bin` is aligned at every level strictly above its own: all its keys share the
 branch prefix `pfx`, hence agree above `level`. -/
-theorem aligned_bin (pfx level : Nat) (mask : UInt32) (kids : Array (PTree L))
+private theorem aligned_bin (pfx level : Nat) (mask : UInt32) (kids : Array (PTree L))
     (hwf : WF (.bin pfx level mask kids)) (l : Nat) (hl : level < l) :
     AlignedAt l (chunk (someKey (.bin pfx level mask kids)) l)
       (prefixAbove (someKey (.bin pfx level mask kids)) l) (.bin pfx level mask kids) := by
@@ -1010,7 +1010,7 @@ private theorem shiftRight_eq_of_xor_lt {x y m : Nat} (h : x ^^^ y < 2 ^ m) :
   cases Nat.testBit x (m + i) <;> cases Nat.testBit y (m + i) <;> simp
 
 /-- Two keys agree above their branch level: the join's shared prefix is well-defined. -/
-theorem prefixAbove_branchLevel_eq (ka kb : Nat) :
+private theorem prefixAbove_branchLevel_eq (ka kb : Nat) :
     prefixAbove ka (branchLevel ka kb) = prefixAbove kb (branchLevel ka kb) := by
   unfold prefixAbove branchLevel
   apply shiftRight_eq_of_xor_lt
@@ -1018,7 +1018,7 @@ theorem prefixAbove_branchLevel_eq (ka kb : Nat) :
   exact lt_pow_of_requiredHeight_le (Nat.le_refl _)
 
 /-- A high-bit divergence forces a positive branch level (the tip join always branches at `≥ 1`). -/
-theorem branchLevel_pos (k kb : Nat) (h : k >>> 5 ≠ kb >>> 5) : 0 < branchLevel k kb := by
+private theorem branchLevel_pos (k kb : Nat) (h : k >>> 5 ≠ kb >>> 5) : 0 < branchLevel k kb := by
   rcases Nat.eq_zero_or_pos (branchLevel k kb) with hz | hp
   · refine absurd ?_ h
     apply shiftRight_eq_of_xor_lt (m := 5)
@@ -1029,7 +1029,7 @@ theorem branchLevel_pos (k kb : Nat) (h : k >>> 5 ≠ kb >>> 5) : 0 < branchLeve
   · exact hp
 
 /-- Divergence above a bin's level forces the branch level past it (the bin join branches deeper). -/
-theorem lt_branchLevel (k kb level : Nat)
+private theorem lt_branchLevel (k kb level : Nat)
     (h : k >>> (5 * (level + 1)) ≠ kb >>> (5 * (level + 1))) : level < branchLevel k kb := by
   rcases Nat.lt_or_ge level (branchLevel k kb) with hlt | hge
   · exact hlt
@@ -1089,17 +1089,17 @@ private theorem chunk_branchLevel_xor_ne_zero (ka kb : Nat) (h : ka ≠ kb) :
 
 /-- The two slots a `join ka _ kb _` branches at are distinct, so its 2-child `bin` is well-formed
 (the `hne` the `join` seams demand). -/
-theorem chunk_branchLevel_ne (ka kb : Nat) (h : ka ≠ kb) :
+private theorem chunk_branchLevel_ne (ka kb : Nat) (h : ka ≠ kb) :
     chunk ka (branchLevel ka kb) ≠ chunk kb (branchLevel ka kb) := fun heq =>
   chunk_branchLevel_xor_ne_zero ka kb h (chunk_xor_eq_zero_of_chunk_eq heq)
 
 /-- Membership in a singleton, as a `Bool` (the `decide`-free form the extensionality proofs use). -/
-theorem contains_singleton_eq (j k : Nat) (v : V) : contains j (singleton k v : PTree L) = (j == k) := by
+private theorem contains_singleton_eq (j k : Nat) (v : V) : contains j (singleton k v : PTree L) = (j == k) := by
   rw [Bool.eq_iff_iff, contains_singleton, beq_iff_eq]
 
 /-- Membership in a `join` of two slot-aligned subtrees, stated directly on `join` (unfolds the
 branch arithmetic once so the call sites need only supply the alignments). -/
-theorem contains_join_eq (j ka kb : Nat) (a b : PTree L) (hne : ka ≠ kb)
+private theorem contains_join_eq (j ka kb : Nat) (a b : PTree L) (hne : ka ≠ kb)
     (ha : AlignedAt (branchLevel ka kb) (chunk ka (branchLevel ka kb))
             (prefixAbove ka (branchLevel ka kb)) a)
     (hb : AlignedAt (branchLevel ka kb) (chunk kb (branchLevel ka kb))
@@ -1509,7 +1509,7 @@ private theorem mergeKids_spec (cf : V → V → V) (m1 : UInt32) (k1 : Array (P
 /-- Reading slot `c` (present in the merged mask) of the rebuilt child array recovers that slot's
 `mergeChild`. The structural half of the aligned-`bin` union seam: it reduces `childAt` on the
 merged `bin` to per-slot `mergeChild`, where the membership/`WF` reasoning then takes over. -/
-theorem childAt_mergeKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+private theorem childAt_mergeKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
     (k2 : Array (PTree L)) (c : UInt32) (hc : c < 32) (htb : testBit (m1 ||| m2) c = true) :
     childAt (m1 ||| m2) (mergeKids cf m1 k1 m2 k2 (m1 ||| m2) #[]) c = mergeChild cf m1 k1 m2 k2 c := by
   obtain ⟨_, _, hthird⟩ := mergeKids_spec cf m1 k1 m2 k2 (m1 ||| m2).toNat (m1 ||| m2) rfl #[]
@@ -1520,7 +1520,7 @@ theorem childAt_mergeKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree 
 
 /-- The rebuilt child array has exactly one slot per present bit of the merged mask — the compact
 size invariant the merged `bin` needs to stay well-formed. -/
-theorem size_mergeKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+private theorem size_mergeKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
     (k2 : Array (PTree L)) :
     (mergeKids cf m1 k1 m2 k2 (m1 ||| m2) #[]).size = popCount (m1 ||| m2) := by
   obtain ⟨hsize, _, _⟩ := mergeKids_spec cf m1 k1 m2 k2 (m1 ||| m2).toNat (m1 ||| m2) rfl #[]
@@ -1554,11 +1554,11 @@ private theorem mergeKids_mem (cf : V → V → V) (m1 : UInt32) (k1 : Array (PT
 
 /-- A `bin`'s children, well-formed, non-`nil`, and compactly stored — the part of `WF` the per-slot
 union reasoning (`mergeChild`/`mergeKids`) consumes, abstracted so the motives can carry it. -/
-def KidsWF (mask : UInt32) (kids : Array (PTree L)) : Prop :=
+private def KidsWF (mask : UInt32) (kids : Array (PTree L)) : Prop :=
   kids.size = popCount mask ∧ (∀ c ∈ kids, WF c) ∧ (∀ c ∈ kids, c ≠ .nil)
 
 /-- A key routing to a slot other than the one a subtree is aligned under is not in that subtree. -/
-theorem contains_false_of_aligned {j : Nat} (l : Nat) (c : UInt32) (p : Nat) (t : PTree L)
+private theorem contains_false_of_aligned {j : Nat} (l : Nat) (c : UInt32) (p : Nat) (t : PTree L)
     (h : AlignedAt l c p t) (hj : chunk j l ≠ c) : contains j t = false := by
   cases hcon : contains j t with
   | true => exact absurd (h j hcon).1 hj
@@ -1643,7 +1643,7 @@ operand. The 31-case companion to `unionU`'s four quadrants × per-slot `mergeCh
 combine `cf` only touches values at a `tip`, so membership is combine-independent. The generic
 `LeafOps` instance roughly triples the elaboration cost over the monomorphic original, so the
 heartbeat budget is raised. -/
-theorem contains_unionU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF a → WF b →
+private theorem contains_unionU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF a → WF b →
     contains j (unionU cf a b) = (contains j a || contains j b) := by
   intro a b
   -- `unionU.induct` is generic over the `LeafOps` instance; left to `induction using` the instance
@@ -2010,7 +2010,7 @@ theorem contains_union (cf : V → V → V) (j : Nat) (a b : PTree L) (hwa : WF 
 /-- Membership in a merged slot is membership in either operand's slot child — the per-slot form of
 `contains_union`, now standalone (the `unionU` recursion it rests on is closed). Drives the routing
 clause of `WF_union`: a merged child's keys come from one operand's child, so they stay aligned. -/
-theorem contains_mergeChild (cf : V → V → V) (j : Nat) (m1 : UInt32) (k1 : Array (PTree L))
+private theorem contains_mergeChild (cf : V → V → V) (j : Nat) (m1 : UInt32) (k1 : Array (PTree L))
     (m2 : UInt32) (k2 : Array (PTree L)) (i : UInt32) (hkw1 : KidsWF m1 k1) (hkw2 : KidsWF m2 k2)
     (hpre : (testBit m1 i || testBit m2 i) = true) :
     contains j (mergeChild cf m1 k1 m2 k2 i)
@@ -2038,7 +2038,7 @@ theorem contains_mergeChild (cf : V → V → V) (j : Nat) (m1 : UInt32) (k1 : A
 
 /-- A *present* slot's `mergeChild` is never `nil`: it is a real (non-`nil`) child of an operand or
 their `unionU` (which inherits a non-`nil` left child). Discharges `WF_unionU`'s non-`nil` clause. -/
-theorem mergeChild_ne_nil (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+private theorem mergeChild_ne_nil (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
     (k2 : Array (PTree L)) (i : UInt32) (hkw1 : KidsWF m1 k1) (hkw2 : KidsWF m2 k2)
     (hpre : (testBit m1 i || testBit m2 i) = true) :
     mergeChild cf m1 k1 m2 k2 i ≠ .nil := by
@@ -2166,7 +2166,7 @@ the merge quadrants reuse `WF_descend`/`WF_splice`/`WF_join`; the aligned-`bin` 
 (`motive2`/`motive3`), and whose routing holds because each merged child's keys come from an
 operand's aligned child (`contains_mergeChild`). The eliminator is applied with its instance pinned
 (see `contains_unionU`). -/
-theorem WF_unionU (cf : V → V → V) : ∀ (a b : PTree L), WF a → WF b → WF (unionU cf a b) := by
+private theorem WF_unionU (cf : V → V → V) : ∀ (a b : PTree L), WF a → WF b → WF (unionU cf a b) := by
   intro a b
   induction a, b using (@unionU.induct L V inferInstance cf)
     (motive2 := fun m1 k1 m2 k2 rem acc =>
@@ -2690,7 +2690,7 @@ private theorem and_contains_eq_false_of (j : Nat) (b : Bool) (x : PTree L)
 membership exactly — a key is in the re-wrapped branch iff its slot is present in `mask` and it is
 in that slot's child. The single-survivor *lift* case relies on the routing hypothesis (`halign`):
 the lifted child's keys all hang under its own slot, so dropping the branch level loses nothing. -/
-theorem contains_finalize (j : Nat) (p l : Nat) (mask : UInt32) (kids : Array (PTree L))
+private theorem contains_finalize (j : Nat) (p l : Nat) (mask : UInt32) (kids : Array (PTree L))
     (halign : ∀ c, c < 32 → testBit mask c = true → AlignedAt l c p (childAt mask kids c)) :
     contains j (finalize p l mask kids)
       = (testBit mask (chunk j l) && contains j (childAt mask kids (chunk j l))) := by
@@ -2812,7 +2812,7 @@ private theorem compactify_mem_top (mask : UInt32) (kids : Array (PTree L)) (x :
 the re-wrapped branch is canonical: the empty cases (`nil`, lifted singleton) are trivially or
 directly `WF`; the `bin` case rebuilds a `≥ 2`-child node whose size (`compactify_top`), children
 (`compactify_mem_top`), non-emptiness, and routing (`hchild`/`halign`) all hold. -/
-theorem WF_finalize (p l : Nat) (mask : UInt32) (kids : Array (PTree L)) (hl : 0 < l)
+private theorem WF_finalize (p l : Nat) (mask : UInt32) (kids : Array (PTree L)) (hl : 0 < l)
     (hwf : ∀ c, c < 32 → testBit mask c = true → WF (childAt mask kids c))
     (halign : ∀ c, c < 32 → testBit mask c = true → AlignedAt l c p (childAt mask kids c)) :
     WF (finalize p l mask kids) := by
@@ -2931,7 +2931,7 @@ private theorem meetKids_spec (cf : V → V → V) (m1 : UInt32) (k1 : Array (PT
           exact key
 
 /-- Reading a present slot of the shared-mask child array recovers that slot's `meetChild`. -/
-theorem childAt_meetKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+private theorem childAt_meetKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
     (k2 : Array (PTree L)) (c : UInt32) (hc : c < 32) (htb : testBit (m1 &&& m2) c = true) :
     childAt (m1 &&& m2) (meetKids cf m1 k1 m2 k2 (m1 &&& m2) #[]) c = meetChild cf m1 k1 m2 k2 c := by
   obtain ⟨_, _, hthird⟩ := meetKids_spec cf m1 k1 m2 k2 (m1 &&& m2).toNat (m1 &&& m2) rfl #[]
@@ -2941,7 +2941,7 @@ theorem childAt_meetKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L
   rw [hc', Option.getD_some]
 
 /-- The shared-mask child array has one slot per present bit of `m1 &&& m2`. -/
-theorem size_meetKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+private theorem size_meetKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
     (k2 : Array (PTree L)) :
     (meetKids cf m1 k1 m2 k2 (m1 &&& m2) #[]).size = popCount (m1 &&& m2) := by
   obtain ⟨hsize, _, _⟩ := meetKids_spec cf m1 k1 m2 k2 (m1 &&& m2).toNat (m1 &&& m2) rfl #[]
@@ -3067,7 +3067,7 @@ induction lets the (∀-`k`) membership IH supply exactly the routing (`AlignedA
 needs in the aligned-`bin` case. The generic `LeafOps` instance roughly triples the elaboration
 cost, so the heartbeat budget is raised, and the eliminator is applied with `L`/`V`/instance/`cf`
 pinned (`@meetU.induct L V inferInstance cf`) to keep the motives concrete. -/
-theorem meet_WF_contains (cf : V → V → V) : ∀ (a b : PTree L), WF a → WF b →
+private theorem meet_WF_contains (cf : V → V → V) : ∀ (a b : PTree L), WF a → WF b →
     WF (meetU cf a b) ∧ ∀ k, contains k (meetU cf a b) = (contains k a && contains k b) := by
   intro a b
   induction a, b using (@meetU.induct L V inferInstance cf)
@@ -3774,7 +3774,7 @@ private theorem leaf_get?_singleton (i j : UInt32) (v : V) (hi : i < 32) (hj : j
   · rw [if_neg h, if_neg h, LeafOps.get?_empty]
 
 /-- Lookup of a singleton: `k` reads `v`, every other key reads `none`. -/
-theorem get?_singleton (j k : Nat) (v : V) :
+private theorem get?_singleton (j k : Nat) (v : V) :
     get? j (singleton k v : PTree L) = if j == k then some v else none := by
   rw [singleton, get?_tip,
       leaf_get?_singleton (chunk k 0) (chunk j 0) v (chunk_lt _ _) (chunk_lt _ _)]
@@ -3791,7 +3791,7 @@ theorem get?_singleton (j k : Nat) (v : V) :
 
 /-- Lookup in a disjoint branch `join` (two subtrees aligned to different slots): a key in the first
 operand reads there, else it reads the second — the `get?` shadow of `contains_join`. -/
-theorem get?_join (j p l : Nat) (ca cb : UInt32) (a b : PTree L)
+private theorem get?_join (j p l : Nat) (ca cb : UInt32) (a b : PTree L)
     (hca : ca < 32) (hcb : cb < 32) (hne : ca ≠ cb)
     (ha : AlignedAt l ca p a) (hb : AlignedAt l cb p b) :
     get? j (.bin p l (setBit (setBit 0 ca) cb) (if ca < cb then #[a, b] else #[b, a]))
@@ -3820,7 +3820,7 @@ theorem get?_join (j p l : Nat) (ca cb : UInt32) (a b : PTree L)
 
 /-- Lookup in a `join`, stated directly on the `join` builder (the `get?` cousin of
 `contains_join_eq`). -/
-theorem get?_join_eq (j ka kb : Nat) (a b : PTree L) (hne : ka ≠ kb)
+private theorem get?_join_eq (j ka kb : Nat) (a b : PTree L) (hne : ka ≠ kb)
     (ha : AlignedAt (branchLevel ka kb) (chunk ka (branchLevel ka kb))
             (prefixAbove ka (branchLevel ka kb)) a)
     (hb : AlignedAt (branchLevel ka kb) (chunk kb (branchLevel ka kb))
@@ -4143,7 +4143,7 @@ lattice/order suite routes through; mirrors `contains_unionU`'s 31-case mutual i
 combine `cf` now genuinely fires (at colliding `tip`s and merged children), so the conclusion is
 `optVjoin` rather than `||`. The eliminator is applied with its `LeafOps` instance pinned (see
 `contains_unionU`); the per-slot motives carry the `optVjoin` characterization of `mergeChild`. -/
-theorem get?_unionU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF a → WF b →
+private theorem get?_unionU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF a → WF b →
     get? j (unionU cf a b) = optVjoin cf (get? j a) (get? j b) := by
   intro a b
   induction a, b using (@unionU.induct L V inferInstance cf)
@@ -4555,7 +4555,7 @@ private theorem get?_ite_eq_none_of (j : Nat) (b : Bool) (x : PTree L)
 level's chunk, read that slot's child (the `get?` cousin of `contains_finalize`). The empty-child
 drops and the single-survivor lift both preserve the per-key value. The lift relies on the routing
 hypothesis (`halign`): the lifted child's keys all hang under its own slot. -/
-theorem get?_finalize (j : Nat) (p l : Nat) (mask : UInt32) (kids : Array (PTree L))
+private theorem get?_finalize (j : Nat) (p l : Nat) (mask : UInt32) (kids : Array (PTree L))
     (halign : ∀ c, c < 32 → testBit mask c = true → AlignedAt l c p (childAt mask kids c)) :
     get? j (finalize p l mask kids)
       = (if testBit mask (chunk j l) then get? j (childAt mask kids (chunk j l)) else none) := by
@@ -4674,7 +4674,7 @@ intersection lattice/order suite routes through; a separate `get?`-form inductio
 `meet_WF_contains`'s 25 cases, reusing the already-proven `WF`/`contains` facts for the routing
 (`halign`) and disjointness obligations. The eliminator is applied with `L`/`V`/instance/`cf`
 pinned (see `meet_WF_contains`); the per-slot motives carry the `optVmeet` characterization. -/
-theorem get?_meetU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF a → WF b →
+private theorem get?_meetU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF a → WF b →
     get? j (meetU cf a b) = optVmeet cf (get? j a) (get? j b) := by
   intro a b
   induction a, b using (@meetU.induct L V inferInstance cf)
@@ -5626,7 +5626,7 @@ theorem beq_refl [BEq L] [LawfulBEq L] : (t : PTree L) → beq t t = true
       rw [beqList_refl k.toList]
       simp only [beq_self_eq_true, Bool.and_self]
 /-- `beqList` is reflexive (the `beq_refl` companion). -/
-theorem beqList_refl [BEq L] [LawfulBEq L] : (l : List (PTree L)) → beqList l l = true
+private theorem beqList_refl [BEq L] [LawfulBEq L] : (l : List (PTree L)) → beqList l l = true
   | []     => rfl
   | c :: r => by
       show (beq c c && beqList r r) = true
@@ -5655,7 +5655,7 @@ theorem eq_of_beq [BEq L] [LawfulBEq L] : {a b : PTree L} → beq a b = true →
   | .bin _ _ _ _,     .nil,             h => by simp [beq] at h
   | .bin _ _ _ _,     .tip _ _,         h => by simp [beq] at h
 /-- `beqList` decides propositional equality (the `eq_of_beq` companion). -/
-theorem eqList_of_beqList [BEq L] [LawfulBEq L] :
+private theorem eqList_of_beqList [BEq L] [LawfulBEq L] :
     {l1 l2 : List (PTree L)} → beqList l1 l2 = true → l1 = l2
   | [],       [],       _ => rfl
   | c1 :: r1, c2 :: r2, h => by
@@ -5682,13 +5682,13 @@ def map {L' : Type u} (g : L → L') : PTree L → PTree L'
   | .tip pfx leaf            => .tip pfx (g leaf)
   | .bin pfx level mask kids => .bin pfx level mask (mapList g kids.toList).toArray
 /-- `map` over a child list (the `map` companion). -/
-def mapList {L' : Type u} (g : L → L') : List (PTree L) → List (PTree L')
+private def mapList {L' : Type u} (g : L → L') : List (PTree L) → List (PTree L')
   | []        => []
   | c :: rest => map g c :: mapList g rest
 end
 
 /-- `mapList` is `List.map` of `map`. -/
-theorem mapList_eq_map {L' : Type u} (g : L → L') :
+private theorem mapList_eq_map {L' : Type u} (g : L → L') :
     (l : List (PTree L)) → mapList g l = l.map (map g)
   | []        => rfl
   | c :: rest => by rw [mapList, mapList_eq_map g rest, List.map_cons]
@@ -5708,7 +5708,7 @@ theorem map_nil_iff {L' : Type u} (g : L → L') (t : PTree L) :
   cases t <;> simp [map]
 
 /-- `childAt` commutes with `map`: routing then mapping equals mapping then routing. -/
-theorem childAt_map {L' : Type u} (g : L → L') (mask : UInt32) (kids : Array (PTree L))
+private theorem childAt_map {L' : Type u} (g : L → L') (mask : UInt32) (kids : Array (PTree L))
     (c : UInt32) :
     childAt mask (kids.map (map g)) c = map g (childAt mask kids c) := by
   unfold childAt
@@ -5801,7 +5801,7 @@ theorem map_congr {L' : Type u} (g₁ g₂ : L → L') (h : ∀ l, g₁ l = g₂
   | .tip pfx leaf            => by rw [map, map, h]
   | .bin pfx level mask kids => by rw [map, map, mapList_congr g₁ g₂ h kids.toList]
 /-- `mapList` respects pointwise equality of the leaf function (the `map_congr` companion). -/
-theorem mapList_congr {L' : Type u} (g₁ g₂ : L → L') (h : ∀ l, g₁ l = g₂ l) :
+private theorem mapList_congr {L' : Type u} (g₁ g₂ : L → L') (h : ∀ l, g₁ l = g₂ l) :
     (l : List (PTree L)) → mapList g₁ l = mapList g₂ l
   | []        => rfl
   | c :: rest => by rw [mapList, mapList, map_congr g₁ g₂ h c, mapList_congr g₁ g₂ h rest]
@@ -5814,7 +5814,7 @@ theorem map_eq_id (g : L → L) (h : ∀ l, g l = l) : (t : PTree L) → map g t
   | .tip pfx leaf            => by rw [map, h]
   | .bin pfx level mask kids => by rw [map, mapList_eq_id g h kids.toList]
 /-- `mapList` of a pointwise-identity leaf function is the identity (the `map_eq_id` companion). -/
-theorem mapList_eq_id (g : L → L) (h : ∀ l, g l = l) : (l : List (PTree L)) → mapList g l = l
+private theorem mapList_eq_id (g : L → L) (h : ∀ l, g l = l) : (l : List (PTree L)) → mapList g l = l
   | []        => rfl
   | c :: rest => by rw [mapList, map_eq_id g h c, mapList_eq_id g h rest]
 end
@@ -5827,7 +5827,7 @@ theorem map_comp {L' L'' : Type u} (g₁ : L → L') (g₂ : L' → L'') :
   | .tip pfx leaf            => by rw [map, map, map]
   | .bin pfx level mask kids => by rw [map, map, map, mapList_comp g₁ g₂ kids.toList]
 /-- `mapList` of a composition is the composition of `mapList`s (the `map_comp` companion). -/
-theorem mapList_comp {L' L'' : Type u} (g₁ : L → L') (g₂ : L' → L'') :
+private theorem mapList_comp {L' L'' : Type u} (g₁ : L → L') (g₂ : L' → L'') :
     (l : List (PTree L)) → mapList (fun l => g₂ (g₁ l)) l = mapList g₂ (mapList g₁ l)
   | []        => rfl
   | c :: rest => by rw [mapList, mapList, mapList, map_comp g₁ g₂ c, mapList_comp g₁ g₂ rest]
