@@ -580,6 +580,94 @@ end
 /-- Intersection `a ∩ b`, resolving coinciding keys with `c`. -/
 @[inline] def meet (c : V → V → V) (a b : PTree L) : PTree L := meetU c a b
 
+-- Filter & erase — both can empty children, leaving a branch non-minimal, so both reuse the
+-- intersection's re-compression (`finalize`). `filterU` rebuilds every child under the bin's mask
+-- (`filterKids`/`filterChild`, the single-operand `meetKids`/`meetChild` twins); `eraseU` descends
+-- only the routed path (`insert`'s routing) and re-finalizes the touched branch. The mutual
+-- measure tags `filterU` with `1` in the second component: its hand-off to `filterKids` drops to
+-- the strictly-smaller `kids`, and `filterChild`'s hand-back enters a strictly-smaller child.
+
+set_option linter.unusedVariables false in
+mutual
+/-- Keep only the `(key, value)` pairs satisfying `p`: filter each `tip`'s leaf (dropping the tip
+if it empties), rebuild each branch's children under its mask, and re-compress (`finalize`). -/
+private def filterU (p : Nat → V → Bool) : PTree L → PTree L
+  | .nil          => .nil
+  | .tip pfx leaf =>
+    if LeafOps.isEmpty (LeafOps.filter (fun s v => p ((pfx <<< 5) ||| s.toNat) v) leaf) then .nil
+    else .tip pfx (LeafOps.filter (fun s v => p ((pfx <<< 5) ||| s.toNat) v) leaf)
+  | .bin pfx level mask kids =>
+    finalize pfx level mask
+      (filterKids p mask kids mask (Array.emptyWithCapacity (popCount mask)))
+termination_by t => (sizeOf t, 1)
+decreasing_by
+  simp_wf
+  omega
+
+/-- The filtered child at a present slot `i` (the single-operand `meetChild`). -/
+private def filterChild (p : Nat → V → Bool) (mask : UInt32) (kids : Array (PTree L))
+    (i : UInt32) : PTree L :=
+  if h : arrayIndex mask i < kids.size then filterU p (kids[arrayIndex mask i]'h)
+  else .nil
+termination_by (sizeOf kids, 0)
+decreasing_by
+  simp_wf
+  have := Array.sizeOf_lt_of_mem (Array.getElem_mem h)
+  omega
+
+/-- Fold over the mask `rem`, appending each slot's `filterChild` (lowest first): compact under
+the bin's mask, `nil` where the filter emptied a child (those are pruned by `compactify`). -/
+private def filterKids (p : Nat → V → Bool) (mask : UInt32) (kids : Array (PTree L))
+    (rem : UInt32) (acc : Array (PTree L)) : Array (PTree L) :=
+  if hrem : rem == 0 then acc
+  else
+    filterKids p mask kids (clearLowest rem)
+      (acc.push (filterChild p mask kids (lowestSetIdx rem)))
+termination_by (sizeOf kids, rem.toNat)
+decreasing_by
+  all_goals simp_wf
+  all_goals
+    have hrem0 : rem ≠ 0 := by simp_all
+  · have : rem.toNat ≠ 0 := fun hh => hrem0 (UInt32.toNat_inj.mp (by rw [hh]; rfl))
+    omega
+  · have := toNat_clearLowest_lt rem hrem0
+    omega
+end
+
+set_option linter.unusedVariables false in
+/-- Erase key `k`: descend the routed path (`insert`'s routing), erase the bottom chunk's slot at
+the `tip` (dropping the tip if its leaf empties), and re-compress the touched branch (`finalize` —
+the erased child may have emptied or collapsed, leaving the branch non-minimal). Off-path shapes
+are returned unchanged, so erasing an absent key is a no-op. -/
+private def eraseU (k : Nat) : PTree L → PTree L
+  | .nil          => .nil
+  | .tip pfx leaf =>
+    if k >>> 5 == pfx then
+      if LeafOps.isEmpty (LeafOps.erase leaf (chunk k 0)) then .nil
+      else .tip pfx (LeafOps.erase leaf (chunk k 0))
+    else .tip pfx leaf
+  | .bin pfx level mask kids =>
+    if prefixAbove k level == pfx && testBit mask (chunk k level) then
+      if hb : arrayIndex mask (chunk k level) < kids.size then
+        finalize pfx level mask
+          (kids.set (arrayIndex mask (chunk k level))
+            (eraseU k (kids[arrayIndex mask (chunk k level)]'hb)) hb)
+      else .bin pfx level mask kids
+    else .bin pfx level mask kids
+decreasing_by
+  simp_wf
+  rename_i hb
+  have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb)
+  omega
+
+/-- Keep only the `(key, value)` pairs satisfying `p` — one structural pass; the result is
+canonical (`WF_filter`). -/
+@[inline] def filter (p : Nat → V → Bool) (t : PTree L) : PTree L := filterU p t
+
+/-- Erase key `k` (an absent key is a no-op) — descends just the routed path; the result is
+canonical (`WF_erase`). -/
+@[inline] def erase (k : Nat) (t : PTree L) : PTree L := eraseU k t
+
 ----------------------------------------------------------------------------------------------------
 -- Validation: `PTree`'s set ops must agree with a plain-list reference semantics — an oracle
 -- independent of the trie, at the `UInt32`/`Unit` set instance (proofs are added in later stages).
@@ -663,6 +751,25 @@ private def strictlyAscending (xs : List Nat) : Bool := (xs.zip (xs.drop 1)).all
 #guard beq (ofSet [1, 2, 3]) (ofSet [3, 2, 1, 2])
 #guard !beq (ofSet [1, 2]) (ofSet [1, 2, 3])
 #guard beq (ofSet sparseK) (ofSet sparseK.reverse)                                -- order-independent
+
+-- filter agrees with the list-filter oracle and re-canonicalizes (`beq` against a direct build)
+private def filterSet (p : Nat → Bool) (a : PTree UInt32) : PTree UInt32 :=
+  filter (fun k _ => p k) a
+#guard beq (filterSet (· % 2 == 0) (ofSet seqK)) (ofSet (seqK.filter (· % 2 == 0)))
+#guard beq (filterSet (· < 50) (ofSet sparseK)) (ofSet (sparseK.filter (· < 50)))
+#guard beq (filterSet (fun _ => true) (ofSet sparseK)) (ofSet sparseK)            -- keep all: identity
+#guard (filterSet (fun _ => false) (ofSet sparseK)).size == 0                     -- drop all → nil
+#guard beq (filterSet (· == 0) (ofSet [0, 32, 64])) (ofSet [0])                  -- collapse to one tip
+-- erase removes exactly the key; absent keys are no-ops; the touched branch re-compresses
+private def eraseSet (a : PTree UInt32) (k : Nat) : PTree UInt32 := erase k a
+#guard sparseK.all fun k => (eraseSet (ofSet sparseK) 42).contains k == (k != 42)
+#guard (eraseSet (ofSet sparseK) 42).size == refCount sparseK - 1
+#guard beq (eraseSet (ofSet sparseK) 5) (ofSet sparseK)                           -- absent: no-op
+#guard beq (eraseSet (ofSet [7, 5000]) 5000) (ofSet [7])                          -- hoist lone survivor
+#guard beq (eraseSet (ofSet [7]) 7) .nil                                          -- last key → nil
+#guard beq (sparseK.foldl eraseSet (ofSet sparseK)) .nil                          -- erase everything
+#guard beq (eraseSet (ofSet sparseK) 9223372036854775807)                         -- deep sparse key
+  (ofSet (sparseK.filter (· != 9223372036854775807)))
 
 ----------------------------------------------------------------------------------------------------
 -- Theorems
@@ -3554,6 +3661,288 @@ theorem eq_nil_of_no_member (t : PTree L) (hwf : WF t) (h : ∀ j, contains j t 
   | bin pfx level mask kids =>
     have hpos := contains_witnessKey _ hwf (by simp)
     rw [h] at hpos; exact absurd hpos (by decide)
+
+/-! ### Filter & erase
+
+Both rebuild a touched branch through `finalize`, so `WF` follows from `WF_finalize` once the
+rebuilt children are known well-formed and aligned. Alignment transfers because filtering/erasing
+only ever *removes* keys — but the leaf interface has no removal law, so the inductions carry a
+weaker fact instead: every surviving key shares its high bits (`>>> 5`) with some original key.
+At a branch level (always `≥ 1`) the routing data (`chunk`, `prefixAbove`) reads only those high
+bits, so that is exactly enough to transfer `AlignedAt`. -/
+
+/-- Routing above the bottom level reads only a key's high bits: equal `>>> 5` ⇒ equal prefix. -/
+private theorem prefixAbove_eq_of_hi {j j' : Nat} (l : Nat) (h : j >>> 5 = j' >>> 5) :
+    prefixAbove j l = prefixAbove j' l := by
+  unfold prefixAbove
+  rw [show 5 * (l + 1) = 5 + 5 * l from by omega, Nat.shiftRight_add, Nat.shiftRight_add, h]
+
+/-- Routing above the bottom level reads only a key's high bits: equal `>>> 5` ⇒ equal chunk at
+any branch level (`≥ 1`). -/
+private theorem chunk_eq_of_hi {j j' : Nat} (l : Nat) (hl : 0 < l) (h : j >>> 5 = j' >>> 5) :
+    chunk j l = chunk j' l := by
+  unfold chunk
+  rw [show 5 * l = 5 + 5 * (l - 1) from by omega, Nat.shiftRight_add, Nat.shiftRight_add, h]
+
+/-- A `tip`'s keys all carry its prefix as their high bits. -/
+private theorem hi_eq_of_contains_tip {j pfx : Nat} {leaf : L}
+    (h : contains j (.tip pfx leaf) = true) : j >>> 5 = pfx := by
+  rw [contains_tip] at h
+  exact beq_iff_eq.mp (and_split h).1
+
+/-- `filterKids`' fold invariant — the verbatim `meetKids_spec` shape for a single operand. -/
+private theorem filterKids_spec (p : Nat → V → Bool) (mask : UInt32) (kids : Array (PTree L)) :
+    ∀ (n : Nat) (rem : UInt32), rem.toNat = n → ∀ (acc : Array (PTree L)),
+      (filterKids p mask kids rem acc).size = acc.size + popCount rem
+      ∧ (∀ i, i < acc.size → (filterKids p mask kids rem acc)[i]? = acc[i]?)
+      ∧ (∀ c, c < 32 → testBit rem c = true →
+           (filterKids p mask kids rem acc)[acc.size + arrayIndex rem c]?
+             = some (filterChild p mask kids c)) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro rem hrem acc
+    by_cases h0 : (rem == 0) = true
+    · have hr0 : rem = 0 := by simpa using h0
+      rw [filterKids, dif_pos h0]
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hr0, show popCount (0 : UInt32) = 0 from rfl, Nat.add_zero]
+      · intro i hi; rfl
+      · intro c hc htb; rw [hr0, testBit_zero] at htb; exact absurd htb (by decide)
+    · have hrem0 : rem ≠ 0 := by intro h; exact h0 (by rw [h]; rfl)
+      have hstep : filterKids p mask kids rem acc
+          = filterKids p mask kids (clearLowest rem)
+              (acc.push (filterChild p mask kids (lowestSetIdx rem))) := by
+        rw [filterKids, dif_neg h0]
+      have hlt : (clearLowest rem).toNat < n := by
+        rw [← hrem]; exact toNat_clearLowest_lt rem hrem0
+      obtain ⟨ihsize, ihpref, ihthird⟩ :=
+        IH (clearLowest rem).toNat hlt (clearLowest rem) rfl
+          (acc.push (filterChild p mask kids (lowestSetIdx rem)))
+      have hpc : popCount (clearLowest rem) + 1 = popCount rem := popCount_clearLowest rem hrem0
+      have haccsz : (acc.push (filterChild p mask kids (lowestSetIdx rem))).size = acc.size + 1 :=
+        Array.size_push ..
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hstep, ihsize, haccsz]; omega
+      · intro i hi
+        rw [hstep, ihpref i (by omega), Array.getElem?_push_lt hi, Array.getElem?_eq_getElem hi]
+      · intro c hc htb
+        rw [hstep]
+        by_cases hclo : c = lowestSetIdx rem
+        · subst hclo
+          rw [arrayIndex_lowestSetIdx rem hrem0, Nat.add_zero,
+              ihpref acc.size (by omega), Array.getElem?_push_size]
+        · have htb' : testBit (clearLowest rem) c = true := by
+            rw [testBit_clearLowest_of_ne rem c hc hclo]; exact htb
+          have hidx : arrayIndex rem c = arrayIndex (clearLowest rem) c + 1 :=
+            arrayIndex_clearLowest_of_ne rem c hc htb hclo
+          have key := ihthird c hc htb'
+          rw [haccsz] at key
+          rw [hidx, show acc.size + (arrayIndex (clearLowest rem) c + 1)
+                = acc.size + 1 + arrayIndex (clearLowest rem) c from by omega]
+          exact key
+
+/-- Reading a present slot of the rebuilt child array recovers that slot's `filterChild`. -/
+private theorem childAt_filterKids (p : Nat → V → Bool) (mask : UInt32) (kids : Array (PTree L))
+    (c : UInt32) (hc : c < 32) (htb : testBit mask c = true) :
+    childAt mask (filterKids p mask kids mask #[]) c = filterChild p mask kids c := by
+  obtain ⟨_, _, hthird⟩ := filterKids_spec p mask kids mask.toNat mask rfl #[]
+  have hc' := hthird c hc htb
+  unfold childAt
+  rw [show (#[] : Array (PTree L)).size = 0 from rfl, Nat.zero_add] at hc'
+  rw [hc', Option.getD_some]
+
+/-- `filterChild` is `filterU` of the routed child (`nil` reads stay `nil`). -/
+private theorem filterChild_eq (p : Nat → V → Bool) (mask : UInt32) (kids : Array (PTree L))
+    (c : UInt32) : filterChild p mask kids c = filterU p (childAt mask kids c) := by
+  rw [filterChild]
+  unfold childAt
+  by_cases h : arrayIndex mask c < kids.size
+  · rw [dif_pos h, Array.getElem?_eq_getElem h, Option.getD_some]
+  · rw [dif_neg h, Array.getElem?_eq_none (Nat.le_of_not_lt h), Option.getD_none, filterU]
+
+/-- `filterU` preserves `WF`, and every surviving key shares its high bits with an original key
+(see the section note: that is the `AlignedAt`-transfer `WF_finalize` needs). One combined
+member-recursion, the single-operand `meet_WF_contains`. -/
+private theorem filter_WF_keys (p : Nat → V → Bool) : (t : PTree L) → WF t →
+    WF (filterU p t)
+      ∧ ∀ j, contains j (filterU p t) = true → ∃ j', contains j' t = true ∧ j >>> 5 = j' >>> 5
+  | .nil => fun _ => by
+      rw [filterU]
+      exact ⟨by rw [WF]; trivial,
+             fun j hj => by rw [contains_nil] at hj; exact absurd hj (by decide)⟩
+  | .tip pfx leaf => fun hwf => by
+      rw [filterU]
+      by_cases he : LeafOps.isEmpty
+          (LeafOps.filter (fun s v => p ((pfx <<< 5) ||| s.toNat) v) leaf) = true
+      · rw [if_pos he]
+        exact ⟨by rw [WF]; trivial,
+               fun j hj => by rw [contains_nil] at hj; exact absurd hj (by decide)⟩
+      · rw [if_neg he]
+        refine ⟨by rw [WF]; simpa using he, ?_⟩
+        intro j hj
+        obtain ⟨j', hj'⟩ := exists_mem (.tip pfx leaf) hwf (by simp)
+        exact ⟨j', hj', (hi_eq_of_contains_tip hj).trans (hi_eq_of_contains_tip hj').symm⟩
+  | .bin pfx level mask kids => fun hwf => by
+      rw [filterU, Array.emptyWithCapacity_eq]
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, _, hwfk, _, hal⟩ := hwf'
+      have hslot : ∀ c, c < 32 → testBit mask c = true →
+          WF (filterU p (childAt mask kids c))
+          ∧ ∀ j, contains j (filterU p (childAt mask kids c)) = true →
+              ∃ j', contains j' (childAt mask kids c) = true ∧ j >>> 5 = j' >>> 5 := by
+        intro c hc htc
+        have hbc : arrayIndex mask c < kids.size := by
+          rw [hsz]; exact arrayIndex_lt mask c htc
+        have hcA : childAt mask kids c = kids[arrayIndex mask c]'hbc := by
+          unfold childAt; rw [Array.getElem?_eq_getElem hbc, Option.getD_some]
+        rw [hcA]
+        exact filter_WF_keys p (kids[arrayIndex mask c]'hbc) (hwfk _ (Array.getElem_mem hbc))
+      have hchA : ∀ c, c < 32 → testBit mask c = true →
+          childAt mask (filterKids p mask kids mask #[]) c = filterU p (childAt mask kids c) := by
+        intro c hc htc
+        rw [childAt_filterKids p mask kids c hc htc, filterChild_eq]
+      have hal' : ∀ c, c < 32 → testBit mask c = true →
+          AlignedAt level c pfx (childAt mask (filterKids p mask kids mask #[]) c) := by
+        intro c hc htc
+        rw [hchA c hc htc]
+        intro j hj
+        obtain ⟨j', hj', h5⟩ := (hslot c hc htc).2 j hj
+        obtain ⟨hch, hpf⟩ := hal c hc htc j' hj'
+        exact ⟨(chunk_eq_of_hi level hl h5).trans hch, (prefixAbove_eq_of_hi level h5).trans hpf⟩
+      refine ⟨WF_finalize pfx level mask _ hl ?_ hal', ?_⟩
+      · intro c hc htc
+        rw [hchA c hc htc]
+        exact (hslot c hc htc).1
+      · intro j hj
+        rw [contains_finalize j pfx level mask _ hal'] at hj
+        obtain ⟨htj, hcj⟩ := and_split hj
+        rw [hchA (chunk j level) (chunk_lt j level) htj] at hcj
+        obtain ⟨j', hj', h5⟩ := (hslot (chunk j level) (chunk_lt j level) htj).2 j hcj
+        refine ⟨j', ?_, h5⟩
+        rw [contains_bin]
+        obtain ⟨hch, _⟩ := hal (chunk j level) (chunk_lt j level) htj j' hj'
+        rw [hch, htj, Bool.true_and]
+        exact hj'
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hbc); omega
+
+/-- `eraseU` preserves `WF`, and every surviving key shares its high bits with an original key —
+the erase mirror of `filter_WF_keys`, member-recursion down the one routed path. -/
+private theorem erase_WF_keys (k : Nat) : (t : PTree L) → WF t →
+    WF (eraseU k t)
+      ∧ ∀ j, contains j (eraseU k t) = true → ∃ j', contains j' t = true ∧ j >>> 5 = j' >>> 5
+  | .nil => fun _ => by
+      rw [eraseU]
+      exact ⟨by rw [WF]; trivial,
+             fun j hj => by rw [contains_nil] at hj; exact absurd hj (by decide)⟩
+  | .tip pfx leaf => fun hwf => by
+      rw [eraseU]
+      by_cases hp : (k >>> 5 == pfx) = true
+      · rw [if_pos hp]
+        by_cases he : LeafOps.isEmpty (LeafOps.erase leaf (chunk k 0)) = true
+        · rw [if_pos he]
+          exact ⟨by rw [WF]; trivial,
+                 fun j hj => by rw [contains_nil] at hj; exact absurd hj (by decide)⟩
+        · rw [if_neg he]
+          refine ⟨by rw [WF]; simpa using he, ?_⟩
+          intro j hj
+          obtain ⟨j', hj'⟩ := exists_mem (.tip pfx leaf) hwf (by simp)
+          exact ⟨j', hj', (hi_eq_of_contains_tip hj).trans (hi_eq_of_contains_tip hj').symm⟩
+      · rw [if_neg hp]
+        exact ⟨hwf, fun j hj => ⟨j, hj, rfl⟩⟩
+  | .bin pfx level mask kids => fun hwf => by
+      rw [eraseU]
+      by_cases hroute : ((prefixAbove k level == pfx) && testBit mask (chunk k level)) = true
+      · rw [if_pos hroute]
+        by_cases hb : arrayIndex mask (chunk k level) < kids.size
+        · rw [dif_pos hb]
+          have hwf' := hwf
+          rw [WF] at hwf'
+          obtain ⟨hl, hsz, _, hwfk, _, hal⟩ := hwf'
+          obtain ⟨_, htb⟩ := and_split hroute
+          obtain ⟨ihwf, ihkeys⟩ :=
+            erase_WF_keys k (kids[arrayIndex mask (chunk k level)]'hb)
+              (hwfk _ (Array.getElem_mem hb))
+          have hcA : childAt mask kids (chunk k level)
+              = kids[arrayIndex mask (chunk k level)]'hb := by
+            unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]
+          have hset : ∀ c, c < 32 → testBit mask c = true →
+              childAt mask (kids.set (arrayIndex mask (chunk k level))
+                  (eraseU k (kids[arrayIndex mask (chunk k level)]'hb)) hb) c
+                = if c = chunk k level
+                    then eraseU k (kids[arrayIndex mask (chunk k level)]'hb)
+                    else childAt mask kids c := by
+            intro c hc htc
+            unfold childAt
+            rw [Array.getElem?_set hb]
+            by_cases hcc : c = chunk k level
+            · subst hcc
+              rw [if_pos rfl, if_pos rfl, Option.getD_some]
+            · rw [if_neg hcc,
+                  if_neg (arrayIndex_inj mask (chunk k level) c (chunk_lt k level) hc htb htc
+                    (fun hh => hcc hh.symm))]
+          have hal' : ∀ c, c < 32 → testBit mask c = true →
+              AlignedAt level c pfx (childAt mask (kids.set (arrayIndex mask (chunk k level))
+                  (eraseU k (kids[arrayIndex mask (chunk k level)]'hb)) hb) c) := by
+            intro c hc htc
+            rw [hset c hc htc]
+            by_cases hcc : c = chunk k level
+            · rw [if_pos hcc]
+              intro j hj
+              obtain ⟨j', hj', h5⟩ := ihkeys j hj
+              have hj'A : contains j' (childAt mask kids c) = true := by
+                rw [hcc, hcA]; exact hj'
+              obtain ⟨hch, hpf⟩ := hal c hc htc j' hj'A
+              exact ⟨(chunk_eq_of_hi level hl h5).trans hch,
+                     (prefixAbove_eq_of_hi level h5).trans hpf⟩
+            · rw [if_neg hcc]
+              exact hal c hc htc
+          refine ⟨WF_finalize pfx level mask _ hl ?_ hal', ?_⟩
+          · intro c hc htc
+            rw [hset c hc htc]
+            by_cases hcc : c = chunk k level
+            · rw [if_pos hcc]; exact ihwf
+            · rw [if_neg hcc]
+              have hbc : arrayIndex mask c < kids.size := by
+                rw [hsz]; exact arrayIndex_lt mask c htc
+              have hcA' : childAt mask kids c = kids[arrayIndex mask c]'hbc := by
+                unfold childAt; rw [Array.getElem?_eq_getElem hbc, Option.getD_some]
+              rw [hcA']
+              exact hwfk _ (Array.getElem_mem hbc)
+          · intro j hj
+            rw [contains_finalize j pfx level mask _ hal'] at hj
+            obtain ⟨htj, hcj⟩ := and_split hj
+            rw [hset (chunk j level) (chunk_lt j level) htj] at hcj
+            by_cases hcc : chunk j level = chunk k level
+            · rw [if_pos hcc] at hcj
+              obtain ⟨j', hj', h5⟩ := ihkeys j hcj
+              refine ⟨j', ?_, h5⟩
+              rw [contains_bin]
+              have hj'A : contains j' (childAt mask kids (chunk k level)) = true := by
+                rw [hcA]; exact hj'
+              obtain ⟨hch, _⟩ := hal (chunk k level) (chunk_lt k level) htb j' hj'A
+              rw [hch, htb, Bool.true_and, hcA]
+              exact hj'
+            · rw [if_neg hcc] at hcj
+              refine ⟨j, ?_, rfl⟩
+              rw [contains_bin, htj, Bool.true_and]
+              exact hcj
+        · rw [dif_neg hb]
+          exact ⟨hwf, fun j hj => ⟨j, hj, rfl⟩⟩
+      · rw [if_neg hroute]
+        exact ⟨hwf, fun j hj => ⟨j, hj, rfl⟩⟩
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- `filter` preserves canonical shape. -/
+theorem WF_filter (p : Nat → V → Bool) (t : PTree L) (hwf : WF t) : WF (filter p t) :=
+  (filter_WF_keys p t hwf).1
+
+/-- `erase` preserves canonical shape. -/
+theorem WF_erase (k : Nat) (t : PTree L) (hwf : WF t) : WF (erase k t) :=
+  (erase_WF_keys k t hwf).1
 
 /-- A present slot's child sits in the `kids` array (it is read at an in-range compact index). -/
 private theorem childAt_mem (mask : UInt32) (kids : Array (PTree L)) (c : UInt32)

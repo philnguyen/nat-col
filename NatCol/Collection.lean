@@ -117,14 +117,16 @@ success is seen. -/
     (c : NatCollection L) : m Bool :=
   PTree.anyM p c.tree
 
-/-- Keep only the `(key, value)` pairs satisfying `p`. Rebuilt from the survivors, so the result is
-canonical and equals the collection built directly from them. -/
-def filter (p : Nat → V → Bool) (c : NatCollection L) : NatCollection L :=
-  ofList (c.toList.filter (fun kv => p kv.1 kv.2))
+/-- Keep only the `(key, value)` pairs satisfying `p` — one structural pass: each leaf is filtered
+in place, emptied leaves are pruned, and thinned branches re-compressed (`PTree.WF_filter`), so the
+result is canonical and equals the collection built directly from the survivors. -/
+@[specialize] def filter (p : Nat → V → Bool) (c : NatCollection L) : NatCollection L :=
+  ⟨PTree.filter p c.tree, PTree.WF_filter p c.tree c.wf⟩
 
-/-- Erase key `k`. Rebuilt from the survivors, so the result is canonical. -/
-def erase (c : NatCollection L) (k : Nat) : NatCollection L :=
-  ofList (c.toList.filter (fun kv => kv.1 != k))
+/-- Erase key `k` — descends just the routed path and re-compresses the touched branch
+(`PTree.WF_erase`), so the result is canonical; erasing an absent key is a no-op. -/
+@[specialize] def erase (c : NatCollection L) (k : Nat) : NatCollection L :=
+  ⟨PTree.erase k c.tree, PTree.WF_erase k c.tree c.wf⟩
 
 /-- Apply `f` to the value at key `k`, if present. -/
 def modify (c : NatCollection L) (k : Nat) (f : V → V) : NatCollection L :=
