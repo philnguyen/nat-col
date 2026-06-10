@@ -119,17 +119,17 @@ The core representation was migrated from a height-indexed GADT trie (height tie
 
 | domain | op | old | new | change |
 |--------|----|-----|-----|--------|
-| random `[0,2⁶³)` | insert | 689 ms | 451 ms | **1.5× faster** |
-| | lookup | 1128 ms | 411 ms | **2.7× faster** |
-| | union | 1141 ms | 822 ms | **1.4× faster** |
-| | subset | 2216 ms | 237 ms | **9.4× faster** |
-| | insert memory | 462 MB | 77 MB | **6.0× less** |
-| sequential | union | 133 ms | 28 ms | **4.7× faster** |
-| shuffled (dense) | insert | 144 ms | 154 ms | +7% (accepted) |
-| | union | 419 ms | 467 ms | +12% time, +58% peak mem (accepted) |
+| random `[0,2⁶³)` | insert | 676 ms | 455 ms | **1.5× faster** |
+| | lookup | 1111 ms | 384 ms | **2.9× faster** |
+| | union | 1128 ms | 806 ms | **1.4× faster** |
+| | subset | 2207 ms | 245 ms | **9.0× faster** |
+| | insert memory | 463 MB | 77 MB | **6.0× less** |
+| sequential | union | 142 ms | 30 ms | **4.8× faster** |
+| shuffled (dense) | insert | 148 ms | 165 ms | +12% (accepted) |
+| | union | 428 ms | 446 ms | +4% time, +42% peak mem (accepted) |
 
-Decisive wins on the sparse/large-key domain in both time and memory; the only regressions are on dense keys (shuffled insert/union), pre-accepted as the cost of path compression. (The verified `union` is ~1.5–2× slower than an unverified `partial def` Patricia prototype — the gap is the total, canonical, proof-shaped merge code — but still faster than the old height-indexed `union`.)
+Decisive wins on the sparse/large-key domain in both time and memory; the only regressions are on dense keys (shuffled insert/union), pre-accepted as the cost of path compression. The dense-union gap was narrowed after the migration by seeding the merge accumulators with `Array.emptyWithCapacity` at the exact merged child count (union −8–9% time, −6–10% peak mem across domains), the one allocation trick the unverified `partial def` prototype had over the verified merge that transfers with almost no proof cost. The residual prototype gap is the total, canonical, proof-shaped merge code itself. (A `@[specialize]` sweep over the hot `PTree` ops was also measured and **rejected**: the walks are cache-miss-bound, and the specialized copies only regressed random insert/lookup by ~10%.)
 
 # Future improvements
 - Memory use and locality. It's still 2 hops to the next level: each `bin` keeps a pointer to the array of pointers to children. If dependent arrays didn't require `unsafe`, we would have used those.
-- `union` throughput. The verified merge (`unionU`/`mergeKids`) rebuilds child arrays in a proof-friendly shape; a tighter in-place merge would close the gap to the prototype, at the cost of harder termination/WF proofs.
+- `union` throughput and peak memory. The verified merge (`unionU`/`mergeKids`) rebuilds child arrays in a proof-friendly shape (the accumulators are now exactly pre-sized); a tighter in-place merge would close the residual gap to the prototype, at the cost of harder termination/WF proofs.

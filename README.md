@@ -160,18 +160,18 @@ structures on every row.
 
 | Domain / operation | `NatSet` | `Std.HashSet` | `PersistentHashSet` |
 | --- | ---: | ---: | ---: |
-| sequential / insertion | 93.82 | **19.95** | 27.20 |
-| sequential / lookup | 17.56 | **12.71** | 30.06 |
-| sequential / union | **27.90** | 603.42 | 537.00 |
-| sequential / subset | **1.26** | 34.39 | 64.03 |
-| shuffled / insertion | 154.34 | **41.16** | 47.36 |
-| shuffled / lookup | **19.25** | 59.97 | 38.21 |
-| shuffled / union | **467.28** | 873.92 | 855.04 |
-| shuffled / subset | **0.80** | 163.48 | 73.07 |
-| random 0..2⁶³ / insertion | 450.58 | 66.77 | **65.82** |
-| random 0..2⁶³ / lookup | 411.48 | **232.53** | 310.06 |
-| random 0..2⁶³ / union | 821.78 | 896.75 | **698.78** |
-| random 0..2⁶³ / subset | 236.96 | **150.20** | 235.62 |
+| sequential / insertion | 97.79 | **21.64** | 29.40 |
+| sequential / lookup | 18.16 | **13.03** | 29.36 |
+| sequential / union | **29.70** | 648.67 | 539.85 |
+| sequential / subset | **0.87** | 38.88 | 64.85 |
+| shuffled / insertion | 165.28 | **41.04** | 52.20 |
+| shuffled / lookup | **19.46** | 48.84 | 37.36 |
+| shuffled / union | **445.75** | 915.34 | 863.86 |
+| shuffled / subset | **0.78** | 142.45 | 74.75 |
+| random 0..2⁶³ / insertion | 455.22 | 65.66 | **63.76** |
+| random 0..2⁶³ / lookup | 384.25 | **240.17** | 315.09 |
+| random 0..2⁶³ / union | 806.01 | 928.90 | **708.51** |
+| random 0..2⁶³ / subset | 244.59 | **146.88** | 233.08 |
 
 **Memory — resident-set growth (KB)**
 
@@ -179,16 +179,16 @@ structures on every row.
 | --- | ---: | ---: | ---: |
 | sequential / insertion | **96** | 28 784 | 4 256 |
 | sequential / lookup | 64 | 64 | 32 |
-| sequential / union | **41 376** | 89 856 | 74 928 |
-| sequential / subset | 64 | 32 | 64 |
+| sequential / union | **41 200** | 89 872 | 74 928 |
+| sequential / subset | 80 | 32 | 64 |
 | shuffled / insertion | **112** | 28 784 | 5 680 |
 | shuffled / lookup | 64 | 64 | 64 |
-| shuffled / union | 120 672 | 89 904 | **70 304** |
-| shuffled / subset | 64 | 32 | 64 |
-| random 0..2⁶³ / insertion | 79 312 | **28 784** | 30 336 |
-| random 0..2⁶³ / lookup | 96 | 112 | 64 |
-| random 0..2⁶³ / union | 122 528 | **90 368** | 101 808 |
-| random 0..2⁶³ / subset | 32 | 32 | 32 |
+| shuffled / union | 108 720 | 89 904 | **70 304** |
+| shuffled / subset | 80 | 32 | 64 |
+| random 0..2⁶³ / insertion | 79 328 | **28 784** | 30 336 |
+| random 0..2⁶³ / lookup | 80 | 112 | 64 |
+| random 0..2⁶³ / union | 115 008 | **90 368** | 101 808 |
+| random 0..2⁶³ / subset | 48 | 32 | 32 |
 
 Reading it: `NatSet` wins `union` and `subset` across **every** key domain — often by an order of
 magnitude — because equal/aligned tries merge and compare their present-masks in lockstep with no
