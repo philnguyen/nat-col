@@ -41,11 +41,16 @@ def erase : NatSet → Nat → NatSet := NatCollection.erase
 def union (s t : NatSet) : NatSet := NatCollection.join (fun _ _ => ()) s t
 /-- Intersection. -/
 def inter (s t : NatSet) : NatSet := NatCollection.meet (fun _ _ => ()) s t
+/-- Difference: the elements of `s` not in `t`. One structural `filter` pass over `s`, testing
+each element's membership in `t`; the result is canonical (the height shrinks when the deep keys
+are removed). -/
+def diff (s t : NatSet) : NatSet := NatCollection.filter (fun k _ => !(t.contains k)) s
 /-- Subset test. -/
 def subset (s t : NatSet) : Bool := NatCollection.restricts (fun _ _ => true) s t
 
 instance : Union NatSet := ⟨union⟩
 instance : Inter NatSet := ⟨inter⟩
+instance : SDiff NatSet := ⟨diff⟩
 
 -- `subset` is `Bool`-valued, so phrase `s ⊆ t` as `subset … = true` and make it
 -- decidable, keeping it usable in `#guard` / `decide`.
@@ -62,6 +67,15 @@ instance (k : Nat) (s : NatSet) : Decidable (k ∈ s) :=
 def toList (s : NatSet) : List Nat := (NatCollection.toList s).map Prod.fst
 /-- Build a set from a list of elements. -/
 def ofList (l : List Nat) : NatSet := l.foldl (fun s k => s.insert k) empty
+
+/-- `repr` renders the `ofList` of the ascending element list — valid Lean that rebuilds the
+set. -/
+instance : Repr NatSet where
+  reprPrec s prec := Repr.addAppParen ("NatSet.ofList " ++ repr s.toList) prec
+
+/-- `toString` displays the elements in ascending order as `{e₁, e₂, …}`. -/
+instance : ToString NatSet where
+  toString s := "{" ++ String.intercalate ", " (s.toList.map toString) ++ "}"
 
 /-- Fold `f` over elements in ascending order, starting from `init`. -/
 def fold {β : Type w} (f : β → Nat → β) (init : β) (s : NatSet) : β :=
@@ -85,6 +99,11 @@ def any (p : Nat → Bool) (s : NatSet) : Bool := NatCollection.any (fun k _ => 
 /-- Keep only the elements satisfying `p`. The result is canonical, so it equals the set built
 directly from the surviving elements (and its height shrinks when the deep keys are removed). -/
 def filter (p : Nat → Bool) (s : NatSet) : NatSet := NatCollection.filter (fun k _ => p k) s
+
+/-- Split `s` by `p`: the first component keeps the elements satisfying `p`, the second the rest.
+Two structural `filter` passes, so both parts are canonical. -/
+def partition (p : Nat → Bool) (s : NatSet) : NatSet × NatSet :=
+  (s.filter p, s.filter (fun k => !(p k)))
 
 /-- Monadic `all`: whether every element satisfies the monadic predicate `p`, threading effects in
 ascending order and short-circuiting at the first failure. The monadic companion of `all`. -/
@@ -234,6 +253,24 @@ section Tests
 #guard ¬ ((NatSet.ofList [1, 2, 3]) ⊆ (NatSet.ofList [1, 2]))
 #guard ¬ ((NatSet.ofList [1, 1000]) ⊆ (NatSet.ofList [1, 2]))               -- taller -> not subset
 
+-- difference (via the `\` notation) keeps the left side's elements absent from the right. The
+-- result is canonical, so it is *equal* to the set built directly from the survivors.
+#guard ((NatSet.ofList [1, 2, 3]) \ (NatSet.ofList [2, 4])).toList = [1, 3]
+#guard (NatSet.ofList [1, 2]) \ ∅ = NatSet.ofList [1, 2]                     -- right identity
+#guard (∅ : NatSet) \ (NatSet.ofList [1, 2]) = (∅ : NatSet)                  -- empty minus anything
+#guard (NatSet.ofList [1, 2]) \ (NatSet.ofList [1, 2]) = (∅ : NatSet)        -- self-difference
+#guard (NatSet.ofList [1, 2]) \ (NatSet.ofList [3, 4]) = NatSet.ofList [1, 2]  -- disjoint: unchanged
+-- removing the deep key shrinks the height back to canonical (mixed-height operands)
+#guard (NatSet.ofList [1, 5000]) \ (NatSet.ofList [5000, 7000]) = NatSet.ofList [1]
+#guard hash ((NatSet.ofList [1, 5000]) \ (NatSet.ofList [5000])) = hash (NatSet.ofList [1])
+
+-- partition: `.1` keeps the elements satisfying `p`, `.2` the rest; both parts canonical
+#guard (NatSet.ofList [1, 2, 3, 4]).partition (fun k => k % 2 == 0)
+        = (NatSet.ofList [2, 4], NatSet.ofList [1, 3])
+#guard (NatSet.ofList [1, 2, 5000]).partition (fun k => k ≤ 99)
+        = (NatSet.ofList [1, 2], NatSet.ofList [5000])                       -- mixed heights split
+#guard (∅ : NatSet).partition (fun _ => true) = (∅, ∅)
+
 /-! ### Cross-height operands: descend the taller tree's spine, both directions
 
 `1,2,3` need height 0 (`< 32`), `40,50` height 1 (`< 1024`), `5000` height 2 (`< 32768`), so these
@@ -276,6 +313,13 @@ private def c : NatSet := NatSet.ofList [3, 40, 2000]
 #guard a ∩ (a ∪ b) = a
 -- inclusion–exclusion on sizes
 #guard (a ∪ b).size + (a ∩ b).size = a.size + b.size
+-- difference complements intersection inside the left operand
+#guard (a \ b) ∪ (a ∩ b) = a
+#guard (a \ b) ∩ b = (∅ : NatSet)
+#guard (a \ b).size + (a ∩ b).size = a.size
+-- partition splits a set into disjoint parts recombining to the original
+#guard (a.partition (fun k => k % 2 == 0)).1 ∪ (a.partition (fun k => k % 2 == 0)).2 = a
+#guard (a.partition (fun k => k % 2 == 0)).1 ∩ (a.partition (fun k => k % 2 == 0)).2 = (∅ : NatSet)
 -- union ⊇ each side; inter ⊆ each side
 #guard a ⊆ (a ∪ b)
 #guard b ⊆ (a ∪ b)
@@ -321,6 +365,12 @@ example : DecidableEq NatSet := inferInstance
 #guard hash (NatSet.ofList [1, 2, 3]) = hash (NatSet.ofList [3, 2, 1, 2])
 -- mixed heights collapse to the same canonical value, so hashes still agree
 #guard hash (NatSet.ofList [1, 1000] |>.erase 1000) = hash (NatSet.ofList [1])
+
+-- printing: `toString` braces the ascending elements; `repr` is valid Lean rebuilding the set
+#guard toString (NatSet.ofList [40, 1, 2]) = "{1, 2, 40}"
+#guard toString (∅ : NatSet) = "{}"
+#guard reprStr (NatSet.ofList [2, 1]) = "NatSet.ofList [1, 2]"
+#guard reprStr (∅ : NatSet) = "NatSet.ofList []"
 
 end Tests
 

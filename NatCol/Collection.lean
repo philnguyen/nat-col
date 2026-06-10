@@ -134,6 +134,14 @@ def modify (c : NatCollection L) (k : Nat) (f : V → V) : NatCollection L :=
   | none => c
   | some v => c.insert k (f v)
 
+/-- Rewrite the entry at key `k` through `f`: `f` receives the current value (`some v` if present,
+`none` if absent) and returns the value to store, or `none` to leave the key absent. Generalizes
+`insert` (`fun _ => some v`), `erase` (`fun _ => none`), and `modify`. -/
+def alter (c : NatCollection L) (k : Nat) (f : Option V → Option V) : NatCollection L :=
+  match f (c.get? k) with
+  | some v => c.insert k v
+  | none => c.erase k
+
 /-- Monadic `filter`: keep the pairs for which `p` returns `true`, running `p` on every pair in
 ascending key order and threading its effects through `m`; the result is rebuilt from the
 survivors, so it is canonical and equals the pure `filter` when `p` is effect-free. Restricted to

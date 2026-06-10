@@ -89,6 +89,11 @@ def insert : NatMap α → Nat → α → NatMap α := NatCollection.insert
 def erase : NatMap α → Nat → NatMap α := NatCollection.erase
 def modify : NatMap α → Nat → (α → α) → NatMap α := NatCollection.modify
 
+/-- Rewrite the entry at `k` through `f`: `f` receives the current value (`some v` if present,
+`none` if absent) and returns the value to store, or `none` to leave the key absent. Generalizes
+`insert`, `erase`, and `modify`. -/
+def alter : NatMap α → Nat → (Option α → Option α) → NatMap α := NatCollection.alter
+
 /-- Union; `combine` resolves values at coinciding keys. -/
 def join : (α → α → α) → NatMap α → NatMap α → NatMap α := NatCollection.join
 /-- Intersection; `combine` resolves values at coinciding keys. -/
@@ -100,6 +105,23 @@ def restricts : (α → α → Bool) → NatMap α → NatMap α → Bool := Nat
 def toList : NatMap α → List (Nat × α) := NatCollection.toList
 /-- Build a map from `(key, value)` pairs (later pairs win on duplicate keys). -/
 def ofList : List (Nat × α) → NatMap α := NatCollection.ofList
+
+/-- All keys, ascending. -/
+def keys (m : NatMap α) : List Nat :=
+  (NatCollection.fold (fun acc k _ => acc.push k) #[] m).toList
+/-- All values, in ascending key order. -/
+def values (m : NatMap α) : List α :=
+  (NatCollection.fold (fun acc _ v => acc.push v) #[] m).toList
+
+/-- `repr` renders the `ofList` of the ascending `(key, value)` list — valid Lean that rebuilds
+the map. -/
+instance [Repr α] : Repr (NatMap α) where
+  reprPrec m prec := Repr.addAppParen ("NatMap.ofList " ++ repr m.toList) prec
+
+/-- `toString` displays the entries in ascending key order as `{k₁ ↦ v₁, k₂ ↦ v₂, …}`. -/
+instance [ToString α] : ToString (NatMap α) where
+  toString m :=
+    "{" ++ String.intercalate ", " (m.toList.map (fun (k, v) => s!"{k} ↦ {v}")) ++ "}"
 
 /-- Fold `f` over `(key, value)` entries in ascending key order, starting from `init`. -/
 def fold {β : Type w} : (β → Nat → α → β) → β → NatMap α → β := NatCollection.fold
@@ -193,6 +215,13 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 #guard (m1.modify 2 (· + 5)).get? 2 = some 25
 #guard m1.modify 99 (· + 5) = m1
 
+-- alter generalizes insert / modify / erase through one callback on the current value
+#guard (m1.alter 5 (fun _ => some 50)).get? 5 = some 50                -- absent key: insert
+#guard (m1.alter 2 (fun v => v.map (· + 5))).get? 2 = some 25          -- present key: modify
+#guard m1.alter 2 (fun _ => none) = m1.erase 2                         -- present key: erase
+#guard m1.alter 99 (fun v => v) = m1                                   -- absent, stays none: no-op
+#guard (NatMap.empty.insert 42 1).alter 42 (fun _ => none) = (NatMap.empty : NatMap Nat)  -- collapses canonically
+
 -- erase
 #guard (m1.erase 2).get? 2 = none
 #guard (m1.erase 2).size = 2
@@ -201,6 +230,16 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 -- toList sorted by key irrespective of insertion order
 #guard (NatMap.empty.insert 3 30 |>.insert 1 10 |>.insert 2 20).toList = [(1, 10), (2, 20), (3, 30)]
 #guard (NatMap.ofList [(5, 50), (1000, 1)]).toList = [(5, 50), (1000, 1)]
+
+-- keys / values, ascending by key — the projections of toList, without building the pairs
+#guard (NatMap.ofList [(3, 30), (1, 10), (2, 20)]).keys = [1, 2, 3]
+#guard (NatMap.ofList [(3, 30), (1, 10), (2, 20)]).values = [10, 20, 30]
+#guard (NatMap.ofList [(1, 10), (5000, 3)]).keys = [1, 5000]                      -- mixed heights
+#guard (NatMap.empty : NatMap Nat).keys = []
+#guard (NatMap.ofList [(5, 50), (1000, 1)]).keys
+        = (NatMap.ofList [(5, 50), (1000, 1)]).toList.map Prod.fst
+#guard (NatMap.ofList [(5, 50), (1000, 1)]).values
+        = (NatMap.ofList [(5, 50), (1000, 1)]).toList.map Prod.snd
 
 -- fold visits entries in ascending key order, regardless of insertion order or height
 #guard (NatMap.ofList [(3, 30), (1, 10), (2, 20)]).fold (fun acc k v => acc + k + v) 0 = 66
@@ -371,6 +410,11 @@ example : DecidableEq (NatMap Nat) := inferInstance
 #guard ¬ (NatMap.ofList [(1, 10)] = NatMap.ofList [(1, 11)])
 #guard (NatMap.ofList [(1, 10), (2, 20)] == NatMap.ofList [(2, 20), (1, 10)]) = true
 #guard hash (NatMap.ofList [(1, 10), (2, 20)]) = hash (NatMap.ofList [(2, 20), (1, 10)])
+
+-- printing: `toString` braces `k ↦ v` entries ascending; `repr` is valid Lean rebuilding the map
+#guard toString (NatMap.ofList [(2, 20), (1, 10)]) = "{1 ↦ 10, 2 ↦ 20}"
+#guard toString (NatMap.empty : NatMap Nat) = "{}"
+#guard reprStr (NatMap.ofList [(2, 20), (1, 10)]) = "NatMap.ofList [(1, 10), (2, 20)]"
 
 end Tests
 
