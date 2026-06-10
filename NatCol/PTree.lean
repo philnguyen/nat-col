@@ -6150,24 +6150,24 @@ preserves leaf emptiness and leaf membership (`WF_map`). `NatMap.map` instantiat
 
 mutual
 /-- Rewrite every leaf of a trie with `g`, preserving all structure. -/
-def map {L' : Type u} (g : L → L') : PTree L → PTree L'
+def map {L' : Type u'} (g : L → L') : PTree L → PTree L'
   | .nil                     => .nil
   | .tip pfx leaf            => .tip pfx (g leaf)
   | .bin pfx level mask kids => .bin pfx level mask (mapList g kids.toList).toArray
 /-- `map` over a child list (the `map` companion). -/
-private def mapList {L' : Type u} (g : L → L') : List (PTree L) → List (PTree L')
+private def mapList {L' : Type u'} (g : L → L') : List (PTree L) → List (PTree L')
   | []        => []
   | c :: rest => map g c :: mapList g rest
 end
 
 /-- `mapList` is `List.map` of `map`. -/
-private theorem mapList_eq_map {L' : Type u} (g : L → L') :
+private theorem mapList_eq_map {L' : Type u'} (g : L → L') :
     (l : List (PTree L)) → mapList g l = l.map (map g)
   | []        => rfl
   | c :: rest => by rw [mapList, mapList_eq_map g rest, List.map_cons]
 
 /-- The defining `bin` equation, with the children as an honest `Array.map`. -/
-theorem map_bin {L' : Type u} (g : L → L') (pfx level : Nat) (mask : UInt32)
+theorem map_bin {L' : Type u'} (g : L → L') (pfx level : Nat) (mask : UInt32)
     (kids : Array (PTree L)) :
     map g (.bin pfx level mask kids) = .bin pfx level mask (kids.map (map g)) := by
   have harr : (kids.toList.map (map g)).toArray = kids.map (map g) := by
@@ -6176,12 +6176,12 @@ theorem map_bin {L' : Type u} (g : L → L') (pfx level : Nat) (mask : UInt32)
   rw [map, mapList_eq_map, harr]
 
 /-- `map` sends `nil` to `nil` and nothing else to `nil`. -/
-theorem map_nil_iff {L' : Type u} (g : L → L') (t : PTree L) :
+theorem map_nil_iff {L' : Type u'} (g : L → L') (t : PTree L) :
     map g t = (.nil : PTree L') ↔ t = .nil := by
   cases t <;> simp [map]
 
 /-- `childAt` commutes with `map`: routing then mapping equals mapping then routing. -/
-private theorem childAt_map {L' : Type u} (g : L → L') (mask : UInt32) (kids : Array (PTree L))
+private theorem childAt_map {L' : Type u'} (g : L → L') (mask : UInt32) (kids : Array (PTree L))
     (c : UInt32) :
     childAt mask (kids.map (map g)) c = map g (childAt mask kids c) := by
   unfold childAt
@@ -6192,7 +6192,7 @@ private theorem childAt_map {L' : Type u} (g : L → L') (mask : UInt32) (kids :
 
 /-- `map` preserves leaf membership when `g`'s leaf action does. Manual structural recursion (the
 recursive call lands on a genuine child `kids[i]`, so termination is `get?`'s own measure). -/
-theorem contains_map {L' V' : Type u} [LeafOps L' V'] (g : L → L')
+theorem contains_map {L' V' : Type u'} [LeafOps L' V'] (g : L → L')
     (hcontains : ∀ l i, (LeafOps.contains (g l) i : Bool) = LeafOps.contains l i) (k : Nat) :
     (t : PTree L) → contains k (map g t) = contains k t
   | .nil => by simp [map, contains_nil]
@@ -6212,7 +6212,7 @@ decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); om
 /-- **`get?` of a `map`**: looking up a key applies `f` to whatever was there, where `f` is `g`'s
 leaf action under `LeafOps.get?`. The functorial value-denotation seam. Manual structural
 recursion (the recursive call lands on a genuine child). -/
-theorem get?_map {L' V' : Type u} [LeafOps L' V'] (g : L → L') (f : V → V')
+theorem get?_map {L' V' : Type u'} [LeafOps L' V'] (g : L → L') (f : V → V')
     (hget : ∀ l i, (LeafOps.get? (g l) i : Option V') = (LeafOps.get? l i).map f) (k : Nat) :
     (t : PTree L) → get? k (map g t) = (get? k t).map f
   | .nil => by simp [map, get?_nil]
@@ -6238,7 +6238,7 @@ decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); om
 
 /-- `map` preserves well-formedness when `g` preserves leaf emptiness and leaf membership. Manual
 structural recursion (children recursed via genuine membership). -/
-theorem WF_map {L' V' : Type u} [LeafOps L' V'] (g : L → L')
+theorem WF_map {L' V' : Type u'} [LeafOps L' V'] (g : L → L')
     (hempty : ∀ l, (LeafOps.isEmpty (g l) : Bool) = LeafOps.isEmpty l)
     (hcontains : ∀ l i, (LeafOps.contains (g l) i : Bool) = LeafOps.contains l i) :
     (t : PTree L) → WF t → WF (map g t)
@@ -6268,13 +6268,13 @@ decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem hc0; omega
 
 mutual
 /-- `map` respects pointwise equality of the leaf function. -/
-theorem map_congr {L' : Type u} (g₁ g₂ : L → L') (h : ∀ l, g₁ l = g₂ l) :
+theorem map_congr {L' : Type u'} (g₁ g₂ : L → L') (h : ∀ l, g₁ l = g₂ l) :
     (t : PTree L) → map g₁ t = map g₂ t
   | .nil                     => rfl
   | .tip pfx leaf            => by rw [map, map, h]
   | .bin pfx level mask kids => by rw [map, map, mapList_congr g₁ g₂ h kids.toList]
 /-- `mapList` respects pointwise equality of the leaf function (the `map_congr` companion). -/
-private theorem mapList_congr {L' : Type u} (g₁ g₂ : L → L') (h : ∀ l, g₁ l = g₂ l) :
+private theorem mapList_congr {L' : Type u'} (g₁ g₂ : L → L') (h : ∀ l, g₁ l = g₂ l) :
     (l : List (PTree L)) → mapList g₁ l = mapList g₂ l
   | []        => rfl
   | c :: rest => by rw [mapList, mapList, map_congr g₁ g₂ h c, mapList_congr g₁ g₂ h rest]
@@ -6294,13 +6294,13 @@ end
 
 mutual
 /-- Mapping a composition is the composition of maps (the functor composition law's core). -/
-theorem map_comp {L' L'' : Type u} (g₁ : L → L') (g₂ : L' → L'') :
+theorem map_comp {L' : Type u'} {L'' : Type u''} (g₁ : L → L') (g₂ : L' → L'') :
     (t : PTree L) → map (fun l => g₂ (g₁ l)) t = map g₂ (map g₁ t)
   | .nil                     => rfl
   | .tip pfx leaf            => by rw [map, map, map]
   | .bin pfx level mask kids => by rw [map, map, map, mapList_comp g₁ g₂ kids.toList]
 /-- `mapList` of a composition is the composition of `mapList`s (the `map_comp` companion). -/
-private theorem mapList_comp {L' L'' : Type u} (g₁ : L → L') (g₂ : L' → L'') :
+private theorem mapList_comp {L' : Type u'} {L'' : Type u''} (g₁ : L → L') (g₂ : L' → L'') :
     (l : List (PTree L)) → mapList (fun l => g₂ (g₁ l)) l = mapList g₂ (mapList g₁ l)
   | []        => rfl
   | c :: rest => by rw [mapList, mapList, mapList, map_comp g₁ g₂ c, mapList_comp g₁ g₂ rest]

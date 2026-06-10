@@ -1,4 +1,4 @@
-import NatCol.Collection
+import NatCol.Set
 
 /-!
 # `NatMap`: a map from `Nat` to `α`
@@ -112,6 +112,14 @@ def keys (m : NatMap α) : List Nat :=
 /-- All values, in ascending key order. -/
 def values (m : NatMap α) : List α :=
   (NatCollection.fold (fun acc _ v => acc.push v) #[] m).toList
+
+/-- The set of keys, as a `NatSet`. One structural pass (`PTree.map`): a map leaf's occupancy
+bitmask *is* the corresponding set leaf, so the trie's shape — prefixes, levels, masks — carries
+over unchanged and only the values are dropped. The mask is preserved exactly, which is what
+`PTree.WF_map` needs to transfer canonicity. -/
+def domain (m : NatMap α) : NatSet :=
+  ⟨PTree.map (fun l => l.positionsMask) m.tree,
+   PTree.WF_map (fun l => l.positionsMask) (fun _ => rfl) (fun _ _ => rfl) m.tree m.wf⟩
 
 /-- `repr` renders the `ofList` of the ascending `(key, value)` list — valid Lean that rebuilds
 the map. -/
@@ -240,6 +248,14 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
         = (NatMap.ofList [(5, 50), (1000, 1)]).toList.map Prod.fst
 #guard (NatMap.ofList [(5, 50), (1000, 1)]).values
         = (NatMap.ofList [(5, 50), (1000, 1)]).toList.map Prod.snd
+
+-- domain: the NatSet of keys; both sides canonical, so structural `==` is honest equality
+#guard (NatMap.ofList [(3, 30), (1, 10), (2, 20)]).domain == NatSet.ofList [1, 2, 3]
+#guard (NatMap.empty : NatMap Nat).domain == NatSet.empty
+#guard (NatMap.ofList [(1, 10), (5000, 3)]).domain == NatSet.ofList [1, 5000]     -- mixed heights
+#guard (NatMap.ofList [(3, 30), (1, 10), (2, 20)]).domain.toList
+        = (NatMap.ofList [(3, 30), (1, 10), (2, 20)]).keys                        -- agrees with keys
+#guard ((NatMap.ofList [(1, 10), (5000, 3)]).erase 5000).domain == NatSet.ofList [1]
 
 -- fold visits entries in ascending key order, regardless of insertion order or height
 #guard (NatMap.ofList [(3, 30), (1, 10), (2, 20)]).fold (fun acc k v => acc + k + v) 0 = 66
