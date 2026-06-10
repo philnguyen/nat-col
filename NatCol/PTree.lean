@@ -288,7 +288,7 @@ decreasing_by
   all_goals first
     | omega
     | (have : (clearLowest rem).toNat < rem.toNat :=
-         UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem (by simp_all)); omega)
+         toNat_clearLowest_lt rem (by simp_all); omega)
 end
 
 /-- Union `a ∪ b`, resolving coinciding keys with `c`. -/
@@ -356,7 +356,7 @@ decreasing_by
     | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h1)
        have := Array.sizeOf_lt_of_mem (Array.getElem_mem h2); omega)
     | (have : (clearLowest rem).toNat < rem.toNat :=
-         UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem (by simp_all)); omega)
+         toNat_clearLowest_lt rem (by simp_all); omega)
     | omega
 end
 
@@ -382,7 +382,7 @@ the mask `rem` lowest-first, keeping each non-empty child and setting its bit. R
 "no nil children" / "compact" invariants after an intersection thins a branch. -/
 def compactify (mask : UInt32) (kids : Array (PTree L)) (rem : UInt32) (accM : UInt32)
     (acc : Array (PTree L)) : UInt32 × Array (PTree L) :=
-  if hrem : rem == 0 then (accM, acc)
+  if _hrem : rem == 0 then (accM, acc)
   else
     if isNil (childAt mask kids (lowestSetIdx rem)) then
       compactify mask kids (clearLowest rem) accM acc
@@ -393,7 +393,7 @@ termination_by rem.toNat
 decreasing_by
   all_goals
     have : (clearLowest rem).toNat < rem.toNat :=
-      UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem (by simp_all))
+      toNat_clearLowest_lt rem (by simp_all)
     omega
 
 /-- Re-wrap a re-compressed branch: empty → `nil`, a single survivor → that child (lift the
@@ -488,7 +488,7 @@ decreasing_by
   all_goals first
     | omega
     | (have : (clearLowest rem).toNat < rem.toNat :=
-         UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem (by simp_all)); omega)
+         toNat_clearLowest_lt rem (by simp_all); omega)
 end
 
 /-- Intersection `a ∩ b`, resolving coinciding keys with `c`. -/
@@ -935,9 +935,7 @@ private theorem someKey_tip_shiftRight5 (pfx : Nat) (leaf : L) (hb : LeafOps.isE
     someKey (.tip pfx leaf) >>> 5 = pfx := by
   show ((pfx <<< 5) ||| (LeafOps.someSlot leaf).toNat) >>> 5 = pfx
   apply shiftLeft_lor_shiftRight
-  have h := UInt32.lt_iff_toNat_lt.mp (LeafOps.someSlot_lt leaf hb)
-  rw [show (32 : UInt32).toNat = 32 from by decide] at h
-  exact h
+  exact UInt32.lt_iff_toNat_lt.mp (LeafOps.someSlot_lt leaf hb)
 
 /-- A `bin`'s representative key carries the branch prefix `pfx` above `level`. -/
 private theorem someKey_bin_prefixAbove (pfx level : Nat) (mask : UInt32) (kids : Array (PTree L))
@@ -945,9 +943,7 @@ private theorem someKey_bin_prefixAbove (pfx level : Nat) (mask : UInt32) (kids 
   show ((pfx <<< (5 * (level + 1))) ||| ((lowestSetIdx mask).toNat <<< (5 * level)))
         >>> (5 * (level + 1)) = pfx
   apply shiftLeft_lor_shiftRight
-  have hlsi : (lowestSetIdx mask).toNat < 32 := by
-    have h := UInt32.lt_iff_toNat_lt.mp (lowestSetIdx_lt mask hm)
-    rwa [show (32 : UInt32).toNat = 32 from by decide] at h
+  have hlsi : (lowestSetIdx mask).toNat < 32 := UInt32.lt_iff_toNat_lt.mp (lowestSetIdx_lt mask hm)
   rw [Nat.shiftLeft_eq, show 5 * (level + 1) = 5 * level + 5 from by omega, Nat.pow_add]
   calc (lowestSetIdx mask).toNat * 2 ^ (5 * level)
       < 32 * 2 ^ (5 * level) :=
@@ -1481,7 +1477,7 @@ private theorem mergeKids_spec (cf : V → V → V) (m1 : UInt32) (k1 : Array (P
               (acc.push (mergeChild cf m1 k1 m2 k2 (lowestSetIdx rem))) := by
         rw [mergeKids, dif_neg h0]
       have hlt : (clearLowest rem).toNat < n := by
-        rw [← hrem]; exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem hrem0)
+        rw [← hrem]; exact toNat_clearLowest_lt rem hrem0
       obtain ⟨ihsize, ihpref, ihthird⟩ :=
         IH (clearLowest rem).toNat hlt (clearLowest rem) rfl
           (acc.push (mergeChild cf m1 k1 m2 k2 (lowestSetIdx rem)))
@@ -1545,7 +1541,7 @@ private theorem mergeKids_mem (cf : V → V → V) (m1 : UInt32) (k1 : Array (PT
     · have hrem0 : rem ≠ 0 := by intro h; exact h0 (by rw [h]; rfl)
       rw [mergeKids, dif_neg h0] at hx
       have hlt : (clearLowest rem).toNat < n := by
-        rw [← hrem]; exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem hrem0)
+        rw [← hrem]; exact toNat_clearLowest_lt rem hrem0
       rcases IH (clearLowest rem).toNat hlt (clearLowest rem) rfl
           (acc.push (mergeChild cf m1 k1 m2 k2 (lowestSetIdx rem))) x hx with hacc | hex
       · rcases Array.mem_push.mp hacc with hin | heq
@@ -2564,7 +2560,7 @@ private theorem compactify_spec (mask : UInt32) (kids : Array (PTree L)) :
       have hlo : lowestSetIdx rem < 32 := lowestSetIdx_lt rem hrem0
       have hlotb : testBit rem (lowestSetIdx rem) = true := testBit_lowestSetIdx rem hrem0
       have hlt : (clearLowest rem).toNat < n := by
-        rw [← hrem]; exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem hrem0)
+        rw [← hrem]; exact toNat_clearLowest_lt rem hrem0
       by_cases hnil : isNil (childAt mask kids (lowestSetIdx rem)) = true
       · -- skip: the lowest slot's intersection is empty, drop it
         have hstep : compactify mask kids rem accM acc
@@ -2783,7 +2779,7 @@ private theorem compactify_mem (mask : UInt32) (kids : Array (PTree L)) :
       have hlo : lowestSetIdx rem < 32 := lowestSetIdx_lt rem hrem0
       have hlotb : testBit rem (lowestSetIdx rem) = true := testBit_lowestSetIdx rem hrem0
       have hlt : (clearLowest rem).toNat < n := by
-        rw [← hrem]; exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem hrem0)
+        rw [← hrem]; exact toNat_clearLowest_lt rem hrem0
       by_cases hnil : isNil (childAt mask kids (lowestSetIdx rem)) = true
       · rw [compactify, dif_neg h0, if_pos hnil] at hx
         rcases IH (clearLowest rem).toNat hlt (clearLowest rem) rfl accM acc x hx with hacc | hex
@@ -2905,7 +2901,7 @@ private theorem meetKids_spec (cf : V → V → V) (m1 : UInt32) (k1 : Array (PT
               (acc.push (meetChild cf m1 k1 m2 k2 (lowestSetIdx rem))) := by
         rw [meetKids, dif_neg h0]
       have hlt : (clearLowest rem).toNat < n := by
-        rw [← hrem]; exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt rem hrem0)
+        rw [← hrem]; exact toNat_clearLowest_lt rem hrem0
       obtain ⟨ihsize, ihpref, ihthird⟩ :=
         IH (clearLowest rem).toNat hlt (clearLowest rem) rfl
           (acc.push (meetChild cf m1 k1 m2 k2 (lowestSetIdx rem)))
@@ -3423,9 +3419,7 @@ private theorem contains_witnessKey :
   | case2 pfx leaf =>
     intro hwf _
     have hb : LeafOps.isEmpty leaf = false := by rw [WF] at hwf; exact hwf
-    have hlo : (LeafOps.someSlot leaf).toNat < 32 := by
-      have h := UInt32.lt_iff_toNat_lt.mp (LeafOps.someSlot_lt leaf hb)
-      rwa [show (32 : UInt32).toNat = 32 from by decide] at h
+    have hlo : (LeafOps.someSlot leaf).toNat < 32 := UInt32.lt_iff_toNat_lt.mp (LeafOps.someSlot_lt leaf hb)
     rw [contains_tip, Bool.and_eq_true, beq_iff_eq, witnessKey]
     refine ⟨?_, ?_⟩
     · rw [Nat.shiftRight_eq_div_pow, show (2 : Nat) ^ 5 = 32 from rfl,
@@ -3621,8 +3615,7 @@ private theorem get?_none_of_aligned {j : Nat} (l : Nat) (c : UInt32) (p : Nat) 
 exactly the leaf's slot `c` — the per-slot lever that recovers a tip's leaf from its denotation. -/
 private theorem get?_tip_probe (p : Nat) (leaf : L) (c : UInt32) (hc : c < 32) :
     get? (c.toNat + 32 * p) (.tip p leaf) = LeafOps.get? leaf c := by
-  have hclt : c.toNat < 32 := by
-    have := UInt32.lt_iff_toNat_lt.mp hc; rwa [show (32 : UInt32).toNat = 32 from by decide] at this
+  have hclt : c.toNat < 32 := UInt32.lt_iff_toNat_lt.mp hc
   have hpre : (c.toNat + 32 * p) >>> 5 = p := by
     rw [Nat.shiftRight_eq_div_pow, show (2 : Nat) ^ 5 = 32 from rfl,
         Nat.add_mul_div_left _ _ (by decide : 0 < 32), Nat.div_eq_of_lt hclt, Nat.zero_add]
