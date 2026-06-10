@@ -26,7 +26,7 @@ example (s t : NatSet)   : s ∩ t ⊆ s                  := NatSet.inter_subset
 - **`NatMap α`** — a map `Nat → α`; lattice ops take a `combine`/`rel` to resolve coinciding keys.
 - **Canonical representation** — the trie is kept in a unique normal form, so **structural equality
   *is* logical equality**: `NatSet`/`NatMap` are `LawfulBEq`, `DecidableEq`, and `LawfulHashable`.
-  Two sets built in any order, at any intermediate height, compare and hash equal.
+  Two sets built in any order compare and hash equal.
 - **Mask-driven lattice ops** — `join`/`meet`/`restricts` work off each node's 32-bit
   `positionsMask`, reusing/discarding whole subtrees that occur on only one side instead of
   walking them.
@@ -37,27 +37,29 @@ example (s t : NatSet)   : s ∩ t ⊆ s                  := NatSet.inter_subset
 
 ## Design
 
-At the heart of both collections is a 32-ary trie. A `Nat` key is read 5 bits at a time (`2⁵ = 32`):
-each 5-bit chunk selects a slot at one level of the trie, and the tree is only ever **as tall as the
-largest key requires**. A node stores a `UInt32` `positionsMask` (which of the 32 slots are
-occupied) plus a *compact* array holding exactly the occupied children — no empty slots, no stored
-keys.
+At the heart of both collections is a **path-compressed (Patricia) 32-ary trie**. A `Nat` key is
+read 5 bits at a time (`2⁵ = 32`): each 5-bit chunk selects a slot. Rather than store a node per
+level (so the tree would be as tall as the largest key), a `bin` branches **only where its children
+actually diverge**, and a `tip` carries a whole compressed run of keys that share their high bits —
+so a single sparse/large key is *one* node, not a chain of single-child ones. Each `bin` stores a
+`UInt32` `mask` (which of the 32 slots are occupied) plus a *compact* array holding exactly the
+occupied children — no empty slots, no stored keys.
 
 ```lean
 -- the generic, leaf-parameterised core (simplified)
-structure Node (α : Type u) where
-  positionsMask    : UInt32          -- which of the 32 slots are present
-  elements         : Array α         -- exactly `positionsMask.popCount` children, in order
+inductive PTree (L : Type u)
+  | nil
+  | tip (pfx : Nat) (leaf : L)                                     -- a compressed run of keys sharing high bits
+  | bin (pfx level : Nat) (mask : UInt32) (kids : Array (PTree L)) -- branch at `level`; `mask`/`kids` are compact
+
+structure Node (α : Type u) where     -- the map leaf
+  positionsMask : UInt32              -- which of the 32 slots are present
+  elements      : Array α             -- exactly `positionsMask.popCount` values, in order
   …
 
-abbrev Tree (leaf : Type u) : Nat → Type u
-  | 0     => leaf                    -- the bottom level is a leaf…
-  | n + 1 => Node (Tree leaf n)      -- …above it, nested nodes
-
-structure NatCollection (leaf : Type u) where
-  height : Nat
-  tree   : Tree leaf height
-  wf     : Tree.Canonical height tree   -- the canonical-shape invariant, carried in the type
+structure NatCollection (L : Type u) {V : Type u} [LeafOps L V] where
+  tree : PTree L
+  wf   : PTree.WF tree                -- the canonical-shape invariant (no nil children / empty leaves)
 
 def NatMap (α : Type u) := NatCollection (Node α)   -- leaves are value-nodes
 def NatSet              := NatCollection UInt32      -- leaves are 32-bit bitsets
@@ -69,7 +71,7 @@ tests. (`UInt32` rather than `UInt64` because boxed polymorphic positions store 
 unallocated, by bit-shifting, whereas a `UInt64` would allocate.) A **`NatMap α`** uses a `Node α`
 leaf — itself a sparse 32-slot map of values.
 
-Every operation and every theorem is written **once** generically over `NatCollection`/`Tree`,
+Every operation and every theorem is written **once** generically over `PTree`/`NatCollection`,
 abstracting the leaf behind a `LeafOps` typeclass, then instantiated for `NatSet` (the `UInt32`
 leaf) and `NatMap` (the `Node α` leaf).
 
@@ -81,9 +83,9 @@ A longer write-up — invariants, the canonical form, the mask-merge optimisatio
 | File | Role |
 | --- | --- |
 | [`NatCol/Bits.lean`](NatCol/Bits.lean) | `UInt32` bit primitives — chunking a `Nat`, `popCount` (SWAR), set/clear/test bit |
-| [`NatCol/Node.lean`](NatCol/Node.lean) | the sparse 32-slot `Node`: `insert`/`erase`/`get?`, mask-scan `join`/`meet`/`restricts`, `map`, `filterMap` |
-| [`NatCol/Tree.lean`](NatCol/Tree.lean) | the height-indexed `Tree`, the `Canonical` invariant, and the `get?`-denotational layer the proofs ride on |
-| [`NatCol/Collection.lean`](NatCol/Collection.lean) | `NatCollection`: the user-facing wrapper, `LeafOps` typeclass, generic ops + generic laws |
+| [`NatCol/Node.lean`](NatCol/Node.lean) | the sparse 32-slot `Node` (`insert`/`erase`/`get?`, mask-scan `join`/`meet`/`restricts`, `map`, `filterMap`), plus the `LeafOps` typeclass + value-level `optV` algebra |
+| [`NatCol/PTree.lean`](NatCol/PTree.lean) | the path-compressed `PTree` over `LeafOps`: ops, the `WF` invariant, structural `beq`, the `map` functor, and the `get?`-denotational lattice/order layer the proofs ride on |
+| [`NatCol/Collection.lean`](NatCol/Collection.lean) | `NatCollection`: the user-facing `{ tree, wf }` wrapper, generic ops + generic laws (one-line lifts of the `PTree` seams) |
 | [`NatCol/Set.lean`](NatCol/Set.lean) | `NatSet` — `UInt32`-leaf instance, `∪`/`∩`/`⊆`/`∈` API, set laws |
 | [`NatCol/Map.lean`](NatCol/Map.lean) | `NatMap α` — `Node α`-leaf instance, key/value API, `Functor`, map laws |
 | [`Bench.lean`](Bench.lean) | the `nat-bench` micro-benchmark executable |
@@ -105,7 +107,7 @@ reconcile values at coinciding keys, and `NatMap.map : (α → β) → NatMap α
 action `f <$> m`).
 
 `filter` and the monadic variants return a **canonical** result — equal to the collection rebuilt
-from the survivors, with the height shrunk back when deep keys drop out.
+from the survivors, so structural equality still coincides with logical equality.
 
 ## Verified laws
 
@@ -120,8 +122,8 @@ Proven generically over `NatCollection` and lifted to `NatSet`/`NatMap` (the `Na
 - `get?`-after-`insert`, the membership/lookup spec, inclusion–exclusion on `size`, etc.
 - `NatSet`/`NatMap` are `LawfulBEq`; `NatMap` is a `LawfulFunctor`.
 
-Each law is backed by `#guard` example-tests on concrete (including mixed-height) instances sitting
-next to the operations.
+Each law is backed by `#guard` example-tests on concrete (including multi-level, cross-prefix)
+instances sitting next to the operations.
 
 ## Building, testing, benchmarking
 
@@ -150,52 +152,53 @@ one from `all`/`fold` + `contains`, matching `NatSet.subset` at `O(|s|)` members
 
 ### Sample results
 
-Measured on an **Apple M4 Pro MacBook** at `N = 1,000,000` with Lean `v4.30.0`. Lower is better;
-the size/sum cross-check agreed across all three structures on every row.
+Measured on an **Apple M4 Pro MacBook** at `N = 1,000,000` with Lean `v4.30.0`, on the
+path-compressed `NatSet`. Lower is better; the size/sum cross-check agreed across all three
+structures on every row.
 
 **Time (ms)**
 
 | Domain / operation | `NatSet` | `Std.HashSet` | `PersistentHashSet` |
 | --- | ---: | ---: | ---: |
-| sequential / insertion | 92.11 | 21.40 | 27.56 |
-| sequential / lookup | 16.94 | 14.05 | 31.28 |
-| sequential / union | **133.06** | 620.45 | 533.20 |
-| sequential / subset | **0.96** | 34.70 | 62.92 |
-| shuffled / insertion | 139.61 | 46.51 | 48.01 |
-| shuffled / lookup | **19.18** | 57.43 | 47.36 |
-| shuffled / union | **429.61** | 894.56 | 864.65 |
-| shuffled / subset | **0.78** | 166.39 | 75.08 |
-| random 0..2⁶³ / insertion | 720.80 | 68.04 | 74.41 |
-| random 0..2⁶³ / lookup | 1142.31 | 252.76 | 321.21 |
-| random 0..2⁶³ / union | 1129.48 | 909.63 | 707.17 |
-| random 0..2⁶³ / subset | 2212.61 | **155.90** | 237.26 |
+| sequential / insertion | 93.82 | **19.95** | 27.20 |
+| sequential / lookup | 17.56 | **12.71** | 30.06 |
+| sequential / union | **27.90** | 603.42 | 537.00 |
+| sequential / subset | **1.26** | 34.39 | 64.03 |
+| shuffled / insertion | 154.34 | **41.16** | 47.36 |
+| shuffled / lookup | **19.25** | 59.97 | 38.21 |
+| shuffled / union | **467.28** | 873.92 | 855.04 |
+| shuffled / subset | **0.80** | 163.48 | 73.07 |
+| random 0..2⁶³ / insertion | 450.58 | 66.77 | **65.82** |
+| random 0..2⁶³ / lookup | 411.48 | **232.53** | 310.06 |
+| random 0..2⁶³ / union | 821.78 | 896.75 | **698.78** |
+| random 0..2⁶³ / subset | 236.96 | **150.20** | 235.62 |
 
 **Memory — resident-set growth (KB)**
 
 | Domain / operation | `NatSet` | `Std.HashSet` | `PersistentHashSet` |
 | --- | ---: | ---: | ---: |
-| sequential / insertion | **64** | 28 784 | 4 256 |
+| sequential / insertion | **96** | 28 784 | 4 256 |
 | sequential / lookup | 64 | 64 | 32 |
-| sequential / union | **39 232** | 89 872 | 74 928 |
+| sequential / union | **41 376** | 89 856 | 74 928 |
 | sequential / subset | 64 | 32 | 64 |
-| shuffled / insertion | **64** | 28 784 | 5 680 |
+| shuffled / insertion | **112** | 28 784 | 5 680 |
 | shuffled / lookup | 64 | 64 | 64 |
-| shuffled / union | 76 384 | 89 840 | 70 320 |
-| shuffled / subset | 0 | 32 | 64 |
-| random 0..2⁶³ / insertion | 473 616 | 28 784 | 30 336 |
-| random 0..2⁶³ / lookup | 80 | 112 | 64 |
-| random 0..2⁶³ / union | 74 944 | 90 352 | 101 808 |
-| random 0..2⁶³ / subset | 48 | 32 | 32 |
+| shuffled / union | 120 672 | 89 904 | **70 304** |
+| shuffled / subset | 64 | 32 | 64 |
+| random 0..2⁶³ / insertion | 79 312 | **28 784** | 30 336 |
+| random 0..2⁶³ / lookup | 96 | 112 | 64 |
+| random 0..2⁶³ / union | 122 528 | **90 368** | 101 808 |
+| random 0..2⁶³ / subset | 32 | 32 | 32 |
 
-Reading it: `NatSet` is strongest on **dense, "small" key domains** (`sequential`/`shuffled`) — it
-wins `union` outright and inserts with negligible resident growth, since dense keys share trie
-spines and the leaves carry no boxed payload. `subset` makes the gap starkest: on dense keys it
-finishes in **under a millisecond** (35–200× ahead), because equal tries compare their present-masks
-in lockstep with no per-element hashing, whereas the hash structures must probe every element. On
-**sparse `random` keys** it pays for the deep, mostly one-child spines — slower lookups, a ~2.2 s
-`subset` walk, heavier insertion memory — where the hash structures hold up better. (`subset`, like
-`lookup`, is read-only, so its resident growth is noise across the board.) Numbers will vary run to
-run and across machines.
+Reading it: `NatSet` wins `union` and `subset` across **every** key domain — often by an order of
+magnitude — because equal/aligned tries merge and compare their present-masks in lockstep with no
+per-element hashing, whereas the hash structures must rebuild or probe every element. On **dense,
+"small" key domains** it also inserts with negligible resident growth (the leaves carry no boxed
+payload). On **sparse `random` keys**, path compression collapses the single-child runs that a
+height-indexed trie would build — so `subset` finishes in ~0.24 s (was ~2.2 s before compression),
+lookups are competitive, and insertion memory dropped ~6×; the hash structures still lead on raw
+random insert/lookup throughput and on peak `union` memory. (`subset`/`lookup` are read-only, so
+their resident growth is noise.) Numbers vary run to run and across machines.
 
 ## Relation to Gödel hashing
 
@@ -214,11 +217,13 @@ real `NatMap`s over arbitrary values, `O(key length)` incremental updates, and l
 
 ## Status
 
-The trie core, `NatSet`/`NatMap`, their lattice operations, and the laws above are implemented and
-proven. The derived `IndexedMap`/`IndexedSet` collections (for any type with an injection to `Nat`)
-sketched in [`docs/DESIGN.md`](docs/DESIGN.md) are a planned addition. See the design doc's
-"Future improvements" for the known memory-locality trade-off (two pointer hops per level, pending a
-safe dependent-array representation).
+The path-compressed trie core, `NatSet`/`NatMap`, their lattice operations, and the laws above are
+implemented and proven (no `sorry`, no `partial` in the verified library). The core representation
+was migrated from a height-indexed GADT trie to the path-compressed `PTree` while keeping every
+theorem statement byte-identical; see [`docs/DESIGN.md`](docs/DESIGN.md) for the measured speedups.
+The derived `IndexedMap`/`IndexedSet` collections (for any type with an injection to `Nat`) sketched
+in the design doc are a planned addition, as is the `union`-throughput / memory-locality work under
+its "Future improvements".
 
 ## License
 

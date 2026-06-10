@@ -2,7 +2,7 @@
 -- operations, backed by a HAMT-style 32-ary trie.
 import NatCol.Bits
 import NatCol.Node
-import NatCol.Tree
+import NatCol.PTree
 import NatCol.Collection
 import NatCol.Set
 import NatCol.Map

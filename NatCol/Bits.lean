@@ -188,6 +188,12 @@ theorem testBit_of_clearLowest (m s : UInt32) (h : testBit (clearLowest m) s = t
     testBit m s = true := by
   unfold testBit clearLowest at *; bv_decide
 
+/-- Clearing the lowest set bit lowers the population count by one — the per-step size fact of the
+present-slot fold (`mergeKids` appends one child per cleared bit). -/
+theorem popCount_clearLowest (m : UInt32) (hm : m ≠ 0) :
+    popCount (clearLowest m) + 1 = popCount m :=
+  (popCount_eq_succ_of_aux (by unfold popCountAux clearLowest at *; bv_decide)).symm
+
 /-- Setting an unset bit raises the population count by one. -/
 theorem popCount_setBit (m i : UInt32) (h : testBit m i = false) :
     popCount (setBit m i) = popCount m + 1 :=
@@ -210,6 +216,19 @@ theorem popCount_clearBit (m i : UInt32) (h : testBit m i = true) :
     popCount (clearBit m i) + 1 = popCount m :=
   (popCount_eq_succ_of_aux (by unfold popCountAux clearBit testBit at *; bv_decide)).symm
 
+/-- A nonzero mask has at least one set slot. -/
+theorem one_le_popCount_of_ne_zero (m : UInt32) (h : m ≠ 0) : 1 ≤ popCount m := by
+  have key : (1 : UInt32) ≤ popCountAux m := by revert h; unfold popCountAux; bv_decide
+  show (1 : Nat) ≤ (popCountAux m).toNat
+  exact UInt32.le_iff_toNat_le.mp key
+
+/-- Population count is monotone under `|||`: a union of masks covers at least one operand. Bounds
+the merged child count for the union of two `bin`s below by either side's (so it stays `≥ 2`). -/
+theorem popCount_or_left (a b : UInt32) : popCount a ≤ popCount (a ||| b) := by
+  have key : popCountAux a ≤ popCountAux (a ||| b) := by unfold popCountAux; bv_decide
+  show (popCountAux a).toNat ≤ (popCountAux (a ||| b)).toNat
+  exact UInt32.le_iff_toNat_le.mp key
+
 /-- The compact index of any slot is at most the node's size. -/
 theorem arrayIndex_le (m i : UInt32) : arrayIndex m i ≤ popCount m := by
   have key : popCountAux (m &&& lowerMask i) ≤ popCountAux m := by
@@ -226,6 +245,23 @@ theorem arrayIndex_lt (m i : UInt32) (h : testBit m i = true) :
   show (popCountAux (m &&& lowerMask i)).toNat < (popCountAux m).toNat
   exact UInt32.lt_iff_toNat_lt.mp key
 
+/-- The lowest set bit sits at compact index `0` (nothing is below it). The base of the
+present-slot fold's indexing: the first child appended lands at position `0`. -/
+theorem arrayIndex_lowestSetIdx (m : UInt32) (hm : m ≠ 0) :
+    arrayIndex m (lowestSetIdx m) = 0 := by
+  have key : popCountAux (m &&& lowerMask (lowestSetIdx m)) = 0 := by
+    unfold lowestSetIdx lowerMask popCountAux at *; bv_decide
+  show (popCountAux (m &&& lowerMask (lowestSetIdx m))).toNat = 0
+  rw [key]; rfl
+
+/-- Clearing the lowest set bit drops every other set slot's compact index by one (the just-removed
+lowest bit no longer counts below it). The fold's inductive index shift. -/
+theorem arrayIndex_clearLowest_of_ne (m c : UInt32) (hc : c < 32)
+    (htb : testBit m c = true) (hne : c ≠ lowestSetIdx m) :
+    arrayIndex m c = arrayIndex (clearLowest m) c + 1 :=
+  popCount_eq_succ_of_aux
+    (by unfold lowestSetIdx clearLowest lowerMask testBit popCountAux at *; bv_decide)
+
 /-- No bit of `0` is set. -/
 theorem testBit_zero (i : UInt32) : testBit 0 i = false := by unfold testBit; bv_decide
 
@@ -238,6 +274,10 @@ about `setBit` and that bound feed the `Node`/`Tree`/`Collection` proofs. -/
 theorem two_le_of_ne (m : UInt32) (h0 : m ≠ 0) (h1 : m ≠ 1) : 2 ≤ m := by bv_decide
 
 theorem setBit_ne_zero (m i : UInt32) : setBit m i ≠ 0 := by unfold setBit; bv_decide
+
+/-- A `|||` with a nonzero operand is nonzero — the merged `tip` of a union keeps a set bit. -/
+theorem or_ne_zero_left (a b : UInt32) (h : a ≠ 0) : (a ||| b) ≠ 0 := by
+  intro h0; apply h; bv_decide
 
 /-- Setting an already-set bit is a no-op (so `insert` leaves the mask unchanged when the
 slot is already present). -/
@@ -332,6 +372,43 @@ theorem testBit_or (a b i : UInt32) : testBit (a ||| b) i = (testBit a i || test
 
 theorem testBit_and (a b i : UInt32) : testBit (a &&& b) i = (testBit a i && testBit b i) := by
   unfold testBit; bv_decide
+
+/-! ### Lemmas backing the intersection re-compression (`compactify`/`finalize`)
+
+These feed `PTree`'s `meet`: after an intersection thins a branch, `compactify` drops the empty
+children lowest-first and recomputes the surviving mask, which needs that the running accumulator's
+bits stay strictly below the unprocessed mask (`lowestSetIdx` is the minimum) and that a mask whose
+bits all sit below a slot indexes its full population there. -/
+
+/-- `lowestSetIdx` is the *minimum* set slot: every present bit sits at or above it. Proved via the
+strict monotonicity of the compact index — a bit below the lowest would index before slot 0. -/
+theorem lowestSetIdx_le_of_testBit (m c : UInt32) (hc : c < 32) (h : testBit m c = true) :
+    lowestSetIdx m ≤ c := by
+  have hm : m ≠ 0 := by intro h0; rw [h0, testBit_zero] at h; exact absurd h (by decide)
+  rcases Nat.lt_or_ge c.toNat (lowestSetIdx m).toNat with hlt | hge
+  · exfalso
+    have hlt' : c < lowestSetIdx m := UInt32.lt_iff_toNat_lt.mpr hlt
+    have hcontra := arrayIndex_lt_of_lt m c (lowestSetIdx m) hc (lowestSetIdx_lt m hm) h hlt'
+    rw [arrayIndex_lowestSetIdx m hm] at hcontra
+    omega
+  · exact UInt32.le_iff_toNat_le.mpr hge
+
+/-- A slot below `i` is set in the low-mask `lowerMask i` (for in-range `i`). -/
+theorem testBit_lowerMask_lt (i c : UInt32) (hi : i < 32) (hlt : c < i) :
+    testBit (lowerMask i) c = true := by
+  unfold testBit lowerMask; bv_decide
+
+/-- When every set bit of `m` lies strictly below slot `i`, `arrayIndex m i` counts all of `m`. -/
+theorem arrayIndex_eq_popCount_of_below (m i : UInt32) (hi : i < 32)
+    (h : ∀ c, c < 32 → testBit m c = true → c < i) : arrayIndex m i = popCount m := by
+  have hand : m &&& lowerMask i = m := by
+    apply eq_of_testBit_eq
+    intro c hc
+    rw [testBit_and]
+    by_cases hb : testBit m c = true
+    · rw [hb, testBit_lowerMask_lt i c hi (h c hc hb)]; rfl
+    · simp only [Bool.not_eq_true] at hb; rw [hb]; rfl
+  unfold arrayIndex; rw [hand]
 
 /-- A mask that is height-minimal (`2 ≤ m`) has a set bit above slot 0 — that high bit is what
 forces the height in the canonical-shape invariant. The witness is the lowest set bit of `m`
