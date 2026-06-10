@@ -60,7 +60,7 @@ instance : LeafOps UInt32 Unit where
     bv_decide
   get?_empty i := by simp [testBit_zero]
   get?_meet _ a b i _ := by
-    have htb : testBit (a &&& b) i = (testBit a i && testBit b i) := by unfold testBit; bv_decide
+    have htb : testBit (a &&& b) i = (testBit a i && testBit b i) := testBit_and a b i
     show (if testBit (a &&& b) i then some () else none)
         = optVmeet _ (if testBit a i then some () else none) (if testBit b i then some () else none)
     rw [htb]
@@ -86,17 +86,13 @@ instance : LeafOps UInt32 Unit where
     have hi' := h i hi
     by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;> simp_all
   exists_get?_of_ne_empty u h := by
-    have hu : u ≠ 0 := beq_eq_false_iff_ne.mp h
-    rcases Classical.em (∃ i, i < 32 ∧ testBit u i = true) with ⟨i, hi, hb⟩ | hno
-    · exact ⟨i, hi, by simp [hb]⟩
-    · exfalso
-      apply hu
-      apply eq_of_testBit_eq
-      intro i hi
-      rw [testBit_zero]
-      cases hb : testBit u i with
-      | false => rfl
-      | true => exact absurd ⟨i, hi, hb⟩ hno
+    refine Classical.byContradiction fun hno => beq_eq_false_iff_ne.mp h ?_
+    apply eq_of_testBit_eq
+    intro i hi
+    rw [testBit_zero]
+    cases hb : testBit u i with
+    | false => rfl
+    | true => exact absurd ⟨i, hi, by simp [hb]⟩ hno
   get?_restricts rel hrefl a b := by
     show ((a &&& b) == a) = true ↔
       ∀ i, i < 32 → optRel rel (if testBit a i then some () else none)

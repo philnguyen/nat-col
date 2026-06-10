@@ -162,12 +162,12 @@ popcount. Equal to `insert i a` (`insertChild_eq_insert`). -/
 (`lowestSetIdx`/`clearLowest`), reading the child with `get?`/`Option.elim` (a function application,
 as `restrictsLoop` feeds `get?` into `optRel`). Only the `popCount m` present slots are visited —
 no full 0..31 scan. Terminates because `clearLowest` strictly decreases the mask. -/
-@[specialize] def foldLoop {β : Type v} (f : β → UInt32 → α → β) (n : Node α) (m : UInt32) (acc : β) : β :=
+@[specialize] private def foldLoop {β : Type v} (f : β → UInt32 → α → β) (n : Node α) (m : UInt32) (acc : β) : β :=
   if _hm : m = 0 then acc
   else foldLoop f n (clearLowest m)
         ((n.get? (lowestSetIdx m)).elim acc (fun a => f acc (lowestSetIdx m) a))
 termination_by m.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
+decreasing_by exact toNat_clearLowest_lt m _hm
 
 /-- Fold over present slots in ascending slot order. -/
 @[specialize] def fold {β : Type v} (f : β → UInt32 → α → β) (init : β) (n : Node α) : β :=
@@ -175,14 +175,14 @@ decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
 
 /-- Monadic `foldLoop`: iterate `f acc i child` over the present slots of `n` (those of `mask`),
 lowest first, threading effects through `m`. The monadic companion of `foldLoop`. -/
-@[specialize] def foldMLoop {β : Type v} {m : Type v → Type w} [Monad m] (f : β → UInt32 → α → m β)
+@[specialize] private def foldMLoop {β : Type v} {m : Type v → Type w} [Monad m] (f : β → UInt32 → α → m β)
     (n : Node α) (mask : UInt32) (acc : β) : m β :=
   if _hm : mask = 0 then pure acc
   else do
     let acc' ← (n.get? (lowestSetIdx mask)).elim (pure acc) (fun a => f acc (lowestSetIdx mask) a)
     foldMLoop f n (clearLowest mask) acc'
 termination_by mask.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt mask _hm)
+decreasing_by exact toNat_clearLowest_lt mask _hm
 
 /-- Monadic fold over present slots in ascending slot order, exposing the slot index. The monadic
 companion of `fold` (which is the `m := Id` instance). -/
@@ -193,12 +193,12 @@ companion of `fold` (which is the `m := Id` instance). -/
 /-- `all` driver: `&&`-accumulate `p` over the present slots of `n` (those of `m`), lowest first.
 `&&` short-circuits the per-slot `p` once `acc` is `false`, and only the `popCount m` present slots
 are visited — no full 0..31 scan (the `restrictsLoop` shape). -/
-@[specialize] def allLoop (p : UInt32 → α → Bool) (n : Node α) (m : UInt32) (acc : Bool) : Bool :=
+@[specialize] private def allLoop (p : UInt32 → α → Bool) (n : Node α) (m : UInt32) (acc : Bool) : Bool :=
   if _hm : m = 0 then acc
   else allLoop p n (clearLowest m)
         (acc && (n.get? (lowestSetIdx m)).elim true (fun a => p (lowestSetIdx m) a))
 termination_by m.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
+decreasing_by exact toNat_clearLowest_lt m _hm
 
 /-- Whether every present slot (slot index + child) satisfies `p`. `&&`-folds `p` over the present
 slots, short-circuiting the predicate once a slot fails. -/
@@ -207,12 +207,12 @@ slots, short-circuiting the predicate once a slot fails. -/
 
 /-- `any` driver: `||`-accumulate `p` over the present slots of `n` (those of `m`), lowest first.
 `||` short-circuits the per-slot `p` once `acc` is `true`; only present slots are visited. -/
-@[specialize] def anyLoop (p : UInt32 → α → Bool) (n : Node α) (m : UInt32) (acc : Bool) : Bool :=
+@[specialize] private def anyLoop (p : UInt32 → α → Bool) (n : Node α) (m : UInt32) (acc : Bool) : Bool :=
   if _hm : m = 0 then acc
   else anyLoop p n (clearLowest m)
         (acc || (n.get? (lowestSetIdx m)).elim false (fun a => p (lowestSetIdx m) a))
 termination_by m.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
+decreasing_by exact toNat_clearLowest_lt m _hm
 
 /-- Whether some present slot satisfies `p`. `||`-folds `p` over the present slots, short-circuiting
 the predicate once a slot holds. The `any` companion of `all`. -/
@@ -222,14 +222,14 @@ the predicate once a slot holds. The `any` companion of `all`. -/
 /-- Monadic `all` driver: scan the present slots of `n` (those of `mask`), lowest first, running
 `p` on each child and short-circuiting (returning `pure false` without recursing) at the first slot
 where `p` returns `false` — later slots are then neither visited nor run. -/
-@[specialize] def allMLoop {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α)
+@[specialize] private def allMLoop {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α)
     (mask : UInt32) : m Bool :=
   if _hm : mask = 0 then pure true
   else do
     let keep ← (n.get? (lowestSetIdx mask)).elim (pure true) (fun a => p (lowestSetIdx mask) a)
     if keep then allMLoop p n (clearLowest mask) else pure false
 termination_by mask.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt mask _hm)
+decreasing_by exact toNat_clearLowest_lt mask _hm
 
 /-- Monadic `all`: whether every present slot satisfies the monadic predicate `p`, threading `p`'s
 effects through `m` in ascending slot order and short-circuiting at the first slot where `p` returns
@@ -241,14 +241,14 @@ effects through `m` in ascending slot order and short-circuiting at the first sl
 /-- Monadic `any` driver: scan the present slots of `n` (those of `mask`), lowest first, running
 `p` on each child and short-circuiting (returning `pure true` without recursing) at the first slot
 where `p` returns `true`. -/
-@[specialize] def anyMLoop {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α)
+@[specialize] private def anyMLoop {m : Type → Type w} [Monad m] (p : UInt32 → α → m Bool) (n : Node α)
     (mask : UInt32) : m Bool :=
   if _hm : mask = 0 then pure false
   else do
     let found ← (n.get? (lowestSetIdx mask)).elim (pure false) (fun a => p (lowestSetIdx mask) a)
     if found then pure true else anyMLoop p n (clearLowest mask)
 termination_by mask.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt mask _hm)
+decreasing_by exact toNat_clearLowest_lt mask _hm
 
 /-- Monadic `any`: whether some present slot satisfies the monadic predicate `p`, short-circuiting
 at the first slot where it returns `true`. The `any` companion of `allM`. -/
@@ -267,16 +267,16 @@ it is consumed (`clearLowest`). Only the `popCount m` present slots are visited 
 scan. Terminates because `clearLowest` strictly decreases the mask (`clearLowest_lt`). The driver
 for `join`/`meet`: `m` is the union/intersection of the operands' masks, so a slot absent on both
 sides is never touched. -/
-@[specialize] def mergeLoop (step : Node α → UInt32 → Node α) (m : UInt32) (acc : Node α) : Node α :=
+@[specialize] private def mergeLoop (step : Node α → UInt32 → Node α) (m : UInt32) (acc : Node α) : Node α :=
   if _hm : m = 0 then acc
   else mergeLoop step (clearLowest m) (step acc (lowestSetIdx m))
 termination_by m.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
+decreasing_by exact toNat_clearLowest_lt m _hm
 
 /-- One `join` slot step: merge slot `i` of `a` and `b` into `acc`. Present on both ↦ `combine`
 (a `none` result prunes the slot); present on one ↦ copy that child; absent on both ↦ leave `acc`
 unchanged. The `insert` appends at the end because `mergeLoop` visits slots in ascending order. -/
-@[specialize] def joinStep (combine : α → α → Option α) (a b acc : Node α) (i : UInt32) : Node α :=
+@[specialize] private def joinStep (combine : α → α → Option α) (a b acc : Node α) (i : UInt32) : Node α :=
   match ha : testBit a.positionsMask i, hb : testBit b.positionsMask i with
   | true, true =>
     match combine (a.get i ha) (b.get i hb) with
@@ -297,7 +297,7 @@ so the result is compact by construction. -/
 
 /-- One `meet` slot step: only slots present on *both* sides survive (merged with `combine`, a
 `none` result pruning); every other case drops the slot, leaving `acc`. -/
-@[specialize] def meetStep (combine : α → α → Option α) (a b acc : Node α) (i : UInt32) : Node α :=
+@[specialize] private def meetStep (combine : α → α → Option α) (a b acc : Node α) (i : UInt32) : Node α :=
   match ha : testBit a.positionsMask i, hb : testBit b.positionsMask i with
   | true, true =>
     match combine (a.get i ha) (b.get i hb) with
@@ -318,7 +318,7 @@ slots are visited; pre-sized to that mask's slot count, so the result is compact
 /-- One `filterMap` slot step: keep slot `i` of `n` when `f` maps its child to `some`, dropping it
 on `none` or when the slot is absent. The single-operand analogue of `meetStep` (it reads the
 original `n`, not `acc`); the `insert` appends because `mergeLoop` visits slots in ascending order. -/
-@[specialize] def filterMapStep (f : UInt32 → α → Option α) (n acc : Node α) (i : UInt32) : Node α :=
+@[specialize] private def filterMapStep (f : UInt32 → α → Option α) (n acc : Node α) (i : UInt32) : Node α :=
   match h : testBit n.positionsMask i with
   | true =>
     match f i (n.get i h) with
@@ -340,12 +340,12 @@ def filterMap (f : UInt32 → α → Option α) (n : Node α) : Node α :=
 only the `popCount m` present slots are visited — no full 0..31 scan. Terminates because
 `clearLowest` strictly decreases the mask. The driver for `restricts`: `m` is the left operand's
 mask, so a slot absent on the left (where `restricts` is vacuously fine) is never touched. -/
-@[specialize] def restrictsLoop (rel : α → α → Bool) (a b : Node α) (m : UInt32) (acc : Bool) : Bool :=
+@[specialize] private def restrictsLoop (rel : α → α → Bool) (a b : Node α) (m : UInt32) (acc : Bool) : Bool :=
   if _hm : m = 0 then acc
   else restrictsLoop rel a b (clearLowest m)
         (acc && optRel rel (a.get? (lowestSetIdx m)) (b.get? (lowestSetIdx m)))
 termination_by m.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m _hm)
+decreasing_by exact toNat_clearLowest_lt m _hm
 
 /-- `a` restricts `b`: every slot of `a` is present in `b`, and `rel` holds on every shared child.
 The mask guard `a.mask &&& b.mask = a.mask` is the O(1) "domain subset" fast reject; the loop then
@@ -466,6 +466,25 @@ namespace Node
 theorem get_mem (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) :
     n.get i h ∈ n.elements := Array.getElem_mem _
 
+/-! ### How `get?` reads a slot
+
+The two reductions of `get?`'s dependent `if`, plus the merge accumulator's reading. Nearly
+every proof below probes nodes only through `get?`, so these are the workhorse rewrites. -/
+
+/-- A present slot reads its `get` value through `get?`. -/
+private theorem get?_eq_some_get (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) :
+    n.get? i = some (n.get i h) := by rw [Node.get?, dif_pos h]
+
+/-- An absent slot reads `none`. -/
+private theorem get?_eq_none_of_testBit (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = false) :
+    n.get? i = none := by rw [Node.get?, dif_neg (by rw [h]; simp)]
+
+/-- The pre-sized accumulator `join`/`meet` start from reads `none` everywhere — its capacity is
+only an allocation hint, so it is `empty` as a value. -/
+private theorem get?_emptyWithCapacity (c : Nat) (i : UInt32) :
+    (Node.emptyWithCapacity c : Node α).get? i = none :=
+  get?_eq_none_of_testBit _ i (testBit_zero i)
+
 /-! ### Lemmas backing the `NatCollection` canonical-shape invariant
 
 These support the collection layer's "no empty subtree" proof (`Tree.Full`). `mem_alter`
@@ -485,7 +504,7 @@ theorem mem_alter {α} (n : Node α) (i : UInt32) (f : Option α → Option α) 
   unfold Node.alter at hx
   split at hx
   · rename_i htb
-    rw [show n.get? i = some (n.get i htb) from by rw [Node.get?, dif_pos htb]]
+    rw [get?_eq_some_get n i htb]
     split at hx
     · rename_i a hfa
       simp only at hx
@@ -500,7 +519,7 @@ theorem mem_alter {α} (n : Node α) (i : UInt32) (f : Option α → Option α) 
             = n.elements.eraseIdx (arrayIndex n.positionsMask i) hlt from dif_pos hlt] at hx
       exact Or.inl (Array.mem_of_mem_eraseIdx hx)
   · rename_i htb
-    rw [show n.get? i = none from by rw [Node.get?, dif_neg (by simp [htb])]]
+    rw [get?_eq_none_of_testBit n i htb]
     split at hx
     · rename_i a hfa
       simp only at hx
@@ -534,7 +553,7 @@ private theorem mergeLoop_forall {α} {P : α → Prop} {step : Node α → UInt
     exact mergeLoop_forall hstep (clearLowest m) (step acc (lowestSetIdx m))
       (hstep acc (lowestSetIdx m) hacc)
 termination_by m.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m hm)
+decreasing_by exact toNat_clearLowest_lt m hm
 
 /-- Every child of a `join` result satisfies `P`, provided both operands' children and all
 `combine` outputs do. -/
@@ -659,12 +678,12 @@ theorem positionsMask_alter_of_isSome {α} (n : Node α) (i : UInt32) (f : Optio
   unfold Node.alter
   split
   · rename_i htb
-    rw [show n.get? i = some (n.get i htb) from by rw [Node.get?, dif_pos htb]] at hf
+    rw [get?_eq_some_get n i htb] at hf
     split
     · simp only; exact (setBit_eq_of_testBit n.positionsMask i htb).symm
     · rename_i hfn; rw [hfn] at hf; simp at hf
   · rename_i htb
-    rw [show n.get? i = none from by rw [Node.get?, dif_neg (by simp [htb])]] at hf
+    rw [get?_eq_none_of_testBit n i htb] at hf
     split
     · rfl
     · rename_i hfn; rw [hfn] at hf; simp at hf
@@ -728,9 +747,8 @@ These support the `get?`-based denotational semantics the `NatCollection` lattic
 value-level merge `optJoin`; `Node.ext` recovers a node from its `get?`. Slot indices are always
 `< 32` here (they come from 5-bit `chunk`s), matching `UInt32`'s mod-32 shift semantics. -/
 
-@[simp] theorem get?_empty (i : UInt32) : (Node.empty : Node α).get? i = none := by
-  unfold Node.get?
-  rw [dif_neg (by simp [Node.empty, testBit_zero])]
+@[simp] theorem get?_empty (i : UInt32) : (Node.empty : Node α).get? i = none :=
+  get?_eq_none_of_testBit _ i (testBit_zero i)
 
 /-- A slot is present in the mask exactly when `get?` reports a value. -/
 theorem testBit_eq_isSome_get? (n : Node α) (i : UInt32) :
@@ -748,17 +766,15 @@ theorem isEmpty_eq_false_of_get? (n : Node α) (s : UInt32) (h : (n.get? s).isSo
 /-- A non-empty node has a present slot (`< 32`). -/
 theorem exists_get?_of_isEmpty_false (n : Node α) (h : Node.isEmpty n = false) :
     ∃ i, i < 32 ∧ (n.get? i).isSome := by
-  rcases Classical.em (∃ i, i < 32 ∧ (n.get? i).isSome) with hyes | hno
-  · exact hyes
-  · exfalso
-    have hzero : n.positionsMask = 0 := by
-      apply eq_of_testBit_eq
-      intro i hi
-      rw [testBit_zero, testBit_eq_isSome_get? n i]
-      cases hb : (n.get? i).isSome with
-      | false => rfl
-      | true => exact absurd ⟨i, hi, hb⟩ hno
-    simp [Node.isEmpty, hzero] at h
+  refine Classical.byContradiction fun hno => ?_
+  have hzero : n.positionsMask = 0 := by
+    apply eq_of_testBit_eq
+    intro i hi
+    rw [testBit_zero, testBit_eq_isSome_get? n i]
+    cases hb : (n.get? i).isSome with
+    | false => rfl
+    | true => exact absurd ⟨i, hi, hb⟩ hno
+  simp [Node.isEmpty, hzero] at h
 
 /-- `none.elim` reduces to its default. Stated as a generic lemma (proved once, on abstract
 arguments) so `elements_eq_extract` can `rw` with it instead of forcing the kernel to reduce
@@ -813,13 +829,11 @@ private theorem elements_eq_extract (n : Node α) :
       by_cases htb : testBit n.positionsMask (UInt32.ofNat k) = true
       · have hAlt : arrayIndex n.positionsMask (UInt32.ofNat k) < n.elements.size := by
           rw [n.elements_compact]; exact arrayIndex_lt _ _ htb
-        rw [show n.get? (UInt32.ofNat k) = some (n.get (UInt32.ofNat k) htb) from by
-              unfold Node.get?; rw [dif_pos htb],
-            optElim_some, if_pos htb,
+        rw [get?_eq_some_get n (UInt32.ofNat k) htb, optElim_some, if_pos htb,
             show n.get (UInt32.ofNat k) htb
               = n.elements[arrayIndex n.positionsMask (UInt32.ofNat k)]'hAlt from rfl,
             Array.push_extract_getElem hAlt, Nat.min_eq_left (Nat.zero_le _)]
-      · rw [show n.get? (UInt32.ofNat k) = none from by unfold Node.get?; rw [dif_neg htb],
+      · rw [get?_eq_none_of_testBit n (UInt32.ofNat k) (by simpa using htb),
             optElim_none, if_neg htb, Nat.add_zero]
   show n.elements
       = Nat.fold (31 + 1) (fun s _ acc => (n.get? (UInt32.ofNat s)).elim acc (fun c => acc.push c)) #[]
@@ -831,9 +845,7 @@ private theorem elements_eq_extract (n : Node α) :
       rw [n.elements_compact]
       show popCount (n.positionsMask &&& lowerMask (UInt32.ofNat 31)) + 1 = popCount n.positionsMask
       rw [h31eq, popCount_split31 n.positionsMask, if_pos (by rw [← h31eq]; exact htb)]
-    rw [show n.get? (UInt32.ofNat 31) = some (n.get (UInt32.ofNat 31) htb) from by
-          unfold Node.get?; rw [dif_pos htb],
-        optElim_some,
+    rw [get?_eq_some_get n (UInt32.ofNat 31) htb, optElim_some,
         show n.get (UInt32.ofNat 31) htb
           = n.elements[arrayIndex n.positionsMask (UInt32.ofNat 31)]'hAlt from rfl,
         Array.push_extract_getElem hAlt, Nat.min_eq_left (Nat.zero_le _), hsize,
@@ -842,7 +854,7 @@ private theorem elements_eq_extract (n : Node α) :
       rw [n.elements_compact]
       show popCount (n.positionsMask &&& lowerMask (UInt32.ofNat 31)) = popCount n.positionsMask
       rw [h31eq, popCount_split31 n.positionsMask, if_neg (by rw [← h31eq]; exact htb), Nat.add_zero]
-    rw [show n.get? (UInt32.ofNat 31) = none from by unfold Node.get?; rw [dif_neg htb],
+    rw [get?_eq_none_of_testBit n (UInt32.ofNat 31) (by simpa using htb),
         optElim_none, hsize, Array.extract_eq_self_of_le (Nat.le_refl _)]
 
 /-- Node extensionality: a node is determined by its `get?` at slots `0..31`. Masks agree by
@@ -864,14 +876,6 @@ theorem ext {a b : Node α} (h : ∀ i, i < 32 → a.get? i = b.get? i) : a = b 
   obtain ⟨ma, ea, hca⟩ := a; obtain ⟨mb, eb, hcb⟩ := b
   simp only at hmask hel
   subst hmask; subst hel; rfl
-
-/-- A present slot reads its `get` value through `get?`. -/
-private theorem get?_eq_some_get (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = true) :
-    n.get? i = some (n.get i h) := by rw [Node.get?, dif_pos h]
-
-/-- An absent slot reads `none`. -/
-private theorem get?_eq_none_of_testBit (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = false) :
-    n.get? i = none := by rw [Node.get?, dif_neg (by rw [h]; simp)]
 
 /-! ### `map`: the functorial action on values
 
@@ -944,25 +948,7 @@ private theorem restrictsLoop_iff {α} (rel : α → α → Bool) (a b : Node α
       refine ⟨by rw [Bool.and_eq_true]; exact ⟨hacc, hall (lowestSetIdx m) hi_lt hi_mem⟩,
               fun i hi hbit => hall i hi (testBit_of_clearLowest m i hbit)⟩
 termination_by m.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m hm)
-
-/-- `restricts` is reflexive when `rel` is reflexive on the stored children: every present slot of
-a node trivially coincides with itself, where `rel`-reflexivity discharges the `optRel` check; the
-mask-subset guard `m &&& m = m` never fires. -/
-theorem restricts_self {α} (rel : α → α → Bool) (n : Node α)
-    (hrel : ∀ x ∈ n.elements, rel x x = true) :
-    Node.restricts rel n n = true := by
-  unfold Node.restricts
-  split
-  · -- the mask-subset guard can't fire: `m &&& m = m`
-    rename_i hc
-    have : n.positionsMask &&& n.positionsMask = n.positionsMask := by bv_decide
-    simp_all
-  · rw [restrictsLoop_iff]
-    refine ⟨rfl, fun i _ hbit => ?_⟩
-    rw [get?_eq_some_get n i hbit]
-    show rel (n.get i hbit) (n.get i hbit) = true
-    exact hrel _ (n.get_mem i hbit)
+decreasing_by exact toNat_clearLowest_lt m hm
 
 /-- **`restricts` characterization**: a node restricts another exactly when, slot by slot, the
 left's value forces a related right value (`optRel`). The mask-subset guard is the "present on
@@ -1014,6 +1000,17 @@ theorem restricts_iff {α} (rel : α → α → Bool) (a b : Node α) :
         exact h
     · intro hO
       exact ⟨rfl, fun iu hiu _ => hO iu hiu⟩
+
+/-- `restricts` is reflexive when `rel` is reflexive on the stored children: slot by slot, a
+node trivially coincides with itself, and `rel`-reflexivity discharges the shared-value check. -/
+theorem restricts_self {α} (rel : α → α → Bool) (n : Node α)
+    (hrel : ∀ x ∈ n.elements, rel x x = true) :
+    Node.restricts rel n n = true := by
+  rw [restricts_iff]
+  intro i _
+  cases hg : n.get? i with
+  | none => rfl
+  | some x => exact hrel x (mem_of_get? n i x hg)
 
 /-- `get?` as a (proof-free) `getElem?` on the compact array. Lets `get?` lemmas reason about
 the underlying `Array` operations without carrying `Node.get`'s in-bounds proof. -/
@@ -1076,14 +1073,14 @@ theorem get?_insert (n : Node α) (i : UInt32) (v : α) (j : UInt32) (hi : i < 3
       by_cases hbj : testBit n.positionsMask j = true
       · rw [if_pos hbj, if_pos hbj]
         -- compare slot j against i to place the read in the shifted array
-        rcases lt_or_gt_uint32 (Ne.symm hji) with hgt | hlt
+        rcases UInt32.lt_or_lt_of_ne (Ne.symm hji) with hgt | hlt
         · -- i < j : the index shifts up by one
           rw [arrayIndex_setBit_of_gt _ _ _ hi hj hgt hpres, Array.getElem?_insertIdx hsize,
-              if_neg (by have := arrayIndex_le_of_le n.positionsMask i j hi hj (uint32_le_of_lt hgt); omega),
-              if_neg (by have := arrayIndex_le_of_le n.positionsMask i j hi hj (uint32_le_of_lt hgt); omega),
+              if_neg (by have := arrayIndex_le_of_le n.positionsMask i j hi hj (UInt32.le_of_lt hgt); omega),
+              if_neg (by have := arrayIndex_le_of_le n.positionsMask i j hi hj (UInt32.le_of_lt hgt); omega),
               Nat.add_sub_cancel]
         · -- j < i : the index is below the insertion point, unchanged
-          rw [arrayIndex_setBit_of_le _ _ _ hi hj (uint32_le_of_lt hlt),
+          rw [arrayIndex_setBit_of_le _ _ _ hi hj (UInt32.le_of_lt hlt),
               Array.getElem?_insertIdx_of_lt hsize (arrayIndex_lt_of_lt _ j i hj hi hbj hlt)]
       · rw [if_neg hbj, if_neg hbj]
 
@@ -1099,7 +1096,7 @@ private theorem get?_mergeLoop {α} {step : Node α → UInt32 → Node α} {G :
     (hfresh : ∀ s, s < 32 → testBit m s = true → acc.get? s = none) :
     (mergeLoop step m acc).get? j = if testBit m j = true then G j else acc.get? j := by
   by_cases hm : m = 0
-  · rw [mergeLoop, dif_pos hm, hm, testBit_zero, if_neg (show ¬((false : Bool) = true) from by decide)]
+  · rw [mergeLoop, dif_pos hm, hm, testBit_zero, if_neg Bool.false_ne_true]
   · rw [mergeLoop, dif_neg hm]
     have hi_lt : lowestSetIdx m < 32 := lowestSetIdx_lt m hm
     have hi_mem : testBit m (lowestSetIdx m) = true := testBit_lowestSetIdx m hm
@@ -1114,12 +1111,11 @@ private theorem get?_mergeLoop {α} {step : Node α → UInt32 → Node α} {G :
     by_cases hji : j = lowestSetIdx m
     · have hcl : testBit (clearLowest m) j = false := by rw [hji]; exact testBit_clearLowest_self m hm
       have hmm : testBit m j = true := by rw [hji]; exact hi_mem
-      rw [hcl, hmm, if_neg (show ¬((false : Bool) = true) from by decide),
-          if_pos (show ((true : Bool) = true) from rfl), hji]
+      rw [hcl, hmm, if_neg Bool.false_ne_true, if_pos rfl, hji]
       exact hself acc (lowestSetIdx m) hi_lt (hfresh (lowestSetIdx m) hi_lt hi_mem)
     · rw [testBit_clearLowest_of_ne m j hj hji, hother acc (lowestSetIdx m) j hi_lt hj hji]
 termination_by m.toNat
-decreasing_by exact UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m hm)
+decreasing_by exact toNat_clearLowest_lt m hm
 
 /-- `get?` of `joinStep` at the slot it visits: the merged value `optJoin combine (a? i) (b? i)`,
 provided the accumulator is fresh there. The `hself` obligation of `get?_mergeLoop` for `join`. -/
@@ -1129,23 +1125,19 @@ private theorem joinStep_get?_self (combine : α → α → Option α) (a b acc 
   unfold joinStep
   split
   · rename_i h1 h2
-    rw [show a.get? i = some (a.get i h1) from by unfold Node.get?; rw [dif_pos h1],
-        show b.get? i = some (b.get i h2) from by unfold Node.get?; rw [dif_pos h2]]
+    rw [get?_eq_some_get a i h1, get?_eq_some_get b i h2]
     simp only [optJoin]
     split
     · rename_i v hv; rw [get?_insert _ _ _ _ hi hi, if_pos rfl, hv]
     · rename_i hv; rw [hfresh, hv]
   · rename_i h1 h2
-    rw [show a.get? i = some (a.get i h1) from by unfold Node.get?; rw [dif_pos h1],
-        show b.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h2])]]
+    rw [get?_eq_some_get a i h1, get?_eq_none_of_testBit b i h2]
     simp only [optJoin]; rw [get?_insert _ _ _ _ hi hi, if_pos rfl]
   · rename_i h1 h2
-    rw [show a.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h1])],
-        show b.get? i = some (b.get i h2) from by unfold Node.get?; rw [dif_pos h2]]
+    rw [get?_eq_none_of_testBit a i h1, get?_eq_some_get b i h2]
     simp only [optJoin]; rw [get?_insert _ _ _ _ hi hi, if_pos rfl]
   · rename_i h1 h2
-    rw [show a.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h1])],
-        show b.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h2])]]
+    rw [get?_eq_none_of_testBit a i h1, get?_eq_none_of_testBit b i h2]
     simp only [optJoin]; exact hfresh
 
 /-- `get?` of `joinStep` off the slot it visits: unchanged from `acc`. The `hother` obligation of
@@ -1170,22 +1162,18 @@ the result: a slot in the union mask gets `optJoin`, and a slot outside it is `n
 theorem get?_join (combine : α → α → Option α) (a b : Node α) (j : UInt32) (hj : j < 32) :
     (Node.join combine a b).get? j = optJoin combine (a.get? j) (b.get? j) := by
   unfold Node.join
-  rw [get?_mergeLoop
-        (fun acc i hi hfr => joinStep_get?_self combine a b acc i hi hfr)
-        (fun acc i j' hi hj' hne => joinStep_get?_other combine a b acc i j' hi hj' hne)
+  rw [get?_mergeLoop (joinStep_get?_self combine a b) (joinStep_get?_other combine a b)
         (a.positionsMask ||| b.positionsMask)
         (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask))) j hj
-        (fun s _ _ => by
-          unfold Node.get?; rw [dif_neg (by simp [Node.emptyWithCapacity, testBit_zero])])]
+        (fun s _ _ => get?_emptyWithCapacity _ s)]
   by_cases hjm : testBit (a.positionsMask ||| b.positionsMask) j = true
   · rw [if_pos hjm]
   · rw [if_neg hjm]
     rw [testBit_or, Bool.or_eq_true, not_or] at hjm
     obtain ⟨hna, hnb⟩ := hjm
-    rw [show a.get? j = none from by unfold Node.get?; rw [dif_neg hna],
-        show b.get? j = none from by unfold Node.get?; rw [dif_neg hnb]]
-    show (Node.emptyWithCapacity (popCount (a.positionsMask ||| b.positionsMask)) : Node α).get? j = none
-    unfold Node.get?; rw [dif_neg (by simp [Node.emptyWithCapacity, testBit_zero])]
+    rw [get?_eq_none_of_testBit a j (by simpa using hna),
+        get?_eq_none_of_testBit b j (by simpa using hnb)]
+    exact get?_emptyWithCapacity _ j
 
 /-- Associativity of `Node.join` for a combine that merges associatively at every slot. Both sides
 agree at every `get?` slot: `get?_join` reduces each to the nested value-level merge `optJoin`, and
@@ -1207,14 +1195,9 @@ theorem isEmpty_join_left (c : α → α → α) (a b : Node α) (hne : Node.isE
     Node.isEmpty (Node.join (fun x y => some (c x y)) a b) = false := by
   obtain ⟨s, hs, hsome⟩ := exists_get?_of_isEmpty_false a hne
   obtain ⟨x, hx⟩ := Option.isSome_iff_exists.mp hsome
-  have htb : testBit (Node.join (fun x y => some (c x y)) a b).positionsMask s = true := by
-    rw [testBit_eq_isSome_get?, get?_join _ _ _ _ hs, hx]
-    cases b.get? s <;> simp [optJoin]
-  show ((Node.join (fun x y => some (c x y)) a b).positionsMask == 0) = false
-  apply beq_eq_false_iff_ne.mpr
-  intro h0
-  rw [h0, testBit_zero] at htb
-  exact absurd htb (by simp)
+  apply isEmpty_eq_false_of_get? _ s
+  rw [get?_join _ _ _ _ hs, hx]
+  cases b.get? s <;> simp [optJoin]
 
 /-- The value-level merge of a *total* (never-pruning) combine is associative when the combine is.
 The per-slot obligation of `join_assoc` for maps. -/
@@ -1241,20 +1224,19 @@ private theorem meetStep_get?_self (combine : α → α → Option α) (a b acc 
   unfold meetStep
   split
   · rename_i h1 h2
-    rw [show a.get? i = some (a.get i h1) from by unfold Node.get?; rw [dif_pos h1],
-        show b.get? i = some (b.get i h2) from by unfold Node.get?; rw [dif_pos h2]]
+    rw [get?_eq_some_get a i h1, get?_eq_some_get b i h2]
     simp only [optMeet]
     split
     · rename_i v hv; rw [get?_insert _ _ _ _ hi hi, if_pos rfl, hv]
     · rename_i hv; rw [hfresh, hv]
   · rename_i h1 h2
-    rw [show b.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h2])], hfresh]
+    rw [get?_eq_none_of_testBit b i h2, hfresh]
     cases a.get? i <;> rfl
   · rename_i h1 h2
-    rw [show a.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h1])], hfresh]
+    rw [get?_eq_none_of_testBit a i h1, hfresh]
     simp only [optMeet]
   · rename_i h1 h2
-    rw [show a.get? i = none from by unfold Node.get?; rw [dif_neg (by simp [h1])], hfresh]
+    rw [get?_eq_none_of_testBit a i h1, hfresh]
     simp only [optMeet]
 
 /-- `get?` of `meetStep` off the slot it visits: unchanged from `acc`. The `hother` obligation of
@@ -1278,25 +1260,15 @@ intersection mask is absent on at least one side, so `optMeet` there is `none`. 
 theorem get?_meet (combine : α → α → Option α) (a b : Node α) (j : UInt32) (hj : j < 32) :
     (Node.meet combine a b).get? j = optMeet combine (a.get? j) (b.get? j) := by
   unfold Node.meet
-  rw [get?_mergeLoop
-        (fun acc i hi hfr => meetStep_get?_self combine a b acc i hi hfr)
-        (fun acc i j' hi hj' hne => meetStep_get?_other combine a b acc i j' hi hj' hne)
+  rw [get?_mergeLoop (meetStep_get?_self combine a b) (meetStep_get?_other combine a b)
         (a.positionsMask &&& b.positionsMask)
         (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask))) j hj
-        (fun s _ _ => by
-          unfold Node.get?; rw [dif_neg (by simp [Node.emptyWithCapacity, testBit_zero])])]
+        (fun s _ _ => get?_emptyWithCapacity _ s)]
   by_cases hjm : testBit (a.positionsMask &&& b.positionsMask) j = true
   · rw [if_pos hjm]
-  · rw [if_neg hjm]
-    rw [show (Node.emptyWithCapacity (popCount (a.positionsMask &&& b.positionsMask)) : Node α).get? j
-          = none from by
-          unfold Node.get?; rw [dif_neg (by simp [Node.emptyWithCapacity, testBit_zero])]]
+  · rw [if_neg hjm, get?_emptyWithCapacity]
     have hfb : (testBit a.positionsMask j && testBit b.positionsMask j) = false := by
-      have : testBit (a.positionsMask &&& b.positionsMask) j = false := by
-        cases h : testBit (a.positionsMask &&& b.positionsMask) j with
-        | true => exact absurd h hjm
-        | false => rfl
-      rwa [testBit_and] at this
+      rw [← testBit_and]; simpa using hjm
     cases ha : a.get? j with
     | none => simp [optMeet]
     | some x =>
@@ -1368,9 +1340,9 @@ private theorem alter_congr (n : Node α) (i : UInt32) (f g : Option α → Opti
     (h : f (n.get? i) = g (n.get? i)) : n.alter i f = n.alter i g := by
   unfold Node.alter
   split <;> rename_i hp
-  · rw [show n.get? i = some (n.get i hp) from by unfold Node.get?; rw [dif_pos hp]] at h
+  · rw [get?_eq_some_get n i hp] at h
     rw [h]
-  · rw [show n.get? i = none from by unfold Node.get?; rw [dif_neg (by rw [hp]; simp)]] at h
+  · rw [get?_eq_none_of_testBit n i hp] at h
     rw [h]
 
 /-- When the callback yields a value, `alter` coincides with `insert` of that value (it only ever

@@ -153,8 +153,8 @@ shape is preserved, the canonical-shape invariant carries over by construction; 
 preservation lemmas live in the Implementation section because `NatMap.map` (a `def`) needs them.
 
 `treeMap` recurses by passing itself to `Node.map` (a higher-order call), so it compiles by
-well-founded recursion: its defining equations are propositional, unfolded below via
-`simp only [treeMap]`. -/
+well-founded recursion: its defining equations are propositional, named `treeMap_zero` /
+`treeMap_succ` below. -/
 
 /-- Map `f` over every value of a height-`h` map-trie, preserving the `Node` masks at every
 level. Only leaf values change type, from `α` to `β`. -/
@@ -163,16 +163,24 @@ private def treeMap {α β : Type u} (f : α → β) : (h : Nat) → Tree (Node 
   | _ + 1, node => node.map (treeMap f _)
 termination_by h => h
 
+/-- `treeMap`'s defining equation at a leaf. -/
+private theorem treeMap_zero {α β : Type u} (f : α → β) (leaf : Node α) :
+    treeMap f 0 leaf = leaf.map f := by simp only [treeMap]
+
+/-- `treeMap`'s defining equation at a node. -/
+private theorem treeMap_succ {α β : Type u} (f : α → β) (h : Nat) (node : Tree (Node α) (h + 1)) :
+    treeMap f (h + 1) node = node.map (treeMap f h) := by simp only [treeMap]
+
 /-- `treeMap` preserves emptiness at every height (each node's mask is untouched). -/
 private theorem treeMap_isEmpty {α β : Type u} (f : α → β) :
     (h : Nat) → (t : Tree (Node α) h) → Tree.isEmpty h (treeMap f h t) = Tree.isEmpty h t
   | 0, leaf => by
       show Node.isEmpty (treeMap f 0 leaf) = Node.isEmpty leaf
-      rw [show treeMap f 0 leaf = leaf.map f from by simp only [treeMap]]
+      rw [treeMap_zero]
       exact Node.isEmpty_map f leaf
   | h + 1, node => by
       show Node.isEmpty (treeMap f (h + 1) node) = Node.isEmpty node
-      rw [show treeMap f (h + 1) node = node.map (treeMap f h) from by simp only [treeMap]]
+      rw [treeMap_succ]
       exact Node.isEmpty_map (treeMap f h) node
 
 /-- `treeMap` preserves the "no empty subtree" invariant (`Full`): a mapped child is non-empty
@@ -182,7 +190,7 @@ private theorem treeMap_Full {α β : Type u} (f : α → β) :
   | 0, _, _ => trivial
   | h + 1, node, hfull => by
       intro c hc
-      rw [show treeMap f (h + 1) node = node.map (treeMap f h) from by simp only [treeMap]] at hc
+      rw [treeMap_succ] at hc
       simp only [Node.map, Array.mem_map] at hc
       obtain ⟨c0, hc0mem, rfl⟩ := hc
       obtain ⟨hne, hfc0⟩ := hfull c0 hc0mem
@@ -197,8 +205,7 @@ private theorem treeMap_TopProper {α β : Type u} (f : α → β) :
   | 0, _, _ => trivial
   | h + 1, node, htp => by
       show 2 ≤ (treeMap f (h + 1) node).positionsMask
-      rw [show treeMap f (h + 1) node = node.map (treeMap f h) from by simp only [treeMap],
-          Node.map_positionsMask]
+      rw [treeMap_succ, Node.map_positionsMask]
       exact htp
 
 /-- `treeMap` preserves the full canonical-shape invariant. -/
@@ -437,8 +444,7 @@ private theorem treeMap_id {α : Type u} : (h : Nat) → (t : Tree (Node α) h) 
   | 0, leaf => by simp only [treeMap]; exact Node.map_id leaf
   | h + 1, node => by
       have ih : treeMap id h = (id : Tree (Node α) h → Tree (Node α) h) := funext (treeMap_id h)
-      rw [show treeMap id (h + 1) node = node.map (treeMap id h) from by simp only [treeMap]]
-      rw [ih]
+      rw [treeMap_succ, ih]
       exact Node.map_id node
 termination_by h => h
 
@@ -449,10 +455,7 @@ private theorem treeMap_comp {α β γ : Type u} (f : α → β) (g : β → γ)
   | h + 1, node => by
       have ih : treeMap (g ∘ f) h = (fun t => treeMap g h (treeMap f h t)) :=
         funext (treeMap_comp f g h)
-      rw [show treeMap (g ∘ f) (h + 1) node = node.map (treeMap (g ∘ f) h) from by simp only [treeMap],
-          ih,
-          show treeMap g (h + 1) (treeMap f (h + 1) node)
-              = (node.map (treeMap f h)).map (treeMap g h) from by simp only [treeMap]]
+      rw [treeMap_succ, ih, treeMap_succ, treeMap_succ]
       exact Node.map_comp (treeMap f h) (treeMap g h) node
 termination_by h => h
 
@@ -464,8 +467,7 @@ private theorem treeMap_get? {α β : Type u} (f : α → β) :
       simp only [treeMap, Tree.get?]
       exact Node.get?_map f leaf (chunk k 0)
   | h + 1, node, k => by
-      rw [show treeMap f (h + 1) node = node.map (treeMap f h) from by simp only [treeMap],
-          Tree.get?_succ, Tree.get?_succ, Node.get?_map]
+      rw [treeMap_succ, Tree.get?_succ, Tree.get?_succ, Node.get?_map]
       cases Node.get? node (chunk k (h + 1)) with
       | none => rfl
       | some child =>

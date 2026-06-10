@@ -315,7 +315,7 @@ termination_by h => h
 
 /-- Collect `(key, value)` pairs into `acc`, ascending by key. `pfx` carries the key bits
 fixed by higher levels. -/
-@[specialize] def toArrayAux (pfx : Nat) : (h : Nat) → Tree L h → Array (Nat × V) → Array (Nat × V)
+@[specialize] private def toArrayAux (pfx : Nat) : (h : Nat) → Tree L h → Array (Nat × V) → Array (Nat × V)
   | 0, l, acc => (LeafOps.toArray l).foldl (fun acc (i, v) => acc.push (pfx ||| i.toNat, v)) acc
   | h + 1, n, acc =>
     n.fold (fun acc i child => toArrayAux (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child acc) acc
@@ -327,7 +327,7 @@ def toArray (h : Nat) (t : Tree L h) : Array (Nat × V) := toArrayAux 0 h t #[]
 /-- Fold `f` over present `(key, value)` pairs in ascending key order, threading the accumulator.
 `pfx` carries the key bits fixed by higher levels (mirrors `toArrayAux`, but applies `f` directly
 rather than pushing onto an array — so it folds the trie in place, with no intermediate array). -/
-@[specialize] def foldAux {β : Type w} (f : β → Nat → V → β) (pfx : Nat) : (h : Nat) → Tree L h → β → β
+@[specialize] private def foldAux {β : Type w} (f : β → Nat → V → β) (pfx : Nat) : (h : Nat) → Tree L h → β → β
   | 0, l, acc => (LeafOps.toArray l).foldl (fun acc (i, v) => f acc (pfx ||| i.toNat) v) acc
   | h + 1, n, acc =>
     n.fold (fun acc i child => foldAux f (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child acc) acc
@@ -356,7 +356,7 @@ def foldM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V
 fails. Mirrors `foldAux` but threads a `Bool` with early exit: a leaf scans its present pairs with
 `Array.all`; a node scans its slots with `Node.all`, stopping as soon as a child subtree fails — so
 an entire subtree can be skipped without being descended. -/
-@[specialize] def allAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Bool
+@[specialize] private def allAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Bool
   | 0, l => (LeafOps.toArray l).all (fun (i, v) => p (pfx ||| i.toNat) v)
   | h + 1, n =>
     n.all (fun i child => allAux p (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child)
@@ -367,7 +367,7 @@ def all (p : Nat → V → Bool) (h : Nat) (t : Tree L h) : Bool := allAux p 0 h
 
 /-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first that
 holds. The `any` companion of `allAux`: a leaf scans with `Array.any`, a node with `Node.any`. -/
-@[specialize] def anyAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Bool
+@[specialize] private def anyAux (p : Nat → V → Bool) (pfx : Nat) : (h : Nat) → Tree L h → Bool
   | 0, l => (LeafOps.toArray l).any (fun (i, v) => p (pfx ||| i.toNat) v)
   | h + 1, n =>
     n.any (fun i child => anyAux p (pfx ||| (i.toNat <<< (5 * (h + 1)))) h child)
@@ -924,6 +924,23 @@ private theorem get?_congr (k₁ k₂ : Nat) : (h : Nat) → (t : Tree L h) →
       | none => rfl
       | some c => exact get?_congr k₁ k₂ h c (fun j hj => hch j (Nat.le_succ_of_le hj))
 
+/-- `Tree.get?` at the probe key `k' + s·32^(h+1)` — the key whose top chunk is `s` and whose
+lower chunks are `k'`'s: it descends through slot `s` of the top node and reads the child at `k'`.
+This is the bridge from per-slot child lookups back to per-key tree lookups; `ext`,
+`exists_get?` and `restrictsEq_iff` all probe node slots with such keys. -/
+private theorem get?_probe_some (h : Nat) (n : Tree L (h + 1)) {s : UInt32} (hs : s < 32)
+    {child : Tree L h} (hc : Node.get? n s = some child) (k' : Nat) (hk' : k' < 32 ^ (h + 1)) :
+    Tree.get? (k' + s.toNat * 32 ^ (h + 1)) (h + 1) n = Tree.get? k' h child := by
+  rw [get?_succ_some _ h n child (by rw [chunk_probe_high s k' h hk' hs]; exact hc)]
+  exact get?_congr _ k' h child (fun j hj => chunk_probe_low s k' h j hj)
+
+/-- The probe key reads `none` through an absent top slot (the `none` companion of
+`get?_probe_some`). -/
+private theorem get?_probe_none (h : Nat) (n : Tree L (h + 1)) {s : UInt32} (hs : s < 32)
+    (hc : Node.get? n s = none) (k' : Nat) (hk' : k' < 32 ^ (h + 1)) :
+    Tree.get? (k' + s.toNat * 32 ^ (h + 1)) (h + 1) n = none :=
+  get?_succ_none _ h n (by rw [chunk_probe_high s k' h hk' hs]; exact hc)
+
 /-- `get?` of an equal-height `meetEq` is the value-level intersection of the two lookups. -/
 private theorem get?_meetEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b : Tree L h) →
     Tree.get? k h (meetEq c h a b) = optVmeet c (Tree.get? k h a) (Tree.get? k h b)
@@ -973,6 +990,24 @@ private theorem get?_joinEq (c : V → V → V) (k : Nat) : (h : Nat) → (a b :
           · rw [if_pos hemp, get?_eq_none_of_isEmpty k h _ hemp]
           · rw [if_neg hemp]
 
+/-- Chunk agreement on `0..0` is just agreement at chunk 0. Aligns the `if` conditions of the
+leaf-level `LeafOps.get?_insert` and the key-level `get?_singleton`/`get?_insert`. -/
+private theorem chunkAgree_zero_iff {j k : Nat} :
+    (∀ i, i ≤ 0 → chunk j i = chunk k i) ↔ chunk j 0 = chunk k 0 :=
+  ⟨fun hall => hall 0 (Nat.le_refl 0),
+   fun hc i hi => by rw [Nat.le_zero.mp hi]; exact hc⟩
+
+/-- Once the top chunks agree, chunk agreement on `0..h+1` is agreement on `0..h`. Aligns the
+`if` conditions of `get?_singleton`/`get?_insert` across successive heights. -/
+private theorem chunkAgree_succ_iff {j k h : Nat} (hcj : chunk j (h + 1) = chunk k (h + 1)) :
+    (∀ i, i ≤ h + 1 → chunk j i = chunk k i) ↔ (∀ i, i ≤ h → chunk j i = chunk k i) := by
+  constructor
+  · exact fun hbig i hi => hbig i (Nat.le_succ_of_le hi)
+  · intro hall i hi
+    rcases Nat.lt_or_eq_of_le hi with h' | h'
+    · exact hall i (Nat.le_of_lt_succ h')
+    · subst h'; exact hcj
+
 /-- `get?` of a singleton tree: the queried key reads the stored value exactly when it agrees with
 the stored key on every chunk `0..h` (so their lookup paths coincide), otherwise `none`. -/
 theorem get?_singleton (k : Nat) (v : V) (j : Nat) : (h : Nat) →
@@ -983,9 +1018,8 @@ theorem get?_singleton (k : Nat) (v : V) (j : Nat) : (h : Nat) →
       rw [LeafOps.get?_insert (LeafOps.empty : L) (chunk k 0) (chunk j 0) v (chunk_lt _ _) (chunk_lt _ _),
           LeafOps.get?_empty]
       by_cases hc : chunk j 0 = chunk k 0
-      · have hall : ∀ i, i ≤ 0 → chunk j i = chunk k i := fun i hi => by rw [Nat.le_zero.mp hi]; exact hc
-        rw [if_pos hc, if_pos hall]
-      · rw [if_neg hc, if_neg (fun hall => hc (hall 0 (Nat.le_refl 0)))]
+      · rw [if_pos hc, if_pos (chunkAgree_zero_iff.mpr hc)]
+      · rw [if_neg hc, if_neg (fun hall => hc (chunkAgree_zero_iff.mp hall))]
   | h + 1 => by
       simp only [Tree.singleton]
       rw [get?_succ,
@@ -996,15 +1030,8 @@ theorem get?_singleton (k : Nat) (v : V) (j : Nat) : (h : Nat) →
         show Tree.get? j h (Tree.singleton k v h) = _
         rw [get?_singleton k v j h]
         by_cases hall : ∀ i, i ≤ h → chunk j i = chunk k i
-        · have hbig : ∀ i, i ≤ h+1 → chunk j i = chunk k i := by
-            intro i hi
-            rcases Nat.lt_or_eq_of_le hi with h' | h'
-            · exact hall i (Nat.le_of_lt_succ h')
-            · subst h'; exact hcj
-          rw [if_pos hall, if_pos hbig]
-        · have hneg : ¬ (∀ i, i ≤ h+1 → chunk j i = chunk k i) :=
-            fun hbig => hall (fun i hi => hbig i (Nat.le_succ_of_le hi))
-          rw [if_neg hall, if_neg hneg]
+        · rw [if_pos hall, if_pos ((chunkAgree_succ_iff hcj).mpr hall)]
+        · rw [if_neg hall, if_neg (fun hbig => hall ((chunkAgree_succ_iff hcj).mp hbig))]
       · rw [if_neg hcj]
         show (none : Option V) = if (∀ i, i ≤ h+1 → chunk j i = chunk k i) then some v else none
         rw [if_neg (fun hbig => hcj (hbig (h+1) (Nat.le_refl _)))]
@@ -1019,9 +1046,8 @@ theorem get?_insert (k : Nat) (v : V) (j : Nat) : (h : Nat) → (t : Tree L h) �
       simp only [Tree.insert, Tree.get?]
       rw [LeafOps.get?_insert l (chunk k 0) (chunk j 0) v (chunk_lt _ _) (chunk_lt _ _)]
       by_cases hc : chunk j 0 = chunk k 0
-      · have hall : ∀ i, i ≤ 0 → chunk j i = chunk k i := fun i hi => by rw [Nat.le_zero.mp hi]; exact hc
-        rw [if_pos hc, if_pos hall]
-      · rw [if_neg hc, if_neg (fun hall => hc (hall 0 (Nat.le_refl 0)))]
+      · rw [if_pos hc, if_pos (chunkAgree_zero_iff.mpr hc)]
+      · rw [if_neg hc, if_neg (fun hall => hc (chunkAgree_zero_iff.mp hall))]
   | h + 1, n => by
       cases hck : Node.get? n (chunk k (h+1)) with
       | some child =>
@@ -1037,15 +1063,8 @@ theorem get?_insert (k : Nat) (v : V) (j : Nat) : (h : Nat) → (t : Tree L h) �
             show Tree.get? j h (Tree.insert k v h child) = _
             rw [get?_insert k v j h child]
             by_cases hall : ∀ i, i ≤ h → chunk j i = chunk k i
-            · have hbig : ∀ i, i ≤ h+1 → chunk j i = chunk k i := by
-                intro i hi
-                rcases Nat.lt_or_eq_of_le hi with h' | h'
-                · exact hall i (Nat.le_of_lt_succ h')
-                · subst h'; exact hcj
-              rw [if_pos hall, if_pos hbig]
-            · have hneg : ¬ (∀ i, i ≤ h+1 → chunk j i = chunk k i) :=
-                fun hbig => hall (fun i hi => hbig i (Nat.le_succ_of_le hi))
-              rw [if_neg hall, if_neg hneg]
+            · rw [if_pos hall, if_pos ((chunkAgree_succ_iff hcj).mpr hall)]
+            · rw [if_neg hall, if_neg (fun hbig => hall ((chunkAgree_succ_iff hcj).mp hbig))]
           · rw [if_neg hcj, ← get?_succ j h n,
                 if_neg (fun hbig => hcj (hbig (h+1) (Nat.le_refl _)))]
       | none =>
@@ -1061,15 +1080,8 @@ theorem get?_insert (k : Nat) (v : V) (j : Nat) : (h : Nat) → (t : Tree L h) �
             show Tree.get? j h (Tree.singleton k v h) = _
             rw [get?_singleton k v j h]
             by_cases hall : ∀ i, i ≤ h → chunk j i = chunk k i
-            · have hbig : ∀ i, i ≤ h+1 → chunk j i = chunk k i := by
-                intro i hi
-                rcases Nat.lt_or_eq_of_le hi with h' | h'
-                · exact hall i (Nat.le_of_lt_succ h')
-                · subst h'; exact hcj
-              rw [if_pos hall, if_pos hbig]
-            · have hneg : ¬ (∀ i, i ≤ h+1 → chunk j i = chunk k i) :=
-                fun hbig => hall (fun i hi => hbig i (Nat.le_succ_of_le hi))
-              rw [if_neg hall, if_neg hneg]
+            · rw [if_pos hall, if_pos ((chunkAgree_succ_iff hcj).mpr hall)]
+            · rw [if_neg hall, if_neg (fun hbig => hall ((chunkAgree_succ_iff hcj).mp hbig))]
           · rw [if_neg hcj, ← get?_succ j h n,
                 if_neg (fun hbig => hcj (hbig (h+1) (Nat.le_refl _)))]
 
@@ -1087,13 +1099,11 @@ theorem insertImpl_eq_insert (k : Nat) (v : V) : (h : Nat) → (t : Tree L h) �
       · rw [dif_pos hp, insertImpl_eq_insert k v h (n.get (chunk k (h + 1)) hp),
             Node.setChild_eq_insert n (chunk k (h + 1)) _ hp]
         refine (Node.alter_eq_insert n (chunk k (h + 1)) _ _ ?_).symm
-        rw [show Node.get? n (chunk k (h + 1)) = some (n.get (chunk k (h + 1)) hp) from by
-              simp only [Node.get?, dif_pos hp]]
+        rw [show Node.get? n (chunk k (h + 1)) = some (n.get (chunk k (h + 1)) hp) from dif_pos hp]
       · rw [dif_neg hp,
             Node.insertChild_eq_insert n (chunk k (h + 1)) (by simpa using hp) (Tree.singleton k v h)]
         refine (Node.alter_eq_insert n (chunk k (h + 1)) _ _ ?_).symm
-        rw [show Node.get? n (chunk k (h + 1)) = none from by
-              simp only [Node.get?, dif_neg hp]]
+        rw [show Node.get? n (chunk k (h + 1)) = none from dif_neg hp]
 
 /-- `get?` of a lift: a key in range reads the original tree; a key needing more height than the
 slot-0 spine provides reads `none`. -/
@@ -1137,8 +1147,7 @@ theorem exists_get? : (h : Nat) → (t : Tree L h) → Full h t → Tree.isEmpty
     ∃ k, requiredHeight k ≤ h ∧ (Tree.get? k h t).isSome
   | 0, l, _, hne => by
       obtain ⟨i, hi, hsome⟩ := LeafOps.exists_get?_of_ne_empty l hne
-      have hlt : i.toNat < 32 := by
-        have := UInt32.lt_iff_toNat_lt.mp hi; rwa [show (32:UInt32).toNat = 32 from by decide] at this
+      have hlt : i.toNat < 32 := UInt32.lt_iff_toNat_lt.mp hi
       refine ⟨i.toNat, requiredHeight_le_of_lt_pow (by rw [Nat.pow_one]; exact hlt), ?_⟩
       simp only [Tree.get?, chunk_toNat_zero i hi]; exact hsome
   | h + 1, n, hf, hne => by
@@ -1148,10 +1157,7 @@ theorem exists_get? : (h : Nat) → (t : Tree L h) → Full h t → Tree.isEmpty
       obtain ⟨k', hk', hk'some⟩ := exists_get? h child (hf child hmem).2 (hf child hmem).1
       have hpk := lt_pow_of_requiredHeight_le hk'
       refine ⟨k' + s.toNat * 32 ^ (h + 1), requiredHeight_probe_le s k' h hpk hs, ?_⟩
-      have hns : Node.get? n (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some child := by
-        rw [chunk_probe_high s k' h hpk hs]; exact hchild
-      rw [get?_succ_some _ h n child hns,
-          get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h child (fun j hj => chunk_probe_low s k' h j hj)]
+      rw [get?_probe_some h n hs hchild k' hpk]
       exact hk'some
 
 /-- A non-empty *height-minimal* (`TopProper`) tree has a present key whose `requiredHeight`
@@ -1179,9 +1185,7 @@ theorem exists_get?_topProper : (h : Nat) → (t : Tree L h) → Full h t → To
           fun hle => hge (lt_pow_of_requiredHeight_le hle)
         omega
       refine ⟨k' + s.toNat * 32 ^ (h + 1), hreq, ?_⟩
-      rw [get?_succ_some (k' + s.toNat * 32 ^ (h + 1)) h n child
-            (by rw [chunk_probe_high s k' h hpk hs32]; exact hchild),
-          get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h child (fun j hj => chunk_probe_low s k' h j hj)]
+      rw [get?_probe_some h n hs32 hchild k' hpk]
       exact hk'some
 
 /-- **Tree extensionality**: two `Full` trees of the same height agreeing on every in-range
@@ -1192,8 +1196,7 @@ theorem ext : (h : Nat) → {a b : Tree L h} → Full h a → Full h b →
   | 0, a, b, _, _, hget => by
       apply LeafOps.get?_ext
       intro i hi
-      have hlt : i.toNat < 32 := by
-        have := UInt32.lt_iff_toNat_lt.mp hi; rwa [show (32:UInt32).toNat = 32 from by decide] at this
+      have hlt : i.toNat < 32 := UInt32.lt_iff_toNat_lt.mp hi
       have := hget i.toNat (requiredHeight_le_of_lt_pow (by rw [Nat.pow_one]; exact hlt))
       simpa only [Tree.get?, chunk_toNat_zero i hi] using this
   | h + 1, a, b, hfa, hfb, hget => by
@@ -1205,14 +1208,7 @@ theorem ext : (h : Nat) → {a b : Tree L h} → Full h a → Full h b →
         intro k' hk'
         have hpk := lt_pow_of_requiredHeight_le hk'
         have hK := hget (k' + s.toNat * 32 ^ (h + 1)) (requiredHeight_probe_le s k' h hpk hs)
-        have hca' : Node.get? a (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some ca := by
-          rw [chunk_probe_high s k' h hpk hs]; exact hca
-        have hcb' : Node.get? b (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some cb := by
-          rw [chunk_probe_high s k' h hpk hs]; exact hcb
-        rw [get?_succ_some _ h a ca hca', get?_succ_some _ h b cb hcb',
-            get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h ca (fun j hj => chunk_probe_low s k' h j hj),
-            get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h cb (fun j hj => chunk_probe_low s k' h j hj)] at hK
-        exact hK
+        rwa [get?_probe_some h a hs hca k' hpk, get?_probe_some h b hs hcb k' hpk] at hK
       cases hca : Node.get? a s with
       | none =>
         cases hcb : Node.get? b s with
@@ -1223,12 +1219,7 @@ theorem ext : (h : Nat) → {a b : Tree L h} → Full h a → Full h b →
           obtain ⟨k', hk', hk'some⟩ := exists_get? h cb (hfb cb hmem).2 (hfb cb hmem).1
           have hpk := lt_pow_of_requiredHeight_le hk'
           have hK := hget (k' + s.toNat * 32 ^ (h + 1)) (requiredHeight_probe_le s k' h hpk hs)
-          have hca' : Node.get? a (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = none := by
-            rw [chunk_probe_high s k' h hpk hs]; exact hca
-          have hcb' : Node.get? b (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some cb := by
-            rw [chunk_probe_high s k' h hpk hs]; exact hcb
-          rw [get?_succ_none _ h a hca', get?_succ_some _ h b cb hcb',
-              get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h cb (fun j hj => chunk_probe_low s k' h j hj)] at hK
+          rw [get?_probe_none h a hs hca k' hpk, get?_probe_some h b hs hcb k' hpk] at hK
           rw [← hK] at hk'some; simp at hk'some
       | some ca =>
         cases hcb : Node.get? b s with
@@ -1238,12 +1229,7 @@ theorem ext : (h : Nat) → {a b : Tree L h} → Full h a → Full h b →
           obtain ⟨k', hk', hk'some⟩ := exists_get? h ca (hfa ca hmem).2 (hfa ca hmem).1
           have hpk := lt_pow_of_requiredHeight_le hk'
           have hK := hget (k' + s.toNat * 32 ^ (h + 1)) (requiredHeight_probe_le s k' h hpk hs)
-          have hca' : Node.get? a (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some ca := by
-            rw [chunk_probe_high s k' h hpk hs]; exact hca
-          have hcb' : Node.get? b (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = none := by
-            rw [chunk_probe_high s k' h hpk hs]; exact hcb
-          rw [get?_succ_some _ h a ca hca', get?_succ_none _ h b hcb',
-              get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h ca (fun j hj => chunk_probe_low s k' h j hj)] at hK
+          rw [get?_probe_some h a hs hca k' hpk, get?_probe_none h b hs hcb k' hpk] at hK
           rw [hK] at hk'some; simp at hk'some
         | some cb => exact congrArg some (hchild ca cb hca hcb)
 
@@ -1259,7 +1245,7 @@ hypothesis is threaded down to the set leaf, whose `restricts` ignores `rel`. -/
 `get?_restricts` field; the successor uses `Node.restricts_iff`, matching node slots to keys by
 probing the top chunk (as in `Tree.ext`) and recursing on slot children. The forward direction
 reduces a key to its low `h+1` digits (`chunk_mod_pow`) before applying the child hypothesis. -/
-theorem restrictsEq_iff (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) :
+private theorem restrictsEq_iff (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) :
     (h : Nat) → (a b : Tree L h) → Full h a → Full h b →
       (restrictsEq rel h a b = true ↔
         ∀ k, requiredHeight k ≤ h → optRel rel (Tree.get? k h a) (Tree.get? k h b) = true)
@@ -1271,8 +1257,7 @@ theorem restrictsEq_iff (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
         simp only [Tree.get?]
         exact hslot (chunk k 0) (chunk_lt k 0)
       · intro hkey i hi
-        have hlt : i.toNat < 32 := by
-          have := UInt32.lt_iff_toNat_lt.mp hi; rwa [show (32 : UInt32).toNat = 32 from by decide] at this
+        have hlt : i.toNat < 32 := UInt32.lt_iff_toNat_lt.mp hi
         have hk := hkey i.toNat (requiredHeight_le_of_lt_pow (by rw [Nat.pow_one]; exact hlt))
         simpa only [Tree.get?, chunk_toNat_zero i hi] using hk
   | h + 1, a, b, hfa, hfb => by
@@ -1313,12 +1298,7 @@ theorem restrictsEq_iff (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
             obtain ⟨k', hk', hk'some⟩ := exists_get? h ca hca_full hca_ne
             have hpk := lt_pow_of_requiredHeight_le hk'
             have hK := hkey (k' + s.toNat * 32 ^ (h + 1)) (requiredHeight_probe_le s k' h hpk hs)
-            have hca' : Node.get? a (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some ca := by
-              rw [chunk_probe_high s k' h hpk hs]; exact hca
-            have hcb' : Node.get? b (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = none := by
-              rw [chunk_probe_high s k' h hpk hs]; exact hcb
-            rw [get?_succ_some _ h a ca hca', get?_succ_none _ h b hcb',
-                get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h ca (fun j hj => chunk_probe_low s k' h j hj)] at hK
+            rw [get?_probe_some h a hs hca k' hpk, get?_probe_none h b hs hcb k' hpk] at hK
             obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp hk'some
             rw [hv] at hK; simp [optRel] at hK
           | some cb =>
@@ -1328,14 +1308,7 @@ theorem restrictsEq_iff (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
             intro k' hk'
             have hpk := lt_pow_of_requiredHeight_le hk'
             have hK := hkey (k' + s.toNat * 32 ^ (h + 1)) (requiredHeight_probe_le s k' h hpk hs)
-            have hca' : Node.get? a (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some ca := by
-              rw [chunk_probe_high s k' h hpk hs]; exact hca
-            have hcb' : Node.get? b (chunk (k' + s.toNat * 32 ^ (h + 1)) (h + 1)) = some cb := by
-              rw [chunk_probe_high s k' h hpk hs]; exact hcb
-            rw [get?_succ_some _ h a ca hca', get?_succ_some _ h b cb hcb',
-                get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h ca (fun j hj => chunk_probe_low s k' h j hj),
-                get?_congr (k' + s.toNat * 32 ^ (h + 1)) k' h cb (fun j hj => chunk_probe_low s k' h j hj)] at hK
-            exact hK
+            rwa [get?_probe_some h a hs hca k' hpk, get?_probe_some h b hs hcb k' hpk] at hK
 
 /-- **`restrictsSpine` characterization**: a shorter `Full` tree restricts the slot-0 spine of a
 taller `Full` one exactly when `optRel rel` relates their `get?` readings at every key in the

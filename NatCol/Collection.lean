@@ -47,7 +47,7 @@ def empty : NatCollection L := ⟨0, Tree.empty 0, ⟨Tree.Full_empty 0, trivial
 @[specialize] def size (c : NatCollection L) : Nat := Tree.size c.height c.tree
 
 /-- Lift a collection's tree up to a common height `H ≥ c.height`. -/
-@[specialize] def liftTo (c : NatCollection L) (H : Nat) (le : c.height ≤ H) : Tree L H :=
+@[specialize] private def liftTo (c : NatCollection L) (H : Nat) (le : c.height ≤ H) : Tree L H :=
   Tree.cast (by omega) (Tree.liftBy (H - c.height) c.tree)
 
 /-- Lifting a non-empty canonical collection's tree keeps it `Full`. -/
@@ -60,7 +60,7 @@ height while the top node is empty or holds only slot 0 (this is what restores m
 after `erase`/`meet`; for `insert`/`modify`/`join` results the top is already proper, so it is
 the identity). The `Full` precondition is preserved as we descend, and the final top — being
 neither `0` nor only-slot-`0` — is height-minimal (`TopProper`). -/
-@[specialize] def normalizeAux : (h : Nat) → (t : Tree L h) → Tree.Full h t → NatCollection L
+@[specialize] private def normalizeAux : (h : Nat) → (t : Tree L h) → Tree.Full h t → NatCollection L
   | 0, t, hf => ⟨0, t, ⟨hf, trivial⟩⟩
   | h + 1, n, hf =>
     match hm0 : n.positionsMask == 0 with
@@ -221,7 +221,7 @@ def filterM {L V : Type} [LeafOps L V] {m : Type → Type w} [Monad m] (p : Nat 
   pure (ofList survivors)
 
 /-- Structural equality: equal heights and equal trees. Canonical ⇒ logical equality. -/
-def beq [BEq L] (a b : NatCollection L) : Bool :=
+private def beq [BEq L] (a b : NatCollection L) : Bool :=
   if h : a.height = b.height then Tree.beq a.height a.tree (Tree.cast h.symm b.tree) else false
 
 instance [BEq L] : BEq (NatCollection L) := ⟨beq⟩
@@ -688,7 +688,7 @@ private theorem get?_of_gt (c : NatCollection L) (k : Nat) (hk : c.height < requ
   · rw [get?_of_le empty k (by omega)]; exact Tree.get?_empty k 0
 
 /-- An empty collection reads `none` everywhere. -/
-theorem get?_eq_none_of_isEmpty (c : NatCollection L) (hc : c.isEmpty = true) (k : Nat) :
+private theorem get?_eq_none_of_isEmpty (c : NatCollection L) (hc : c.isEmpty = true) (k : Nat) :
     c.get? k = none := by
   unfold NatCollection.get?
   split

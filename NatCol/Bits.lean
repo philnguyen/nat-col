@@ -23,7 +23,7 @@ namespace NatCol
 each pair, folds the partial sums up through 4-bit and 8-bit groups, then sums the four
 byte counts with one multiply, all in a fixed handful of shifts/masks rather than a
 32-iteration loop. Kept `UInt32`-valued (no `.toNat`) so `bv_decide` can reason about it. -/
-@[inline] def popCountAux (x : UInt32) : UInt32 :=
+@[inline] private def popCountAux (x : UInt32) : UInt32 :=
   let x : UInt32 := x - ((x >>> 1) &&& (0x55555555 : UInt32))
   let x : UInt32 := (x &&& (0x33333333 : UInt32)) + ((x >>> 2) &&& (0x33333333 : UInt32))
   let x : UInt32 := (x + (x >>> 4)) &&& (0x0F0F0F0F : UInt32)
@@ -140,6 +140,14 @@ private theorem toNat_add_one_of_le {x : UInt32} (h : x.toNat ≤ 32) : (x + 1).
   rw [UInt32.toNat_add, show ((1 : UInt32).toNat) = 1 from rfl,
       show (2 : Nat) ^ 32 = 4294967296 from rfl, Nat.mod_eq_of_lt (by omega)]
 
+/-- The standard route from a `bv_decide`-proven `popCountAux` increment to the `Nat`-valued
+`popCount` statement. Also covers the `arrayIndex` increments — `arrayIndex` is definitionally a
+`popCount`. -/
+private theorem popCount_eq_succ_of_aux {a b : UInt32} (key : popCountAux a = popCountAux b + 1) :
+    popCount a = popCount b + 1 := by
+  show (popCountAux a).toNat = (popCountAux b).toNat + 1
+  rw [key]; exact toNat_add_one_of_le (popCountAux_toNat_le b)
+
 /-! ### Lemmas backing the present-slot bit-scan (`lowestSetIdx`/`clearLowest`)
 
 These drive the `Node.join`/`meet` merge loop, which steps through present slots via the lowest
@@ -150,6 +158,11 @@ which `bv_decide` bit-blasts). -/
 /-- Clearing the lowest set bit strictly decreases the value — the merge loop's termination. -/
 theorem clearLowest_lt (m : UInt32) (hm : m ≠ 0) : clearLowest m < m := by
   unfold clearLowest; bv_decide
+
+/-- `clearLowest_lt` on `.toNat`, matching the `termination_by m.toNat` measure every
+present-slot scan loop uses; their `decreasing_by` is exactly this lemma. -/
+theorem toNat_clearLowest_lt (m : UInt32) (hm : m ≠ 0) : (clearLowest m).toNat < m.toNat :=
+  UInt32.lt_iff_toNat_lt.mp (clearLowest_lt m hm)
 
 /-- The lowest-set-bit index is a valid slot (`< 32`) when `m` is nonzero. -/
 theorem lowestSetIdx_lt (m : UInt32) (hm : m ≠ 0) : lowestSetIdx m < 32 := by
@@ -177,11 +190,8 @@ theorem testBit_of_clearLowest (m s : UInt32) (h : testBit (clearLowest m) s = t
 
 /-- Setting an unset bit raises the population count by one. -/
 theorem popCount_setBit (m i : UInt32) (h : testBit m i = false) :
-    popCount (setBit m i) = popCount m + 1 := by
-  have key : popCountAux (setBit m i) = popCountAux m + 1 := by
-    unfold popCountAux setBit testBit at *; bv_decide
-  show (popCountAux (setBit m i)).toNat = (popCountAux m).toNat + 1
-  rw [key]; exact toNat_add_one_of_le (popCountAux_toNat_le m)
+    popCount (setBit m i) = popCount m + 1 :=
+  popCount_eq_succ_of_aux (by unfold popCountAux setBit testBit at *; bv_decide)
 
 /-- Split a population count at the top bit (slot 31): the count below 31 plus the top bit.
 Lets `Node.ext`'s forward element-extraction reach the full size at the `m = 32` boundary (where
@@ -190,24 +200,15 @@ theorem popCount_split31 (m : UInt32) :
     popCount m = popCount (m &&& lowerMask 31) + (if testBit m 31 = true then 1 else 0) := by
   by_cases h31 : testBit m 31 = true
   · rw [if_pos h31]
-    have key : popCountAux m = popCountAux (m &&& lowerMask 31) + 1 := by
-      unfold popCountAux lowerMask testBit at *; bv_decide
-    show (popCountAux m).toNat = (popCountAux (m &&& lowerMask 31)).toNat + 1
-    rw [key]; exact toNat_add_one_of_le (popCountAux_toNat_le _)
-  · rw [if_neg h31]
+    exact popCount_eq_succ_of_aux (by unfold popCountAux lowerMask testBit at *; bv_decide)
+  · rw [if_neg h31, Nat.add_zero]
     simp only [Bool.not_eq_true] at h31
-    have key : popCountAux m = popCountAux (m &&& lowerMask 31) := by
-      unfold popCountAux lowerMask testBit at *; bv_decide
-    show (popCountAux m).toNat = (popCountAux (m &&& lowerMask 31)).toNat + 0
-    rw [key, Nat.add_zero]
+    exact congrArg UInt32.toNat (by unfold popCountAux lowerMask testBit at *; bv_decide)
 
 /-- Clearing a set bit lowers the population count by one. -/
 theorem popCount_clearBit (m i : UInt32) (h : testBit m i = true) :
-    popCount (clearBit m i) + 1 = popCount m := by
-  have key : popCountAux (clearBit m i) + 1 = popCountAux m := by
-    unfold popCountAux clearBit testBit at *; bv_decide
-  show (popCountAux (clearBit m i)).toNat + 1 = (popCountAux m).toNat
-  rw [← key]; exact (toNat_add_one_of_le (popCountAux_toNat_le (clearBit m i))).symm
+    popCount (clearBit m i) + 1 = popCount m :=
+  (popCount_eq_succ_of_aux (by unfold popCountAux clearBit testBit at *; bv_decide)).symm
 
 /-- The compact index of any slot is at most the node's size. -/
 theorem arrayIndex_le (m i : UInt32) : arrayIndex m i ≤ popCount m := by
@@ -269,13 +270,8 @@ theorem arrayIndex_setBit_of_le (m i j : UInt32) (hi : i < 32) (hj : j < 32) (hj
 /-- Setting a previously-unset bit `i` raises the compact index of every slot `j > i` by one. -/
 theorem arrayIndex_setBit_of_gt (m i j : UInt32) (hi : i < 32) (hj : j < 32)
     (hij : i < j) (habs : testBit m i = false) :
-    arrayIndex (setBit m i) j = arrayIndex m j + 1 := by
-  have key : popCountAux ((setBit m i) &&& lowerMask j) = popCountAux (m &&& lowerMask j) + 1 := by
-    unfold popCountAux setBit lowerMask testBit at *; bv_decide
-  have hb := popCountAux_toNat_le (m &&& lowerMask j)
-  show (popCountAux ((setBit m i) &&& lowerMask j)).toNat = (popCountAux (m &&& lowerMask j)).toNat + 1
-  rw [key, UInt32.toNat_add, show ((1 : UInt32).toNat) = 1 from rfl,
-      show (2 : Nat) ^ 32 = 4294967296 from rfl, Nat.mod_eq_of_lt (by omega)]
+    arrayIndex (setBit m i) j = arrayIndex m j + 1 :=
+  popCount_eq_succ_of_aux (by unfold popCountAux setBit lowerMask testBit at *; bv_decide)
 
 /-- The compact index is strictly monotone on present slots. -/
 theorem arrayIndex_lt_of_lt (m a b : UInt32) (ha : a < 32) (hb : b < 32)
@@ -293,36 +289,21 @@ theorem arrayIndex_le_of_le (m a b : UInt32) (ha : a < 32) (hb : b < 32) (h : a 
   show (popCountAux (m &&& lowerMask a)).toNat ≤ (popCountAux (m &&& lowerMask b)).toNat
   exact UInt32.le_iff_toNat_le.mp key
 
-theorem uint32_le_of_lt {a b : UInt32} (h : a < b) : a ≤ b :=
-  UInt32.le_iff_toNat_le.mpr (Nat.le_of_lt (UInt32.lt_iff_toNat_lt.mp h))
-
-theorem lt_or_gt_uint32 {a b : UInt32} (h : a ≠ b) : a < b ∨ a > b := by
-  rcases Nat.lt_trichotomy a.toNat b.toNat with hlt | heq | hgt
-  · exact Or.inl (UInt32.lt_iff_toNat_lt.mpr hlt)
-  · exact absurd (UInt32.toNat_inj.mp heq) h
-  · exact Or.inr (UInt32.lt_iff_toNat_lt.mpr hgt)
-
 /-- Moving the slot up by one raises the compact index by the (just-passed) bit. Backs the
 forward element-extraction in `Node.ext`. -/
 theorem arrayIndex_succ (m i : UInt32) (hi : i < 31) :
     arrayIndex m (i + 1) = arrayIndex m i + (if testBit m i = true then 1 else 0) := by
   by_cases h : testBit m i = true
   · rw [if_pos h]
-    have key : popCountAux (m &&& lowerMask (i + 1)) = popCountAux (m &&& lowerMask i) + 1 := by
-      unfold popCountAux lowerMask testBit at *; bv_decide
-    show (popCountAux (m &&& lowerMask (i + 1))).toNat = (popCountAux (m &&& lowerMask i)).toNat + 1
-    rw [key]; exact toNat_add_one_of_le (popCountAux_toNat_le _)
-  · rw [if_neg h]; simp only [Bool.not_eq_true] at h
-    have key : popCountAux (m &&& lowerMask (i + 1)) = popCountAux (m &&& lowerMask i) := by
-      unfold popCountAux lowerMask testBit at *; bv_decide
-    show (popCountAux (m &&& lowerMask (i + 1))).toNat = (popCountAux (m &&& lowerMask i)).toNat + 0
-    rw [key, Nat.add_zero]
+    exact popCount_eq_succ_of_aux (by unfold popCountAux lowerMask testBit at *; bv_decide)
+  · rw [if_neg h, Nat.add_zero]; simp only [Bool.not_eq_true] at h
+    exact congrArg UInt32.toNat (by unfold popCountAux lowerMask testBit at *; bv_decide)
 
 /-- The compact index is injective on present slots. -/
 theorem arrayIndex_inj (m a b : UInt32) (ha : a < 32) (hb : b < 32)
     (hpa : testBit m a = true) (hpb : testBit m b = true) (hab : a ≠ b) :
     arrayIndex m a ≠ arrayIndex m b := by
-  rcases lt_or_gt_uint32 hab with h | h
+  rcases UInt32.lt_or_lt_of_ne hab with h | h
   · exact Nat.ne_of_lt (arrayIndex_lt_of_lt m a b ha hb hpa h)
   · exact Nat.ne_of_gt (arrayIndex_lt_of_lt m b a hb ha hpb h)
 
@@ -353,32 +334,17 @@ theorem testBit_and (a b i : UInt32) : testBit (a &&& b) i = (testBit a i && tes
   unfold testBit; bv_decide
 
 /-- A mask that is height-minimal (`2 ≤ m`) has a set bit above slot 0 — that high bit is what
-forces the height in the canonical-shape invariant. -/
+forces the height in the canonical-shape invariant. The witness is the lowest set bit of `m`
+with slot 0 masked off. -/
 theorem exists_high_bit (m : UInt32) (h : 2 ≤ m) :
     ∃ s, 1 ≤ s ∧ s < 32 ∧ testBit m s = true := by
-  rcases Classical.em (∃ s, 1 ≤ s ∧ s < 32 ∧ testBit m s = true) with hyes | hno
-  · exact hyes
-  · exfalso
-    have hbits : ∀ s, 1 ≤ s → s < 32 → testBit m s = false := by
-      intro s h1 h2
-      cases hb : testBit m s with
-      | false => rfl
-      | true => exact absurd ⟨s, h1, h2, hb⟩ hno
-    have hm1 : m = m &&& 1 := by
-      apply eq_of_testBit_eq
-      intro i hi
-      by_cases hi0 : i = 0
-      · subst hi0
-        rw [show testBit (m &&& 1) 0 = (testBit m 0 && testBit (1:UInt32) 0) from by unfold testBit; bv_decide,
-            show testBit (1:UInt32) 0 = true from by decide]
-        simp
-      · have h1i : 1 ≤ i := by revert hi0; bv_decide
-        rw [hbits i h1i hi,
-            show testBit (m &&& 1) i = (testBit m i && testBit (1:UInt32) i) from by unfold testBit; bv_decide,
-            hbits i h1i hi]
-        simp
-    have hcon : (2:UInt32) ≤ m → m = m &&& 1 → False := by intro h2 he; rw [he] at h2; bv_decide
-    exact hcon h hm1
+  have hm' : m &&& ~~~1 ≠ 0 := by bv_decide
+  have hset := testBit_lowestSetIdx (m &&& ~~~1) hm'
+  rw [testBit_and, Bool.and_eq_true] at hset
+  refine ⟨lowestSetIdx (m &&& ~~~1), ?_, lowestSetIdx_lt _ hm', hset.1⟩
+  -- ≥ 1 because slot 0 of `~~~1` is clear, yet the witness slot of `~~~1` is set
+  have hne : lowestSetIdx (m &&& ~~~1) ≠ 0 := fun h0 => absurd (h0 ▸ hset.2) (by decide)
+  revert hne; bv_decide
 
 /-- A 5-bit chunk is always a valid slot index (`< 32`). -/
 theorem chunk_lt (k level : Nat) : chunk k level < 32 := by
@@ -466,8 +432,7 @@ theorem chunk_ne_zero_of_requiredHeight_eq {k h : Nat} (hk : requiredHeight k = 
   omega
 
 theorem chunk_toNat_zero (i : UInt32) (hi : i < 32) : chunk i.toNat 0 = i := by
-  have hlt : i.toNat < 32 := by
-    have := UInt32.lt_iff_toNat_lt.mp hi; rwa [show (32:UInt32).toNat = 32 from by decide] at this
+  have hlt : i.toNat < 32 := UInt32.lt_iff_toNat_lt.mp hi
   rw [chunk_eq_div_mod, Nat.pow_zero, Nat.div_one, Nat.mod_eq_of_lt hlt]
   apply UInt32.toNat_inj.mp
   rw [UInt32.toNat_ofNat_of_lt' (Nat.lt_trans hlt (by decide))]
@@ -475,8 +440,7 @@ theorem chunk_toNat_zero (i : UInt32) (hi : i < 32) : chunk i.toNat 0 = i := by
 /-- Probe key for slot `s` at level `h+1`, carrying lower bits `k'`: its top chunk reads `s`. -/
 theorem chunk_probe_high (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) (hs : s < 32) :
     chunk (k' + s.toNat * 32^(h+1)) (h+1) = s := by
-  have hslt : s.toNat < 32 := by
-    have := UInt32.lt_iff_toNat_lt.mp hs; rwa [show (32:UInt32).toNat = 32 from by decide] at this
+  have hslt : s.toNat < 32 := UInt32.lt_iff_toNat_lt.mp hs
   rw [chunk_eq_div_mod, Nat.add_mul_div_right _ _ (pow32_pos _), Nat.div_eq_of_lt hk',
       Nat.zero_add, Nat.mod_eq_of_lt hslt]
   apply UInt32.toNat_inj.mp
@@ -505,8 +469,7 @@ theorem chunk_mod_pow (k h j : Nat) (hj : j ≤ h) : chunk (k % 32^(h+1)) j = ch
 
 theorem requiredHeight_probe_le (s : UInt32) (k' h : Nat) (hk' : k' < 32^(h+1)) (hs : s < 32) :
     requiredHeight (k' + s.toNat * 32^(h+1)) ≤ h + 1 := by
-  have hslt : s.toNat < 32 := by
-    have := UInt32.lt_iff_toNat_lt.mp hs; rwa [show (32:UInt32).toNat = 32 from by decide] at this
+  have hslt : s.toNat < 32 := UInt32.lt_iff_toNat_lt.mp hs
   apply requiredHeight_le_of_lt_pow
   rw [show (32:Nat)^(h+1+1) = 32^(h+1) * 32 from by rw [Nat.pow_succ]]
   calc k' + s.toNat * 32^(h+1) < 32^(h+1) + s.toNat * 32^(h+1) := by omega
