@@ -227,7 +227,8 @@ def unionU (c : V → V → V) : PTree L → PTree L → PTree L
       else join (someKey (.bin bp bl bm bk)) (.bin bp bl bm bk) (someKey (.tip p2 b2)) (.tip p2 b2)
   | .bin p1 l1 m1 k1, .bin p2 l2 m2 k2 =>
     if l1 == l2 && p1 == p2 then
-      .bin p1 l1 (m1 ||| m2) (mergeKids c m1 k1 m2 k2 (m1 ||| m2) #[])
+      .bin p1 l1 (m1 ||| m2)
+        (mergeKids c m1 k1 m2 k2 (m1 ||| m2) (Array.emptyWithCapacity (popCount (m1 ||| m2))))
     else if l1 == l2 then
       join (someKey (.bin p1 l1 m1 k1)) (.bin p1 l1 m1 k1) (someKey (.bin p2 l2 m2 k2)) (.bin p2 l2 m2 k2)
     else if l2 < l1 then
@@ -436,7 +437,8 @@ def meetU (c : V → V → V) : PTree L → PTree L → PTree L
     if l1 == l2 then
       if prefixAbove (someKey (.bin p1 l1 m1 k1)) l1
           == prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 then
-        finalize p1 l1 (m1 &&& m2) (meetKids c m1 k1 m2 k2 (m1 &&& m2) #[])
+        finalize p1 l1 (m1 &&& m2)
+          (meetKids c m1 k1 m2 k2 (m1 &&& m2) (Array.emptyWithCapacity (popCount (m1 &&& m2))))
       else .nil
     else if l2 < l1 then
       if prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 == p1
@@ -1799,7 +1801,7 @@ theorem contains_unionU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF
     have hkw1 : KidsWF m1 k1 := by rw [WF] at hwf1; exact ⟨hwf1.2.1, hwf1.2.2.2.1, hwf1.2.2.2.2.1⟩
     have hkw2 : KidsWF m2 k2 := by rw [WF] at hwf2; exact ⟨hwf2.2.1, hwf2.2.2.2.1, hwf2.2.2.2.2.1⟩
     have hmc := IH hkw1 hkw2 (fun c _ h => h)
-    rw [unionU, if_pos heq, contains_bin, contains_bin, contains_bin]
+    rw [unionU, if_pos heq, Array.emptyWithCapacity_eq, contains_bin, contains_bin, contains_bin]
     by_cases hM : testBit (m1 ||| m2) (chunk j l1) = true
     · rw [hM, Bool.true_and, childAt_mergeKids cf m1 k1 m2 k2 (chunk j l1) (chunk_lt j l1) hM,
           hmc (chunk j l1) (chunk_lt j l1) hM]
@@ -2322,7 +2324,7 @@ theorem WF_unionU (cf : V → V → V) : ∀ (a b : PTree L), WF a → WF b → 
       rw [WF] at hwf1; exact hwf1.2.2.2.2.2
     have hrout2 : ∀ c, c < 32 → testBit m2 c = true → AlignedAt l1 c p1 (childAt m2 k2 c) := by
       rw [WF] at hwf2; exact hwf2.2.2.2.2.2
-    rw [unionU, if_pos heq, WF]
+    rw [unionU, if_pos heq, Array.emptyWithCapacity_eq, WF]
     refine ⟨hl0, size_mergeKids cf m1 k1 m2 k2, Nat.le_trans hpc1 (popCount_or_left m1 m2),
       IH hkw1 hkw2 (by intro c hc; simp at hc), ?_, ?_⟩
     · intro x hx
@@ -3220,7 +3222,7 @@ theorem meet_WF_contains (cf : V → V → V) : ∀ (a b : PTree L), WF a → WF
       exact hrout1 c hc htbm1 key (and_split hkey).1
     have hmu : meetU cf (.bin p1 l1 m1 k1) (.bin p2 l1 m2 k2)
         = finalize p1 l1 (m1 &&& m2) (meetKids cf m1 k1 m2 k2 (m1 &&& m2) #[]) := by
-      rw [meetU, if_pos heq, if_pos hpfx]
+      rw [meetU, if_pos heq, if_pos hpfx, Array.emptyWithCapacity_eq]
     rw [hmu]
     refine ⟨WF_finalize p1 l1 (m1 &&& m2) _ hl0 hwfchildren halign, ?_⟩
     intro k
@@ -4294,7 +4296,7 @@ theorem get?_unionU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF a �
     have hkw1 : KidsWF m1 k1 := by rw [WF] at hwf1; exact ⟨hwf1.2.1, hwf1.2.2.2.1, hwf1.2.2.2.2.1⟩
     have hkw2 : KidsWF m2 k2 := by rw [WF] at hwf2; exact ⟨hwf2.2.1, hwf2.2.2.2.1, hwf2.2.2.2.2.1⟩
     have hmc := IH hkw1 hkw2 (fun c _ h => h)
-    rw [unionU, if_pos heq, get?_bin, get?_bin, get?_bin]
+    rw [unionU, if_pos heq, Array.emptyWithCapacity_eq, get?_bin, get?_bin, get?_bin]
     by_cases hM : testBit (m1 ||| m2) (chunk j l1) = true
     · rw [if_pos hM, childAt_mergeKids cf m1 k1 m2 k2 (chunk j l1) (chunk_lt j l1) hM]
       exact hmc (chunk j l1) (chunk_lt j l1) hM
@@ -4806,7 +4808,7 @@ theorem get?_meetU (cf : V → V → V) (j : Nat) : ∀ (a b : PTree L), WF a �
       rw [hslotC c hc htb key] at hkey
       have htbm1 : testBit m1 c = true := by rw [testBit_and] at htb; exact (and_split htb).1
       exact hrout1 c hc htbm1 key (and_split hkey).1
-    rw [meetU, if_pos heq, if_pos hpfx, get?_finalize j p1 l1 (m1 &&& m2) _ halign]
+    rw [meetU, if_pos heq, if_pos hpfx, Array.emptyWithCapacity_eq, get?_finalize j p1 l1 (m1 &&& m2) _ halign]
     by_cases hM : testBit (m1 &&& m2) (chunk j l1) = true
     · have h12 := testBit_and m1 m2 (chunk j l1)
       rw [hM] at h12
