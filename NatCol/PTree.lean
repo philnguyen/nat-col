@@ -147,8 +147,7 @@ decreasing_by
 /-- Append every `(key, value)` pair to `acc`, in ascending key order. A `tip` enumerates its leaf
 (`LeafOps.toArray`, ascending slots), reconstructing each full key from the tip's prefix; a `bin`
 visits its children left-to-right (children sit in ascending chunk-at-level order), so the whole
-walk is ascending. The one structural traversal the higher-level folds/filters/monadic ops reduce
-to (via `toArray`). -/
+walk is ascending. -/
 private def toArrayAux : Array (Nat × V) → PTree L → Array (Nat × V)
   | acc, .nil            => acc
   | acc, .tip pfx leaf   =>
@@ -163,6 +162,91 @@ decreasing_by
 
 /-- All `(key, value)` pairs of the trie, ascending by key. -/
 @[inline] def toArray (t : PTree L) : Array (Nat × V) := toArrayAux #[] t
+
+-- Structural traversals: the fold family walks the trie directly (same ascending order as
+-- `toArrayAux`, whose key reconstruction the `tip` cases reuse) instead of materializing
+-- `toArray` first. `all`/`any` thread a `Bool` accumulator through `&&`/`||`, whose lazy second
+-- argument skips both the predicate and the child recursion once the answer is decided (the
+-- `restrictsLoop` shape); the monadic pair skips the predicate the same way, explicitly.
+
+/-- Fold `f` over all present `(key, value)` pairs, ascending by key, starting from `init`. -/
+@[specialize] def foldl {β : Type w} (f : β → Nat → V → β) (init : β) : PTree L → β
+  | .nil            => init
+  | .tip pfx leaf   =>
+      (LeafOps.toArray leaf).foldl (fun acc sv => f acc ((pfx <<< 5) ||| sv.1.toNat) sv.2) init
+  | .bin _ _ _ kids => kids.attach.foldl (fun acc ⟨c, _⟩ => foldl f acc c) init
+termination_by t => sizeOf t
+decreasing_by
+  simp_wf
+  rename_i c hc
+  have := Array.sizeOf_lt_of_mem hc
+  omega
+
+/-- Monadic fold over all present `(key, value)` pairs, ascending by key, starting from `init`. -/
+@[specialize] def foldlM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V → m β)
+    (init : β) : PTree L → m β
+  | .nil            => pure init
+  | .tip pfx leaf   =>
+      (LeafOps.toArray leaf).foldlM (fun acc sv => f acc ((pfx <<< 5) ||| sv.1.toNat) sv.2) init
+  | .bin _ _ _ kids => kids.attach.foldlM (fun acc ⟨c, _⟩ => foldlM f acc c) init
+termination_by t => sizeOf t
+decreasing_by
+  simp_wf
+  rename_i c hc
+  have := Array.sizeOf_lt_of_mem hc
+  omega
+
+/-- Whether every present `(key, value)` pair satisfies `p`, short-circuiting at the first
+failure. -/
+@[specialize] def all (p : Nat → V → Bool) : PTree L → Bool
+  | .nil            => true
+  | .tip pfx leaf   => (LeafOps.toArray leaf).all (fun sv => p ((pfx <<< 5) ||| sv.1.toNat) sv.2)
+  | .bin _ _ _ kids => kids.attach.foldl (fun acc ⟨c, _⟩ => acc && all p c) true
+termination_by t => sizeOf t
+decreasing_by
+  simp_wf
+  rename_i c hc
+  have := Array.sizeOf_lt_of_mem hc
+  omega
+
+/-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first
+success. -/
+@[specialize] def any (p : Nat → V → Bool) : PTree L → Bool
+  | .nil            => false
+  | .tip pfx leaf   => (LeafOps.toArray leaf).any (fun sv => p ((pfx <<< 5) ||| sv.1.toNat) sv.2)
+  | .bin _ _ _ kids => kids.attach.foldl (fun acc ⟨c, _⟩ => acc || any p c) false
+termination_by t => sizeOf t
+decreasing_by
+  simp_wf
+  rename_i c hc
+  have := Array.sizeOf_lt_of_mem hc
+  omega
+
+/-- Monadic `all`: threads effects in ascending key order, skipping `p` once a failure is seen. -/
+@[specialize] def allM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) : PTree L → m Bool
+  | .nil            => pure true
+  | .tip pfx leaf   => (LeafOps.toArray leaf).allM (fun sv => p ((pfx <<< 5) ||| sv.1.toNat) sv.2)
+  | .bin _ _ _ kids =>
+      kids.attach.foldlM (fun acc ⟨c, _⟩ => if acc then allM p c else pure false) true
+termination_by t => sizeOf t
+decreasing_by
+  simp_wf
+  rename_i c hc
+  have := Array.sizeOf_lt_of_mem hc
+  omega
+
+/-- Monadic `any`: threads effects in ascending key order, skipping `p` once a success is seen. -/
+@[specialize] def anyM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) : PTree L → m Bool
+  | .nil            => pure false
+  | .tip pfx leaf   => (LeafOps.toArray leaf).anyM (fun sv => p ((pfx <<< 5) ||| sv.1.toNat) sv.2)
+  | .bin _ _ _ kids =>
+      kids.attach.foldlM (fun acc ⟨c, _⟩ => if acc then pure true else anyM p c) false
+termination_by t => sizeOf t
+decreasing_by
+  simp_wf
+  rename_i c hc
+  have := Array.sizeOf_lt_of_mem hc
+  omega
 
 -- Structural equality. On WF (canonical) tries this coincides with logical equality
 -- (`eq_of_beq`/`beq_refl`), which is what makes the `NatCollection` `BEq` lawful. Children are

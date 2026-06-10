@@ -85,32 +85,37 @@ coinciding key. -/
 @[specialize] def ofList (l : List (Nat × V)) : NatCollection L :=
   ⟨PTree.ofList l, PTree.WF_ofList l⟩
 
-/-- Fold `f` over all present `(key, value)` pairs, ascending by key, starting from `init`. -/
+/-- Fold `f` over all present `(key, value)` pairs, ascending by key, starting from `init`.
+Walks the trie directly (`PTree.foldl`) — no intermediate list. -/
 @[specialize] def fold {β : Type w} (f : β → Nat → V → β) (init : β) (c : NatCollection L) : β :=
-  c.toList.foldl (fun acc kv => f acc kv.1 kv.2) init
+  PTree.foldl f init c.tree
 
 /-- Monadic fold over all present `(key, value)` pairs, ascending by key, starting from `init`. -/
-def foldM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V → m β) (init : β)
-    (c : NatCollection L) : m β :=
-  c.toList.foldlM (fun acc kv => f acc kv.1 kv.2) init
+@[specialize] def foldM {β : Type w} {m : Type w → Type w'} [Monad m] (f : β → Nat → V → m β)
+    (init : β) (c : NatCollection L) : m β :=
+  PTree.foldlM f init c.tree
 
-/-- Whether every present `(key, value)` pair satisfies `p`, short-circuiting at the first failure. -/
-def all (p : Nat → V → Bool) (c : NatCollection L) : Bool :=
-  c.toList.all (fun kv => p kv.1 kv.2)
+/-- Whether every present `(key, value)` pair satisfies `p`, short-circuiting at the first
+failure (the walk past the failing subtree is skipped, not just the predicate). -/
+@[specialize] def all (p : Nat → V → Bool) (c : NatCollection L) : Bool :=
+  PTree.all p c.tree
 
-/-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first success. -/
-def any (p : Nat → V → Bool) (c : NatCollection L) : Bool :=
-  c.toList.any (fun kv => p kv.1 kv.2)
+/-- Whether some present `(key, value)` pair satisfies `p`, short-circuiting at the first
+success. -/
+@[specialize] def any (p : Nat → V → Bool) (c : NatCollection L) : Bool :=
+  PTree.any p c.tree
 
 /-- Monadic `all`: whether every present `(key, value)` pair satisfies the monadic predicate `p`,
 threading effects in ascending key order and skipping `p` once a failure is seen. -/
-def allM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (c : NatCollection L) : m Bool :=
-  c.toList.foldlM (fun acc kv => if acc then p kv.1 kv.2 else pure false) true
+@[specialize] def allM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool)
+    (c : NatCollection L) : m Bool :=
+  PTree.allM p c.tree
 
 /-- Monadic `any`: whether some present `(key, value)` pair satisfies `p`, skipping `p` once a
 success is seen. -/
-def anyM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool) (c : NatCollection L) : m Bool :=
-  c.toList.foldlM (fun acc kv => if acc then pure true else p kv.1 kv.2) false
+@[specialize] def anyM {m : Type → Type w} [Monad m] (p : Nat → V → m Bool)
+    (c : NatCollection L) : m Bool :=
+  PTree.anyM p c.tree
 
 /-- Keep only the `(key, value)` pairs satisfying `p`. Rebuilt from the survivors, so the result is
 canonical and equals the collection built directly from them. -/
