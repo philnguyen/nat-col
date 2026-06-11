@@ -98,11 +98,12 @@ Within each `NatCol/*.lean` the declarations are split under two banners: **Impl
 Both collections follow the naming of `Std.Data.HashMap`/`HashSet`.
 
 **`NatSet`** — `empty`/`∅`, `isEmpty`, `size`, `contains` / `∈`, `insert`, `erase`, `ofList`,
-`toList`, `fold`/`foldM`, `all`/`any`/`filter` (+ monadic `allM`/`anyM`/`filterM`), and the lattice
-ops `union` (`∪`), `inter` (`∩`), `subset` (`⊆`).
+`toList`, `fold`/`foldM`, `all`/`any`/`filter`/`partition` (+ monadic `allM`/`anyM`/`filterM`), and
+the lattice ops `union` (`∪`), `inter` (`∩`), `diff` (`\`), `subset` (`⊆`).
 
-**`NatMap α`** — the above keyed form (`get?`, `getD`, `modify`, value-aware `fold`/`filter`/…),
-plus `join`/`meet`/`restricts` taking a `combine : α → α → α` (resp. `rel : α → α → Bool`) to
+**`NatMap α`** — the above keyed form (`get?`, `getD`, `alter`, `modify`, value-aware
+`fold`/`filter`/…, plus `keys`/`values` and `domain`, the key set as a `NatSet`), plus
+`join`/`meet`/`restricts` taking a `combine : α → α → α` (resp. `rel : α → α → Bool`) to
 reconcile values at coinciding keys, and `NatMap.map : (α → β) → NatMap α → NatMap β` (the `Functor`
 action `f <$> m`).
 
