@@ -200,7 +200,9 @@ lookups are competitive, and insertion memory dropped ~6×; the hash structures 
 random insert/lookup throughput and on peak `union` memory. (`subset`/`lookup` are read-only, so
 their resident growth is noise.) Numbers vary run to run and across machines.
 
-## Relation to Gödel hashing
+## Related work
+
+### Gödel hashing
 
 A close cousin in spirit is [Gödel hashing](https://matt.might.net/papers/liang2014godel.pdf)
 (Liang & Might, 2014), which encodes a finite set as a single integer — the product of one distinct
@@ -214,6 +216,25 @@ integer grows with every element, needs an element→prime oracle, and can only 
 *factoring* it — so cardinality, enumeration, and arbitrary-valued maps are costly or out of reach.
 nat-col keeps keys as trie paths instead, trading that arithmetic elegance for cheap enumeration,
 real `NatMap`s over arbitrary values, `O(key length)` incremental updates, and large, sparse keys.
+
+### Okasaki–Gill Patricia tries
+
+The direct ancestor of nat-col's core is *Fast Mergeable Integer Maps* (Okasaki & Gill, 1998), the
+paper that revived Morrison's PATRICIA trees as a purely functional data structure and became the
+basis of Haskell's `Data.IntMap`/`IntSet`. Its insight is the one this library is built
+on: when an integer key is its own path and a branch node is created **only where keys diverge**
+(path compression), the tree's shape is canonical, updates touch one root-to-leaf path, and
+`union`/`intersection`/`subset` become divide-and-conquer **merges** — subtrees are aligned by
+prefix and reused or discarded wholesale rather than probed element by element, which is exactly
+why a Patricia trie merges fast where a hash table must rebuild. nat-col's `join`/`meet`/`restricts`
+are that merge, and the benchmark story above (winning `union`/`subset` across every key domain) is
+the paper's title claim playing out. What nat-col changes is the *node*: Okasaki & Gill branch on
+**one bit** at a time and store one key per leaf, whereas nat-col consumes **5 bits** per level
+through a 32-slot mask plus a popcount-indexed compact child array (the HAMT node layout — minus
+the hashing) and bottoms out in 32-bit bitset leaves, so the trie is a fifth as deep, the bottom
+five bits of every key are plain bitwise ops, and keys are never stored at all. And where the paper
+argues correctness informally and validates the design with benchmarks, nat-col proves the lattice
+laws machine-checked in Lean.
 
 ## Status
 
