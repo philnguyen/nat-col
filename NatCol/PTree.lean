@@ -6266,6 +6266,38 @@ theorem WF_map {L' V' : Type u'} [LeafOps L' V'] (g : L → L')
 termination_by t => sizeOf t
 decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem hc0; omega
 
+/-- Pointwise-on-members congruence for an accumulating sum-fold (the `size_map` companion:
+core's fold congruences need whole-function equality, but `size_map`'s induction hypothesis
+only covers genuine children). -/
+private theorem foldl_add_congr {α : Type u'} (f₁ f₂ : α → Nat) :
+    (l : List α) → (∀ c ∈ l, f₁ c = f₂ c) → (acc : Nat) →
+    l.foldl (fun acc c => acc + f₁ c) acc = l.foldl (fun acc c => acc + f₂ c) acc
+  | [], _, _ => rfl
+  | c :: rest, h, acc => by
+      rw [List.foldl_cons, List.foldl_cons, h c (List.mem_cons_self ..),
+          foldl_add_congr f₁ f₂ rest (fun d hd => h d (List.mem_cons_of_mem c hd)) (acc + f₂ c)]
+
+/-- `map` preserves `size` when `g`'s leaf action preserves leaf size: the trie shape is unchanged,
+so the key count is the same sum of leaf sizes. Manual structural recursion; the children's
+induction hypotheses thread through the size fold via `foldl_add_congr`. -/
+theorem size_map {L' V' : Type u'} [LeafOps L' V'] (g : L → L')
+    (hsize : ∀ l, LeafOps.size (g l) = LeafOps.size l) :
+    (t : PTree L) → size (map g t) = size t
+  | .nil => by simp only [map, size]
+  | .tip pfx leaf => by simp only [map, size]; exact hsize leaf
+  | .bin pfx level mask kids => by
+      rw [map_bin]
+      simp only [size]
+      rw [Array.foldl_attach (f := fun acc (c : PTree L') => acc + c.size),
+          Array.foldl_attach (f := fun acc (c : PTree L) => acc + c.size),
+          Array.foldl_map, ← Array.foldl_toList, ← Array.foldl_toList]
+      exact foldl_add_congr _ _ kids.toList (fun c hc => size_map g hsize c) 0
+termination_by t => sizeOf t
+decreasing_by
+  simp_wf
+  have := Array.sizeOf_lt_of_mem (Array.mem_toList_iff.mp hc)
+  omega
+
 mutual
 /-- `map` respects pointwise equality of the leaf function. -/
 theorem map_congr {L' : Type u'} (g₁ g₂ : L → L') (h : ∀ l, g₁ l = g₂ l) :

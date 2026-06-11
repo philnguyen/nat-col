@@ -726,6 +726,25 @@ theorem get?_map {α β : Type u} (f : α → β) (m : NatMap α) (k : Nat) :
   show PTree.get? k (PTree.map (Node.map f) m.tree) = (PTree.get? k m.tree).map f
   exact PTree.get?_map (Node.map f) f (fun l i => Node.get?_map f l i) k m.tree
 
+/-- `domain` preserves the size: the key set has exactly as many elements as the map has entries.
+Immediate from `PTree.size_map`, since a map leaf and its mask have the same population count. -/
+@[simp]
+theorem size_domain (m : NatMap α) : m.domain.size = m.size := by
+  show PTree.size (PTree.map (fun l => l.positionsMask) m.tree) = PTree.size m.tree
+  exact PTree.size_map (fun l => l.positionsMask) (fun _ => rfl) m.tree
+
+/-- A key is in the domain exactly when it is in the map (`Bool` form): both sides test the same
+mask bit, on tries of the same shape. -/
+theorem contains_domain (m : NatMap α) (k : Nat) : m.domain.contains k = m.contains k := by
+  show PTree.contains k (PTree.map (fun l => l.positionsMask) m.tree) = PTree.contains k m.tree
+  exact PTree.contains_map (fun l => l.positionsMask) (fun _ _ => rfl) k m.tree
+
+/-- A key is in the domain exactly when it is in the map. -/
+@[simp]
+theorem mem_domain (m : NatMap α) (k : Nat) : k ∈ m.domain ↔ k ∈ m := by
+  show m.domain.contains k = true ↔ m.contains k = true
+  rw [contains_domain]
+
 end NatMap
 
 /-- `NatMap` is a lawful functor: `map` satisfies the identity and composition laws (and the
