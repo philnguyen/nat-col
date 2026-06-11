@@ -6,11 +6,16 @@ For each *domain* of inputs
   * `sequential` — `0, 1, …, N-1`
   * `shuffled`   — a fixed seeded shuffle of `0 … N-1` (so values stay "small")
   * `random`     — `N` values in `[0, 2⁶³)`
-we time four *operations*
+we time seven *operations*
   * `insertion`  — build the set from the value list (report its size)
   * `lookup`     — sum the elements found while probing every value (report the sum)
   * `union`      — turn the values into singletons, then fold them pairwise into one set
   * `subset`     — build two equal sets from the values, then check `s ⊆ t` (report 1/0)
+  * `erase present` — build the set, then erase every value (report the final size, 0)
+  * `erase absent`  — build a set of the doubled (even) values, then erase the odd
+                      shadows `2v+1` — every erase is a logical no-op (report the size)
+  * `re-insert`     — build the set, then insert the same values again — every insert
+                      is a logical no-op (report the size)
 
 `Std.HashSet` ships a `union`; `PersistentHashSet` does not, so we synthesize one
 with `fold` (per the design note). Neither ships a `subset`, so we synthesize those
@@ -203,6 +208,46 @@ def subsetPHashSet (data : List Nat) : IO Sample := do
   let t ← forceIO (fun _ => data.foldl (·.insert ·) emptyPSet)
   measure (fun _ => psSubset s t) boolCheck
 
+-- erase (present): set built in setup (untimed, forced); time erasing every value; check = final
+-- size (0 — every value, duplicates included, ends up erased)
+def erasePresentNatSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => NatSet.ofList data)
+  measure (fun _ => data.foldl (·.erase ·) s) (·.size)
+def erasePresentHashSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => data.foldl (·.insert ·) emptyHSet)
+  measure (fun _ => data.foldl (·.erase ·) s) (·.size)
+def erasePresentPHashSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => data.foldl (·.insert ·) emptyPSet)
+  measure (fun _ => data.foldl (·.erase ·) s) psSize
+
+-- erase (absent): set built from the doubled (even) values, probe list = their odd shadows
+-- `2v+1` (same magnitudes, guaranteed absent) — both in setup; time the all-no-op erase fold;
+-- check = size (unchanged)
+def eraseAbsentNatSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => NatSet.ofList (data.map (· * 2)))
+  let absent ← forceIO (fun _ => data.map (2 * · + 1))
+  measure (fun _ => absent.foldl (·.erase ·) s) (·.size)
+def eraseAbsentHashSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => (data.map (· * 2)).foldl (·.insert ·) emptyHSet)
+  let absent ← forceIO (fun _ => data.map (2 * · + 1))
+  measure (fun _ => absent.foldl (·.erase ·) s) (·.size)
+def eraseAbsentPHashSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => (data.map (· * 2)).foldl (·.insert ·) emptyPSet)
+  let absent ← forceIO (fun _ => data.map (2 * · + 1))
+  measure (fun _ => absent.foldl (·.erase ·) s) psSize
+
+-- re-insert: set built in setup (untimed, forced); time inserting the same values again (every
+-- insert a logical no-op); check = size (unchanged)
+def reinsertNatSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => NatSet.ofList data)
+  measure (fun _ => data.foldl (·.insert ·) s) (·.size)
+def reinsertHashSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => data.foldl (·.insert ·) emptyHSet)
+  measure (fun _ => data.foldl (·.insert ·) s) (·.size)
+def reinsertPHashSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => data.foldl (·.insert ·) emptyPSet)
+  measure (fun _ => data.foldl (·.insert ·) s) psSize
+
 def runOne (struct domain op : String) (n : Nat) : IO Sample := do
   let data := mkData domain n
   match op, struct with
@@ -218,6 +263,15 @@ def runOne (struct domain op : String) (n : Nat) : IO Sample := do
   | "subset", "natset" => subsetNatSet data
   | "subset", "hashset" => subsetHashSet data
   | "subset", "phashset" => subsetPHashSet data
+  | "erasep", "natset" => erasePresentNatSet data
+  | "erasep", "hashset" => erasePresentHashSet data
+  | "erasep", "phashset" => erasePresentPHashSet data
+  | "erasea", "natset" => eraseAbsentNatSet data
+  | "erasea", "hashset" => eraseAbsentHashSet data
+  | "erasea", "phashset" => eraseAbsentPHashSet data
+  | "reinsert", "natset" => reinsertNatSet data
+  | "reinsert", "hashset" => reinsertHashSet data
+  | "reinsert", "phashset" => reinsertPHashSet data
   | _, _ => throw <| IO.userError s!"unknown benchmark: op={op} struct={struct}"
 
 /-! ## Worker / driver plumbing -/
@@ -228,9 +282,10 @@ def structs : List (String × String) :=
 /-- The three input domains. -/
 def domains : List (String × String) :=
   [("seq", "sequential"), ("shuffled", "shuffled"), ("random", "random 0..2⁶³")]
-/-- The four operations. -/
+/-- The seven operations. -/
 def ops : List (String × String) :=
-  [("insert", "insertion"), ("lookup", "lookup"), ("union", "union"), ("subset", "subset")]
+  [("insert", "insertion"), ("lookup", "lookup"), ("union", "union"), ("subset", "subset"),
+   ("erasep", "erase present"), ("erasea", "erase absent"), ("reinsert", "re-insert")]
 
 /-- Format nanoseconds as milliseconds with two decimals, using integer math. -/
 def fmtMs (nanos : Nat) : String :=
@@ -240,7 +295,7 @@ def fmtMs (nanos : Nat) : String :=
 def padLeft (w : Nat) (s : String) : String := "".pushn ' ' (w - min w s.length) ++ s
 def padRight (w : Nat) (s : String) : String := s ++ "".pushn ' ' (w - min w s.length)
 
-private def labelW : Nat := 26
+private def labelW : Nat := 32
 private def colW : Nat := 20
 
 /-- Print one table: rows are `domain / op`, columns are the data structures. -/
