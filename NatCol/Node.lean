@@ -60,7 +60,7 @@ instance {α : Type u} [BEq α] [LawfulBEq α] : LawfulBEq (Node α) where
 /-- The value-level reading of `restricts` at a single slot/key: present on the left forces
 present on the right with `rel` holding; absent on the left is vacuously fine. This is the
 denotational counterpart of `restricts` the way `optVmeet` is for `meet`. Lives here (not in
-`Tree`) because `Node.restricts_iff` already needs it. -/
+`PTree`) because `Node.restricts_iff` already needs it. -/
 def optRel {V : Type u} (rel : V → V → Bool) : Option V → Option V → Bool
   | some x, some y => rel x y
   | some _, none   => false
@@ -101,20 +101,19 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   /-- Present `(slot, value)` pairs in ascending slot order. -/
   toArray   : L → Array (UInt32 × V)
   /-- Keep only the slots whose `(slot, value)` satisfies `p`. The leaf base case of
-  `Tree.filter`; a fully-filtered leaf becomes empty, but that emptiness is governed at the node
-  above (or the collection top), so this carries no canonical-shape obligation of its own. -/
+  `PTree.filter`; a fully-filtered leaf becomes empty, but that emptiness is governed one level
+  up (`filterU` drops an emptied `tip`), so this carries no canonical-shape obligation of its own. -/
   filter    : (UInt32 → V → Bool) → L → L
-  /-- A representative present slot of a non-empty leaf (the lowest set slot). The path-compressed
-  successor `NatCol.PTree` reconstructs a representative key for a `tip` from this (`someKey`,
-  `witnessKey`), which its branch/`join` routing needs to recover a node's shared prefix. The old
-  height-indexed `Tree` never probes a representative key, so it ignores this field. -/
+  /-- A representative present slot of a non-empty leaf (the lowest set slot). `NatCol.PTree`
+  reconstructs a representative key for a `tip` from this (`someKey`, `witnessKey`), which its
+  branch/`join` routing needs to recover a node's shared prefix. -/
   someSlot  : L → UInt32
   /-- `contains` agrees with `get?`'s presence: the `Bool` fast path matches the denotational
   lookup. Lets the collection layer keep its `get?`-based membership lemmas after routing
   `contains` through the boxing-free path. -/
   contains_eq_isSome : ∀ (l : L) (i : UInt32), contains l i = (get? l i).isSome
   /-- Inserting a value yields a non-empty leaf, so freshly-built subtrees are never empty.
-  Part of the canonical-shape invariant (`Tree.Full`). -/
+  Part of the canonical-shape invariant (`PTree.WF`). -/
   insert_ne_empty : ∀ (l : L) (i : UInt32) (v : V), isEmpty (insert l i v) = false
   /-- Modifying a value never changes whether a leaf is empty (it touches values, not
   presence), so `modify` preserves canonical shape. -/
@@ -144,35 +143,34 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   associativity of `join`; `joinEq_assoc` lifts it through the tree. -/
   join_assoc : ∀ (c : V → V → V), (∀ x y z, c (c x y) z = c x (c y z)) →
     ∀ (a b d : L), join c (join c a b) d = join c a (join c b d)
-  /-- Joining (with any combine) onto a non-empty leaf stays non-empty. Backs
-  `Tree.isEmpty_joinEq_eq_false`, which the canonical-shape side of `join` associativity needs. -/
+  /-- Joining (with any combine) onto a non-empty leaf stays non-empty. Backs the `tip`/`tip`
+  case of `PTree.WF_union`: a joined leaf stays non-empty, which `union`'s canonical-shape
+  preservation needs. -/
   isEmpty_join : ∀ (c : V → V → V) (a b : L), isEmpty a = false → isEmpty (join c a b) = false
   /-- The empty leaf reads `none` everywhere. Backs the `get?`-based denotational semantics the
   `meet`-associativity proof is built against. -/
   get?_empty : ∀ (i : UInt32), get? (empty : L) i = none
   /-- `get?` reads a `meet` as the value-level intersection (`optVmeet`) of the two lookups: a
-  slot survives only if present on both leaves. The leaf base case of `Tree.get?_meetEq`. Stated
+  slot survives only if present on both leaves. The leaf base case of `PTree.get?_meet`. Stated
   on in-range slots (`< 32`); leaf `get?` only ever reads `chunk`s, which are. -/
   get?_meet : ∀ (c : V → V → V) (a b : L) (i : UInt32), i < 32 →
     get? (meet c a b) i = optVmeet c (get? a i) (get? b i)
-  /-- `get?` of an equal-height `join` is the value-level union of the two lookups. The leaf base
-  case of `Tree.get?_joinEq`. -/
+  /-- `get?` of a `join` is the value-level union of the two lookups. The leaf base case of
+  `PTree.get?_union`. -/
   get?_join : ∀ (c : V → V → V) (a b : L) (i : UInt32), i < 32 →
     get? (join c a b) i = optVjoin c (get? a i) (get? b i)
   /-- `get?` reads an `insert` pointwise: the inserted slot reads the new value, every other slot
   is unchanged. Stated on in-range slots (`< 32`); leaf `get?`/`insert` only ever touch `chunk`s,
-  which are. The leaf base case of `Tree.get?_insert`. -/
+  which are. The leaf base case of `PTree.get?_insert`. -/
   get?_insert : ∀ (l : L) (i j : UInt32) (v : V), i < 32 → j < 32 →
     get? (insert l i v) j = if j = i then some v else get? l j
-  /-- A leaf is determined by its `get?` at in-range slots. The leaf base case of `Tree.ext`. -/
+  /-- A leaf is determined by its `get?` at in-range slots. The leaf base case of `PTree.ext_get?`. -/
   get?_ext : ∀ (a b : L), (∀ i, i < 32 → get? a i = get? b i) → a = b
-  /-- A non-empty leaf has a present slot (`< 32`). The leaf base case of `Tree.exists_get?`. -/
-  exists_get?_of_ne_empty : ∀ (l : L), isEmpty l = false → ∃ i, i < 32 ∧ (get? l i).isSome
   /-- `restricts` reads denotationally: it holds exactly when, slot by slot, a present left value
   forces a related right value (`optRel`). The reflexivity hypothesis lets the *set* leaf — whose
   `restricts` discards `rel`, comparing only the bitsets — still satisfy this (its sole value is
   `()`, so reflexivity makes `rel` vacuous on shared slots). The leaf base case of
-  `Tree.restrictsEq_iff`, which drives `restricts` transitivity. -/
+  `PTree.subset_iff`, which drives `restricts` transitivity. -/
   get?_restricts : ∀ (rel : V → V → Bool), (∀ x, rel x x = true) → ∀ (a b : L),
     (restricts rel a b = true ↔ ∀ i, i < 32 → optRel rel (get? a i) (get? b i) = true)
   /-- The representative slot of a non-empty leaf is in range (`< 32`). Backs the in-range
@@ -254,18 +252,6 @@ instance : LeafOps UInt32 Unit where
     intro i hi
     have hi' := h i hi
     by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;> simp_all
-  exists_get?_of_ne_empty u h := by
-    have hu : u ≠ 0 := beq_eq_false_iff_ne.mp h
-    rcases Classical.em (∃ i, i < 32 ∧ testBit u i = true) with ⟨i, hi, hb⟩ | hno
-    · exact ⟨i, hi, by simp [hb]⟩
-    · exfalso
-      apply hu
-      apply eq_of_testBit_eq
-      intro i hi
-      rw [testBit_zero]
-      cases hb : testBit u i with
-      | false => rfl
-      | true => exact absurd ⟨i, hi, hb⟩ hno
   get?_restricts rel hrefl a b := by
     show ((a &&& b) == a) = true ↔
       ∀ i, i < 32 → optRel rel (if testBit a i then some () else none)
@@ -367,28 +353,6 @@ def insert (n : Node α) (i : UInt32) (a : α) : Node α := n.alter i (fun _ => 
 def erase (n : Node α) (i : UInt32) : Node α := n.alter i (fun _ => none)
 
 def modify (n : Node α) (i : UInt32) (f : α → α) : Node α := n.alter i (Option.map f)
-
-/-- Overwrite the child at a *present* slot `i` with `a`. The closure-free fast path of
-`insert i a` for a known-present slot: it skips re-testing the bit and re-reading/​boxing the old
-child (`set!` preserves both mask and size, regardless of the slot). Equal to `insert i a`
-(`setChild_eq_insert`). -/
-@[inline] def setChild (n : Node α) (i : UInt32) (a : α) : Node α :=
-  ⟨n.positionsMask, n.elements.set! (arrayIndex n.positionsMask i) a, by
-    simp only [Array.set!, Array.size_setIfInBounds]; exact n.elements_compact⟩
-
-/-- Splice `a` into a known-*absent* slot `i`: set the bit and `insertIdx!` at the compact index.
-The closure-free fast path of `insert i a` for an absent slot — it skips the redundant slot re-test
-and the `none` callback. The `testBit … = false` proof is what makes the new size match the raised
-popcount. Equal to `insert i a` (`insertChild_eq_insert`). -/
-@[inline] def insertChild (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = false) (a : α) :
-    Node α :=
-  ⟨setBit n.positionsMask i, n.elements.insertIdx! (arrayIndex n.positionsMask i) a, by
-    have hle : arrayIndex n.positionsMask i ≤ n.elements.size := by
-      rw [n.elements_compact]; exact arrayIndex_le n.positionsMask i
-    have hsb := popCount_setBit n.positionsMask i h
-    rw [show n.elements.insertIdx! (arrayIndex n.positionsMask i) a
-          = n.elements.insertIdx (arrayIndex n.positionsMask i) a hle from dif_pos hle,
-        Array.size_insertIdx, n.elements_compact, hsb]⟩
 
 /-- Iterate `f acc i child` over the *present* slots of `n` (those of `m`), lowest first
 (`lowestSetIdx`/`clearLowest`), reading the child with `get?`/`Option.elim` (a function application,
@@ -760,158 +724,12 @@ private theorem get?_emptyWithCapacity (c : Nat) (i : UInt32) :
     (Node.emptyWithCapacity c : Node α).get? i = none :=
   get?_eq_none_of_testBit _ i (testBit_zero i)
 
-/-! ### Lemmas backing the `NatCollection` canonical-shape invariant
+/-! ### Emptiness and mask lemmas backing the leaf obligations
 
-These support the collection layer's "no empty subtree" proof (`Tree.Full`). `mem_alter`
-identifies where a freshly-stored child can come from after a single-slot update, so each
-update preserves the per-child property. `join_forall`/`meet_forall` lift a property `P`
-over all stored children through the 32-slot fold that builds a merge: every element of the
-result is either reused from an operand or produced by `combine`, so it satisfies `P` as
-long as the operands' children and the `combine` outputs do. The mask helpers record how
-`insert`/`singleton` move `positionsMask`, feeding the height-minimality (`Tree.TopProper`)
-proofs. -/
-
-/-- Where a child of `n.alter i f` comes from: either it was already in `n`, or it is the
-value `f` produced for slot `i`. -/
-theorem mem_alter {α} (n : Node α) (i : UInt32) (f : Option α → Option α) (x : α)
-    (hx : x ∈ (n.alter i f).elements) :
-    x ∈ n.elements ∨ (∃ a, f (n.get? i) = some a ∧ x = a) := by
-  unfold Node.alter at hx
-  split at hx
-  · rename_i htb
-    rw [get?_eq_some_get n i htb]
-    split at hx
-    · rename_i a hfa
-      simp only at hx
-      rcases Array.mem_or_eq_of_mem_setIfInBounds hx with h | h
-      · exact Or.inl h
-      · exact Or.inr ⟨a, hfa, h⟩
-    · rename_i hfn
-      simp only at hx
-      have hlt : arrayIndex n.positionsMask i < n.elements.size := by
-        rw [n.elements_compact]; exact arrayIndex_lt n.positionsMask i htb
-      rw [show n.elements.eraseIdx! (arrayIndex n.positionsMask i)
-            = n.elements.eraseIdx (arrayIndex n.positionsMask i) hlt from dif_pos hlt] at hx
-      exact Or.inl (Array.mem_of_mem_eraseIdx hx)
-  · rename_i htb
-    rw [get?_eq_none_of_testBit n i htb]
-    split at hx
-    · rename_i a hfa
-      simp only at hx
-      have hle : arrayIndex n.positionsMask i ≤ n.elements.size := by
-        rw [n.elements_compact]; exact arrayIndex_le n.positionsMask i
-      rw [show n.elements.insertIdx! (arrayIndex n.positionsMask i) a
-            = n.elements.insertIdx (arrayIndex n.positionsMask i) a hle from dif_pos hle] at hx
-      rcases Array.mem_insertIdx.mp hx with h | h
-      · exact Or.inr ⟨a, hfa, h⟩
-      · exact Or.inl h
-    · rename_i hfn
-      exact Or.inl hx
-
-private theorem mem_insert {α} (n : Node α) (i : UInt32) (v x : α)
-    (hx : x ∈ (n.insert i v).elements) : x = v ∨ x ∈ n.elements := by
-  unfold Node.insert at hx
-  rcases mem_alter n i (fun _ => some v) x hx with h | ⟨a, ha, hxa⟩
-  · exact Or.inr h
-  · exact Or.inl (hxa.trans (Option.some.inj ha).symm)
-
-/-- Every child of a `mergeLoop` result satisfies `P`, provided the seed's children do and each
-`step` preserves `P` over the elements. Backs `join_forall`/`meet_forall`/`filterMap_forall`. -/
-private theorem mergeLoop_forall {α} {P : α → Prop} {step : Node α → UInt32 → Node α}
-    (hstep : ∀ (acc : Node α) (i : UInt32), (∀ z ∈ acc.elements, P z) →
-              ∀ z ∈ (step acc i).elements, P z)
-    (m : UInt32) (acc : Node α) (hacc : ∀ z ∈ acc.elements, P z) :
-    ∀ z ∈ (mergeLoop step m acc).elements, P z := by
-  by_cases hm : m = 0
-  · rw [mergeLoop, dif_pos hm]; exact hacc
-  · rw [mergeLoop, dif_neg hm]
-    exact mergeLoop_forall hstep (clearLowest m) (step acc (lowestSetIdx m))
-      (hstep acc (lowestSetIdx m) hacc)
-termination_by m.toNat
-decreasing_by exact toNat_clearLowest_lt m hm
-
-/-- Every child of a `join` result satisfies `P`, provided both operands' children and all
-`combine` outputs do. -/
-theorem join_forall {α} {P : α → Prop} {combine : α → α → Option α} {a b : Node α}
-    (hPa : ∀ x ∈ a.elements, P x) (hPb : ∀ y ∈ b.elements, P y)
-    (hPc : ∀ x ∈ a.elements, ∀ y ∈ b.elements, ∀ v, combine x y = some v → P v) :
-    ∀ z ∈ (Node.join combine a b).elements, P z := by
-  unfold Node.join
-  apply mergeLoop_forall
-  · intro acc i hacc z hz
-    unfold joinStep at hz
-    split at hz
-    · rename_i ha hb
-      split at hz
-      · rename_i v hcv
-        rcases mem_insert _ _ _ _ hz with h | h
-        · subst h; exact hPc _ (a.get_mem _ ha) _ (b.get_mem _ hb) _ hcv
-        · exact hacc _ h
-      · exact hacc _ hz
-    · rename_i ha hb
-      rcases mem_insert _ _ _ _ hz with h | h
-      · subst h; exact hPa _ (a.get_mem _ ha)
-      · exact hacc _ h
-    · rename_i ha hb
-      rcases mem_insert _ _ _ _ hz with h | h
-      · subst h; exact hPb _ (b.get_mem _ hb)
-      · exact hacc _ h
-    · exact hacc _ hz
-  · intro z hz; simp [Node.emptyWithCapacity] at hz
-
-/-- Every child of a `meet` result satisfies `P`, provided all `combine` outputs do (only
-slots present in both operands survive, so the operands' own children are irrelevant). -/
-theorem meet_forall {α} {P : α → Prop} {combine : α → α → Option α} {a b : Node α}
-    (hPc : ∀ x ∈ a.elements, ∀ y ∈ b.elements, ∀ v, combine x y = some v → P v) :
-    ∀ z ∈ (Node.meet combine a b).elements, P z := by
-  unfold Node.meet
-  apply mergeLoop_forall
-  · intro acc i hacc z hz
-    unfold meetStep at hz
-    split at hz
-    · rename_i ha hb
-      split at hz
-      · rename_i v hcv
-        rcases mem_insert _ _ _ _ hz with h | h
-        · subst h; exact hPc _ (a.get_mem _ ha) _ (b.get_mem _ hb) _ hcv
-        · exact hacc _ h
-      · exact hacc _ hz
-    · exact hacc _ hz
-    · exact hacc _ hz
-    · exact hacc _ hz
-  · intro z hz; simp [Node.emptyWithCapacity] at hz
-
-/-- Every child of a `filterMap` result satisfies `P`, provided each present slot's `some`
-output does. The single-operand, slot-aware analogue of `meet_forall`: a result child is the
-`f`-output of some present slot, so `hf` (quantified over present slots) covers it. -/
-theorem filterMap_forall {α} {P : α → Prop} {f : UInt32 → α → Option α} {n : Node α}
-    (hf : ∀ (i : UInt32) (h : testBit n.positionsMask i = true) (y : α),
-            f i (n.get i h) = some y → P y) :
-    ∀ z ∈ (Node.filterMap f n).elements, P z := by
-  unfold Node.filterMap
-  apply mergeLoop_forall
-  · intro acc i hacc z hz
-    unfold filterMapStep at hz
-    split at hz
-    · rename_i hb
-      split at hz
-      · rename_i y hcv
-        rcases mem_insert _ _ _ _ hz with h | h
-        · subst h; exact hf _ hb _ hcv
-        · exact hacc _ h
-      · exact hacc _ hz
-    · exact hacc _ hz
-  · intro z hz; simp [Node.emptyWithCapacity] at hz
-
-/-- `singleton`'s mask is a single set bit. -/
-private theorem singleton_positionsMask {α} (i : UInt32) (a : α) :
-    (Node.singleton i a).positionsMask = setBit 0 i := rfl
-
-/-- A singleton node is never empty. -/
-theorem isEmpty_singleton {α} (i : UInt32) (a : α) : (Node.singleton i a).isEmpty = false := by
-  unfold Node.isEmpty
-  rw [singleton_positionsMask]
-  exact beq_eq_false_iff_ne.mpr (setBit_ne_zero 0 i)
+These support the "no empty leaf" side of the canonical-shape invariant (`PTree.WF`). The mask
+helpers record how `insert`/`alter` move `positionsMask`; the emptiness facts they feed
+(`isEmpty_insert`, `isEmpty_alter_invariant`, `eq_empty_of_isEmpty`) discharge the map leaf's
+`LeafOps.insert_ne_empty`/`isEmpty_modify`/`eq_empty_of_isEmpty` obligations. -/
 
 /-- `insert` sets exactly slot `i` of the mask — even when it was already present, since
 `setBit` is idempotent (so an `insert` result is never empty). -/
@@ -943,25 +761,6 @@ theorem mem_of_get? {α} (n : Node α) (i : UInt32) (c : α) (h : n.get? i = som
     rw [Option.some.injEq] at h
     exact h ▸ n.get_mem i htb
   · exact absurd h (by simp)
-
-/-- A single-slot update whose callback yields a value sets exactly slot `i` of the mask
-(again idempotently). This drives the `insert` mask facts at the `Tree` level — that the
-slot is populated and the mask only grows — and hence height-minimality and non-emptiness. -/
-theorem positionsMask_alter_of_isSome {α} (n : Node α) (i : UInt32) (f : Option α → Option α)
-    (hf : (f (n.get? i)).isSome = true) :
-    (n.alter i f).positionsMask = setBit n.positionsMask i := by
-  unfold Node.alter
-  split
-  · rename_i htb
-    rw [get?_eq_some_get n i htb] at hf
-    split
-    · simp only; exact (setBit_eq_of_testBit n.positionsMask i htb).symm
-    · rename_i hfn; rw [hfn] at hf; simp at hf
-  · rename_i htb
-    rw [get?_eq_none_of_testBit n i htb] at hf
-    split
-    · rfl
-    · rename_i hfn; rw [hfn] at hf; simp at hf
 
 /-- A single-slot update whose callback preserves presence (`some ↦ some`, `none ↦ none`)
 leaves the mask unchanged. Used to show `modify` preserves the node's shape. -/
@@ -1039,7 +838,7 @@ theorem isEmpty_eq_false_of_get? (n : Node α) (s : UInt32) (h : (n.get? s).isSo
   intro h0; rw [h0, testBit_zero] at htb; exact absurd htb (by simp)
 
 /-- A non-empty node has a present slot (`< 32`). -/
-theorem exists_get?_of_isEmpty_false (n : Node α) (h : Node.isEmpty n = false) :
+private theorem exists_get?_of_isEmpty_false (n : Node α) (h : Node.isEmpty n = false) :
     ∃ i, i < 32 ∧ (n.get? i).isSome := by
   refine Classical.byContradiction fun hno => ?_
   have hzero : n.positionsMask = 0 := by
@@ -1594,21 +1393,6 @@ theorem get?_eq_none_of_isEmpty (n : Node α) (h : Node.isEmpty n = true) (s : U
   | none => rfl
   | some v => rw [hg] at hb; simp at hb
 
-/-- `get?` of a singleton: the lone slot reads its value, every other slot is `none`. Backs the
-slot-0 reasoning in `Tree`'s lift/spine bridge lemmas. -/
-theorem get?_singleton (i : UInt32) (a : α) (j : UInt32) (hi : i < 32) (hj : j < 32) :
-    (Node.singleton i a).get? j = if j = i then some a else none := by
-  rw [get?_eq_getElem?]
-  show (if testBit (setBit 0 i) j then (#[a])[arrayIndex (setBit 0 i) j]? else none)
-      = if j = i then some a else none
-  rw [testBit_setBit 0 i j hi hj, testBit_zero, Bool.false_or]
-  by_cases hji : j = i
-  · subst hji
-    rw [arrayIndex_setBit_self, show arrayIndex (0 : UInt32) j = 0 from Nat.le_zero.mp (arrayIndex_le 0 j)]
-    simp
-  · rw [if_neg hji, beq_eq_false_iff_ne.mpr (fun hc => hji hc.symm)]
-    simp
-
 /-- A single-slot update depends on the leaf only through its current value at that slot, so two
 callbacks agreeing on `n.get? i` give the same result. -/
 private theorem alter_congr (n : Node α) (i : UInt32) (f g : Option α → Option α)
@@ -1626,25 +1410,6 @@ reuse `get?_insert` for `alter`-built nodes whose callback never prunes. -/
 theorem alter_eq_insert (n : Node α) (i : UInt32) (f : Option α → Option α) (w : α)
     (h : f (n.get? i) = some w) : n.alter i f = n.insert i w :=
   alter_congr n i f (fun _ => some w) (by rw [h])
-
-/-- The present-slot fast path `setChild` agrees with `insert`: at a present slot `insert`
-overwrites in place, which is exactly the `set!` `setChild` performs. Lets `Tree.insertImpl`
-reuse all of `insert`'s characterizations. -/
-theorem setChild_eq_insert (n : Node α) (i : UInt32) (a : α)
-    (hp : testBit n.positionsMask i = true) : n.setChild i a = n.insert i a := by
-  unfold insert alter setChild
-  split
-  · rfl
-  · rename_i hpres; rw [hp] at hpres; contradiction
-
-/-- The absent-slot fast path `insertChild` agrees with `insert`: at an absent slot `insert`
-splices a fresh value at the compact index, exactly what `insertChild` does. -/
-theorem insertChild_eq_insert (n : Node α) (i : UInt32) (h : testBit n.positionsMask i = false)
-    (a : α) : n.insertChild i h a = n.insert i a := by
-  unfold insert alter insertChild
-  split
-  · rename_i hpres; rw [h] at hpres; contradiction
-  · rfl
 
 /-- `get?` of an `alter` whose callback yields a value: slot `i` reads that value, every other slot
 is unchanged (a corollary of `alter_eq_insert` + `get?_insert`). -/

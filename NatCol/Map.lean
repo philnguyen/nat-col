@@ -18,7 +18,7 @@ namespace NatCol
 
 /-- Leaf operations for maps: a `Node α` is a sparse 32-slot map; the value type is `α`.
 The lattice callbacks always return `some` — values never prune; empty *subtrees* are
-pruned one level up (in `Tree.meetEq`). -/
+pruned one level up (in `PTree.meet`'s `finalize` re-compression). -/
 instance {α : Type u} : LeafOps (Node α) α where
   empty := Node.empty
   isEmpty := Node.isEmpty
@@ -56,7 +56,6 @@ instance {α : Type u} : LeafOps (Node α) α where
     cases Node.get? a i <;> cases Node.get? b i <;> rfl
   get?_insert l i j v hi hj := Node.get?_insert l i v j hi hj
   get?_ext a b h := Node.ext h
-  exists_get?_of_ne_empty := Node.exists_get?_of_isEmpty_false
   get?_restricts rel _ a b := Node.restricts_iff rel a b
   someSlot_lt n h := lowestSetIdx_lt n.positionsMask (beq_eq_false_iff_ne.mp h)
   contains_someSlot n h := testBit_lowestSetIdx n.positionsMask (beq_eq_false_iff_ne.mp h)

@@ -3131,13 +3131,6 @@ private theorem childAt_meetKids (cf : V → V → V) (m1 : UInt32) (k1 : Array 
   rw [show (#[] : Array (PTree L)).size = 0 from rfl, Nat.zero_add] at hc'
   rw [hc', Option.getD_some]
 
-/-- The shared-mask child array has one slot per present bit of `m1 &&& m2`. -/
-private theorem size_meetKids (cf : V → V → V) (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
-    (k2 : Array (PTree L)) :
-    (meetKids cf m1 k1 m2 k2 (m1 &&& m2) #[]).size = popCount (m1 &&& m2) := by
-  obtain ⟨hsize, _, _⟩ := meetKids_spec cf m1 k1 m2 k2 (m1 &&& m2).toNat (m1 &&& m2) rfl #[]
-  rw [hsize, show (#[] : Array (PTree L)).size = 0 from rfl, Nat.zero_add]
-
 /-- A `bin`'s keys all share its branch prefix at its own level — the routing fact membership pins
 down. The half of `WF`'s routing clause the intersection's divergence cases consume. -/
 private theorem prefixAbove_of_contains_bin (k bp bl : Nat) (bm : UInt32) (bk : Array (PTree L))
@@ -5438,10 +5431,6 @@ private theorem and_eq_self_iff (b1 b2 : UInt32) :
     cases hb1 : testBit b1 i with
     | true => simp [h i hi hb1]
     | false => rfl
-
-/-- `optRel` with `none` on the left holds vacuously (the `none, _ => true` arm). -/
-private theorem optRel_none_left (rel : V → V → Bool) (ob : Option V) :
-    optRel rel none ob = true := rfl
 
 /-- A left-present lookup forces a right-present one when `optRel` holds (`some _, none => false`). -/
 private theorem isSome_of_optRel_some (rel : V → V → Bool) (x : V) (ob : Option V)

@@ -414,7 +414,7 @@ theorem chunk_lt (k level : Nat) : chunk k level < 32 := by
 /-! ### `chunk` and `requiredHeight` as arithmetic
 
 The bitwise `chunk`/`requiredHeight` definitions are restated as base-32 `div`/`mod` so the
-trie-extensionality (`Tree.ext`) and `get?`-characterization proofs can probe keys and bound
+trie-extensionality (`PTree.ext_get?`) and `get?`-characterization proofs can probe keys and bound
 chunk levels with ordinary `Nat` arithmetic (`omega` + the `Nat.*_div_*` lemmas). -/
 
 /-- `0 < 32^n` (kept around so the `div`/`mod` rewrites below have their positivity side goal). -/
