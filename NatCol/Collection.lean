@@ -84,6 +84,12 @@ with one `AND`, and the first shared key short-circuits the rest. Never allocate
 @[specialize] def isDisjoint (a b : NatCollection L) : Bool :=
   PTree.isDisjoint a.tree b.tree
 
+/-- Difference: the `(key, value)` pairs of `a` whose key is absent from `b` (`b`'s values are
+irrelevant; surviving values are untouched). A structural merge — subtrees of `a` that cannot
+meet `b` are kept whole (and shared), never rebuilt or probed per key. -/
+@[specialize] def diff (a b : NatCollection L) : NatCollection L :=
+  ⟨PTree.diff a.tree b.tree, PTree.WF_diff a.tree b.tree a.wf b.wf⟩
+
 /-- All `(key, value)` pairs, ascending by key. -/
 @[specialize] def toList (c : NatCollection L) : List (Nat × V) := (PTree.toArray c.tree).toList
 

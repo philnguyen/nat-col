@@ -63,10 +63,11 @@ def popMax? (s : NatSet) : Option (Nat × NatSet) :=
 def union (s t : NatSet) : NatSet := NatCollection.join (fun _ _ => ()) s t
 /-- Intersection. -/
 def inter (s t : NatSet) : NatSet := NatCollection.meet (fun _ _ => ()) s t
-/-- Difference: the elements of `s` not in `t`. One structural `filter` pass over `s`, testing
-each element's membership in `t`; the result is canonical (the height shrinks when the deep keys
+/-- Difference: the elements of `s` not in `t` — a structural merge walk, not a per-element
+probe: subtrees of `s` that cannot meet `t` are kept whole (and shared) in O(1), aligned leaves
+subtract with one `AND NOT`, and the result is canonical (the height shrinks when the deep keys
 are removed). -/
-def diff (s t : NatSet) : NatSet := NatCollection.filter (fun k _ => !(t.contains k)) s
+def diff (s t : NatSet) : NatSet := NatCollection.diff s t
 /-- Subset test. -/
 def subset (s t : NatSet) : Bool := NatCollection.restricts (fun _ _ => true) s t
 /-- Whether `s` and `t` share no element — the intersection's structural walk without building
@@ -188,6 +189,13 @@ section Tests
   let a := NatSet.ofList [1, 32, 1000, 5000]
   let b := NatSet.ofList [2, 33, 1001]
   a.isDisjoint b == (a ∩ b).isEmpty
+
+-- diff (structural merge): list oracle, deep keys kept whole, right operand untouched
+#guard ((NatSet.ofList [1, 2, 3, 5000]) \ (NatSet.ofList [2, 5000])).toList = [1, 3]
+#guard
+  let a := NatSet.ofList [0, 31, 32, 1000, 1000000]
+  let b := NatSet.ofList [31, 1000000, 7]
+  (a \ b).toList = a.toList.filter (fun k => !(b.contains k))
 
 -- ordered queries: min/max, successor/predecessor (strict and inclusive), pop
 #guard (∅ : NatSet).min? = none

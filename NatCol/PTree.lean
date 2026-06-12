@@ -752,6 +752,112 @@ canonical (`WF_filter`). -/
 canonical (`WF_erase`). -/
 @[inline] def erase (k : Nat) (t : PTree L) : PTree L := eraseU k t
 
+-- Difference — a structural merge, not a per-key probe: wherever the two prefixes cannot meet,
+-- the left subtree is kept whole (and shared) in O(1); only genuinely overlapping paths are
+-- walked. Aligned leaves subtract through `LeafOps.diff`. Like intersection, the result only
+-- shrinks, so the touched branches re-compress through `finalize` (an aligned scan rebuilds all
+-- of `m1`'s children via `diffKids`/`diffChild`, a routed hit splices one child via `set` +
+-- `finalize`, the eraseU shape). The mutual measure is `meetU`'s.
+set_option linter.unusedVariables false in
+mutual
+/-- Difference driver: `a \ b` keyed on shapes — `nil` minus anything is `nil`, anything minus
+`nil` is itself; aligned `tip`s subtract leaves (dropping an emptied tip); a `b`-subtree routed
+inside one child of `a` splices that child's difference back in (`finalize`); an `a`-subtree
+routed inside one child of `b` descends; disjoint prefixes return `a` untouched. -/
+private def diffU : PTree L → PTree L → PTree L
+  | .nil, _ => .nil
+  | .tip p1 b1, .nil => .tip p1 b1
+  | .bin bp bl bm bk, .nil => .bin bp bl bm bk
+  | .tip p1 b1, .tip p2 b2 =>
+    if p1 == p2 then
+      if LeafOps.isEmpty (LeafOps.diff b1 b2) then .nil else .tip p1 (LeafOps.diff b1 b2)
+    else .tip p1 b1
+  | .tip p1 b1, .bin bp bl bm bk =>
+    if prefixAbove (someKey (.tip p1 b1)) bl == bp
+        && testBit bm (chunk (someKey (.tip p1 b1)) bl) then
+      if h : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size then
+        diffU (.tip p1 b1) (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h)
+      else .tip p1 b1
+    else .tip p1 b1
+  | .bin bp bl bm bk, .tip p2 b2 =>
+    if prefixAbove (someKey (.tip p2 b2)) bl == bp
+        && testBit bm (chunk (someKey (.tip p2 b2)) bl) then
+      if h : arrayIndex bm (chunk (someKey (.tip p2 b2)) bl) < bk.size then
+        finalize bp bl bm
+          (bk.set (arrayIndex bm (chunk (someKey (.tip p2 b2)) bl))
+            (diffU (bk[arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)]'h) (.tip p2 b2)) h)
+      else .bin bp bl bm bk
+    else .bin bp bl bm bk
+  | .bin p1 l1 m1 k1, .bin p2 l2 m2 k2 =>
+    if l1 == l2 then
+      if prefixAbove (someKey (.bin p1 l1 m1 k1)) l1
+          == prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 then
+        finalize p1 l1 m1
+          (diffKids m1 k1 m2 k2 m1 (Array.emptyWithCapacity (popCount m1)))
+      else .bin p1 l1 m1 k1
+    else if l2 < l1 then
+      if prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 == p1
+          && testBit m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) then
+        if h : arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) < k1.size then
+          finalize p1 l1 m1
+            (k1.set (arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1))
+              (diffU (k1[arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)]'h)
+                (.bin p2 l2 m2 k2)) h)
+        else .bin p1 l1 m1 k1
+      else .bin p1 l1 m1 k1
+    else
+      if prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 == p2
+          && testBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) then
+        if h : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size then
+          diffU (.bin p1 l1 m1 k1) (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h)
+        else .bin p1 l1 m1 k1
+      else .bin p1 l1 m1 k1
+termination_by a b => (sizeOf a + sizeOf b, 0)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h); omega)
+
+/-- The differenced child at one of `m1`'s slots `i`: also present in `m2` → recurse with
+`diffU`; present in `m1` alone → carry `a`'s child over whole (shared, untouched). -/
+private def diffChild (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L))
+    (i : UInt32) : PTree L :=
+  if h1 : arrayIndex m1 i < k1.size then
+    if testBit m2 i then
+      if h2 : arrayIndex m2 i < k2.size then
+        diffU (k1[arrayIndex m1 i]'h1) (k2[arrayIndex m2 i]'h2)
+      else k1[arrayIndex m1 i]'h1
+    else k1[arrayIndex m1 i]'h1
+  else .nil
+termination_by (sizeOf k1 + sizeOf k2, 0)
+decreasing_by
+  all_goals simp_wf
+  all_goals (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h1)
+             have := Array.sizeOf_lt_of_mem (Array.getElem_mem h2); omega)
+
+/-- Fold over the leftover left mask `rem` (= `m1`), appending each present slot's `diffChild` to
+`acc` (lowest first): compact under `m1`, `nil` where the subtraction emptied a child (pruned
+later by `compactify`). -/
+private def diffKids (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L))
+    (rem : UInt32) (acc : Array (PTree L)) : Array (PTree L) :=
+  if hrem : rem == 0 then acc
+  else
+    diffKids m1 k1 m2 k2 (clearLowest rem) (acc.push (diffChild m1 k1 m2 k2 (lowestSetIdx rem)))
+termination_by (sizeOf k1 + sizeOf k2 + 1, rem.toNat)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have : (clearLowest rem).toNat < rem.toNat :=
+         toNat_clearLowest_lt rem (by simp_all); omega)
+end
+
+/-- Difference `a \ b`: the entries of `a` whose key is absent from `b` (`b`'s values are
+irrelevant). A structural merge — subtrees of `a` that cannot meet `b` are kept whole (and
+shared), never rebuilt or probed per key; the result is canonical (`WF_diff`). -/
+@[inline] def diff (a b : PTree L) : PTree L := diffU a b
+
 -- Ordered queries — min/max and successor/predecessor. Children sit in ascending slot order and a
 -- leaf's occupancy is a bitmap (`LeafOps.slotsMask`), so the least/greatest key under any node is
 -- an O(1)-per-level descent (first/last child, lowest/highest set slot), and `entryGT?`/`entryLT?`
@@ -926,6 +1032,17 @@ private def subsetCorpus : List (List Nat) :=
 #guard !(isDisjoint (ofSet [1, 5000]) (ofSet [5000]))   -- deep shared key
 #guard isDisjoint (ofSet []) (ofSet seqK)
 #guard isDisjoint (ofSet seqK) (ofSet [])
+
+-- difference agrees with the reference (keys of `a` absent from `b`) and re-canonicalizes
+-- (structural `beq` against a direct build of the survivors)
+#guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
+  beq (diff (ofSet a) (ofSet b)) (ofSet (a.filter (fun k => !(b.contains k))))
+#guard beq (diff (ofSet sparseK) (ofSet [])) (ofSet sparseK)        -- empty subtrahend: identity
+#guard (diff (ofSet seqK) (ofSet seqK)).size == 0                   -- self-difference: nil
+#guard beq (diff (ofSet [0, 32, 64]) (ofSet [32])) (ofSet [0, 64])
+#guard beq (diff (ofSet [7, 5000]) (ofSet [5000])) (ofSet [7])      -- lone survivor lifts
+#guard beq (diff (ofSet sparseK) (ofSet seqK))                       -- deep keys survive a dense cut
+  (ofSet (sparseK.filter (· ≥ 1000)))
 
 -- intersection sizes agree with the reference (distinct keys of `a` that also lie in `b`)
 #guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
@@ -4164,6 +4281,337 @@ theorem WF_filter (p : Nat → V → Bool) (t : PTree L) (hwf : WF t) : WF (filt
 /-- `erase` preserves canonical shape. -/
 theorem WF_erase (k : Nat) (t : PTree L) (hwf : WF t) : WF (erase k t) :=
   (erase_WF_keys k t hwf).1
+
+/-! ### Difference
+
+`diffU` only removes keys from the left operand, so its `WF` proof carries the same one-sided
+high-bits provenance as filter/erase (every surviving key shares its `>>> 5` with an original
+left key) — no leaf removal law needed. The aligned-`bin` case mirrors `filter_WF_keys` (a full
+`diffKids` rebuild under `m1`), the routed cases mirror `erase_WF_keys`' splice, factored below
+into `splice_WF_keys` so the symmetric difference can reuse it. -/
+
+/-- `diffKids`' fold invariant — the verbatim `filterKids_spec` shape for two operands. -/
+private theorem diffKids_spec (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) :
+    ∀ (n : Nat) (rem : UInt32), rem.toNat = n → ∀ (acc : Array (PTree L)),
+      (diffKids m1 k1 m2 k2 rem acc).size = acc.size + popCount rem
+      ∧ (∀ i, i < acc.size → (diffKids m1 k1 m2 k2 rem acc)[i]? = acc[i]?)
+      ∧ (∀ c, c < 32 → testBit rem c = true →
+           (diffKids m1 k1 m2 k2 rem acc)[acc.size + arrayIndex rem c]?
+             = some (diffChild m1 k1 m2 k2 c)) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro rem hrem acc
+    by_cases h0 : (rem == 0) = true
+    · have hr0 : rem = 0 := by simpa using h0
+      rw [diffKids, dif_pos h0]
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hr0, show popCount (0 : UInt32) = 0 from rfl, Nat.add_zero]
+      · intro i hi; rfl
+      · intro c hc htb; rw [hr0, testBit_zero] at htb; exact absurd htb (by decide)
+    · have hrem0 : rem ≠ 0 := by intro h; exact h0 (by rw [h]; rfl)
+      have hstep : diffKids m1 k1 m2 k2 rem acc
+          = diffKids m1 k1 m2 k2 (clearLowest rem)
+              (acc.push (diffChild m1 k1 m2 k2 (lowestSetIdx rem))) := by
+        rw [diffKids, dif_neg h0]
+      have hlt : (clearLowest rem).toNat < n := by
+        rw [← hrem]; exact toNat_clearLowest_lt rem hrem0
+      obtain ⟨ihsize, ihpref, ihthird⟩ :=
+        IH (clearLowest rem).toNat hlt (clearLowest rem) rfl
+          (acc.push (diffChild m1 k1 m2 k2 (lowestSetIdx rem)))
+      have hpc : popCount (clearLowest rem) + 1 = popCount rem := popCount_clearLowest rem hrem0
+      have haccsz : (acc.push (diffChild m1 k1 m2 k2 (lowestSetIdx rem))).size = acc.size + 1 :=
+        Array.size_push ..
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hstep, ihsize, haccsz]; omega
+      · intro i hi
+        rw [hstep, ihpref i (by omega), Array.getElem?_push_lt hi, Array.getElem?_eq_getElem hi]
+      · intro c hc htb
+        rw [hstep]
+        by_cases hclo : c = lowestSetIdx rem
+        · subst hclo
+          rw [arrayIndex_lowestSetIdx rem hrem0, Nat.add_zero,
+              ihpref acc.size (by omega), Array.getElem?_push_size]
+        · have htb' : testBit (clearLowest rem) c = true := by
+            rw [testBit_clearLowest_of_ne rem c hc hclo]; exact htb
+          have hidx : arrayIndex rem c = arrayIndex (clearLowest rem) c + 1 :=
+            arrayIndex_clearLowest_of_ne rem c hc htb hclo
+          have key := ihthird c hc htb'
+          rw [haccsz] at key
+          rw [hidx, show acc.size + (arrayIndex (clearLowest rem) c + 1)
+                = acc.size + 1 + arrayIndex (clearLowest rem) c from by omega]
+          exact key
+
+/-- Reading a present slot of the rebuilt child array recovers that slot's `diffChild`. -/
+private theorem childAt_diffKids (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) (c : UInt32) (hc : c < 32) (htb : testBit m1 c = true) :
+    childAt m1 (diffKids m1 k1 m2 k2 m1 #[]) c = diffChild m1 k1 m2 k2 c := by
+  obtain ⟨_, _, hthird⟩ := diffKids_spec m1 k1 m2 k2 m1.toNat m1 rfl #[]
+  have hc' := hthird c hc htb
+  unfold childAt
+  rw [show (#[] : Array (PTree L)).size = 0 from rfl, Nat.zero_add] at hc'
+  rw [hc', Option.getD_some]
+
+/-- `diffChild` at a present left slot: recurse on both children when `m2` also has the slot,
+else carry `a`'s child over whole. -/
+private theorem diffChild_eq (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) (c : UInt32) (hsz1 : k1.size = popCount m1)
+    (hsz2 : k2.size = popCount m2) (htb1 : testBit m1 c = true) :
+    diffChild m1 k1 m2 k2 c
+      = if testBit m2 c then diffU (childAt m1 k1 c) (childAt m2 k2 c)
+        else childAt m1 k1 c := by
+  have h1 : arrayIndex m1 c < k1.size := by rw [hsz1]; exact arrayIndex_lt m1 c htb1
+  have hcA1 : childAt m1 k1 c = k1[arrayIndex m1 c]'h1 := by
+    unfold childAt; rw [Array.getElem?_eq_getElem h1, Option.getD_some]
+  by_cases hm2 : testBit m2 c = true
+  · have h2 : arrayIndex m2 c < k2.size := by rw [hsz2]; exact arrayIndex_lt m2 c hm2
+    have hcA2 : childAt m2 k2 c = k2[arrayIndex m2 c]'h2 := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h2, Option.getD_some]
+    rw [diffChild, dif_pos h1, if_pos hm2, dif_pos h2, if_pos hm2, hcA1, hcA2]
+  · rw [diffChild, dif_pos h1, if_neg hm2, if_neg hm2, hcA1]
+
+/-- Splicing any `WF` replacement `t'` over one routed child of a well-formed `bin` (then
+re-compressing) preserves `WF`, provided `t'`'s keys share their high bits with the replaced
+child's keys; and every key of the result shares its high bits with one of the `bin`'s keys.
+`erase_WF_keys`' `bin` case factored over the replacement subtree, so the subtraction merges
+(`diffU`, `symmDiffU`) can splice their recursive results through it. -/
+private theorem splice_WF_keys (bp bl : Nat) (bm : UInt32) (bk : Array (PTree L)) (c0 : UInt32)
+    (hc0 : c0 < 32) (htb : testBit bm c0 = true) (h : arrayIndex bm c0 < bk.size) (t' : PTree L)
+    (hwf : WF (.bin bp bl bm bk)) (ihwf : WF t')
+    (ihkeys : ∀ j, contains j t' = true →
+        ∃ j', contains j' (bk[arrayIndex bm c0]'h) = true ∧ j >>> 5 = j' >>> 5) :
+    WF (finalize bp bl bm (bk.set (arrayIndex bm c0) t' h))
+      ∧ ∀ j, contains j (finalize bp bl bm (bk.set (arrayIndex bm c0) t' h)) = true →
+          ∃ j', contains j' (.bin bp bl bm bk) = true ∧ j >>> 5 = j' >>> 5 := by
+  have hwf' := hwf
+  rw [WF] at hwf'
+  obtain ⟨hl, hsz, _, hwfk, _, hal⟩ := hwf'
+  have hcA : childAt bm bk c0 = bk[arrayIndex bm c0]'h := by
+    unfold childAt; rw [Array.getElem?_eq_getElem h, Option.getD_some]
+  have hset : ∀ c, c < 32 → testBit bm c = true →
+      childAt bm (bk.set (arrayIndex bm c0) t' h) c
+        = if c = c0 then t' else childAt bm bk c := by
+    intro c hc htc
+    unfold childAt
+    rw [Array.getElem?_set h]
+    by_cases hcc : c = c0
+    · subst hcc
+      rw [if_pos rfl, if_pos rfl, Option.getD_some]
+    · rw [if_neg hcc,
+          if_neg (arrayIndex_inj bm c0 c hc0 hc htb htc (fun hh => hcc hh.symm))]
+  have hal' : ∀ c, c < 32 → testBit bm c = true →
+      AlignedAt bl c bp (childAt bm (bk.set (arrayIndex bm c0) t' h) c) := by
+    intro c hc htc
+    rw [hset c hc htc]
+    by_cases hcc : c = c0
+    · rw [if_pos hcc]
+      intro j hj
+      obtain ⟨j', hj', h5⟩ := ihkeys j hj
+      have hj'A : contains j' (childAt bm bk c) = true := by
+        rw [hcc, hcA]; exact hj'
+      obtain ⟨hch, hpf⟩ := hal c hc htc j' hj'A
+      exact ⟨(chunk_eq_of_hi bl hl h5).trans hch,
+             (prefixAbove_eq_of_hi bl h5).trans hpf⟩
+    · rw [if_neg hcc]
+      exact hal c hc htc
+  refine ⟨WF_finalize bp bl bm _ hl ?_ hal', ?_⟩
+  · intro c hc htc
+    rw [hset c hc htc]
+    by_cases hcc : c = c0
+    · rw [if_pos hcc]; exact ihwf
+    · rw [if_neg hcc]
+      have hbc : arrayIndex bm c < bk.size := by
+        rw [hsz]; exact arrayIndex_lt bm c htc
+      have hcA' : childAt bm bk c = bk[arrayIndex bm c]'hbc := by
+        unfold childAt; rw [Array.getElem?_eq_getElem hbc, Option.getD_some]
+      rw [hcA']
+      exact hwfk _ (Array.getElem_mem hbc)
+  · intro j hj
+    rw [contains_finalize j bp bl bm _ hal'] at hj
+    obtain ⟨htj, hcj⟩ := and_split hj
+    rw [hset (chunk j bl) (chunk_lt j bl) htj] at hcj
+    by_cases hcc : chunk j bl = c0
+    · rw [if_pos hcc] at hcj
+      obtain ⟨j', hj', h5⟩ := ihkeys j hcj
+      refine ⟨j', ?_, h5⟩
+      rw [contains_bin]
+      have hj'A : contains j' (childAt bm bk c0) = true := by
+        rw [hcA]; exact hj'
+      obtain ⟨hch, _⟩ := hal c0 hc0 htb j' hj'A
+      rw [hch, htb, Bool.true_and, hcA]
+      exact hj'
+    · rw [if_neg hcc] at hcj
+      refine ⟨j, ?_, rfl⟩
+      rw [contains_bin, htj, Bool.true_and]
+      exact hcj
+
+set_option maxHeartbeats 400000 in
+/-- `diffU` preserves `WF`, and every surviving key shares its high bits with one of the LEFT
+operand's keys (the `AlignedAt`-transfer fact `finalize` needs — see the filter/erase section
+note). Member recursion on the combined size, mirroring the walk's routing. -/
+private theorem diff_WF_keys : (a b : PTree L) → WF a → WF b →
+    WF (diffU a b)
+      ∧ ∀ j, contains j (diffU a b) = true → ∃ j', contains j' a = true ∧ j >>> 5 = j' >>> 5
+  | .nil, _ => fun _ _ => by
+      rw [diffU]
+      exact ⟨by rw [WF]; trivial,
+             fun j hj => by rw [contains_nil] at hj; exact absurd hj (by decide)⟩
+  | .tip p1 b1, .nil => fun hwa _ => by
+      rw [diffU]
+      exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+  | .bin bp bl bm bk, .nil => fun hwa _ => by
+      rw [diffU]
+      exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+  | .tip p1 b1, .tip p2 b2 => fun hwa _ => by
+      rw [diffU]
+      by_cases hp : (p1 == p2) = true
+      · rw [if_pos hp]
+        by_cases he : LeafOps.isEmpty (LeafOps.diff b1 b2) = true
+        · rw [if_pos he]
+          exact ⟨by rw [WF]; trivial,
+                 fun j hj => by rw [contains_nil] at hj; exact absurd hj (by decide)⟩
+        · rw [if_neg he]
+          refine ⟨by rw [WF]; simpa using he, ?_⟩
+          intro j hj
+          obtain ⟨j', hj'⟩ := exists_mem (.tip p1 b1) hwa (by simp)
+          exact ⟨j', hj', (hi_eq_of_contains_tip hj).trans (hi_eq_of_contains_tip hj').symm⟩
+      · rw [if_neg hp]
+        exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+  | .tip p1 b1, .bin bp bl bm bk => fun hwa hwb => by
+      rw [diffU]
+      by_cases hcond : ((prefixAbove (someKey (.tip p1 b1)) bl == bp)
+          && testBit bm (chunk (someKey (.tip p1 b1)) bl)) = true
+      · rw [if_pos hcond]
+        by_cases h : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size
+        · rw [dif_pos h]
+          have hwfchild : WF (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h) := by
+            rw [WF] at hwb; exact hwb.2.2.2.1 _ (Array.getElem_mem h)
+          exact diff_WF_keys (.tip p1 b1)
+            (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h) hwa hwfchild
+        · rw [dif_neg h]
+          exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+      · rw [if_neg hcond]
+        exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+  | .bin bp bl bm bk, .tip p2 b2 => fun hwa hwb => by
+      rw [diffU]
+      by_cases hcond : ((prefixAbove (someKey (.tip p2 b2)) bl == bp)
+          && testBit bm (chunk (someKey (.tip p2 b2)) bl)) = true
+      · rw [if_pos hcond]
+        by_cases h : arrayIndex bm (chunk (someKey (.tip p2 b2)) bl) < bk.size
+        · rw [dif_pos h]
+          have hwfchild : WF (bk[arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)]'h) := by
+            rw [WF] at hwa; exact hwa.2.2.2.1 _ (Array.getElem_mem h)
+          obtain ⟨ihwf, ihkeys⟩ :=
+            diff_WF_keys (bk[arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)]'h)
+              (.tip p2 b2) hwfchild hwb
+          exact splice_WF_keys bp bl bm bk (chunk (someKey (.tip p2 b2)) bl)
+            (chunk_lt _ _) (and_split hcond).2 h _ hwa ihwf ihkeys
+        · rw [dif_neg h]
+          exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+      · rw [if_neg hcond]
+        exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+  | .bin p1 l1 m1 k1, .bin p2 l2 m2 k2 => fun hwa hwb => by
+      by_cases heq : (l1 == l2) = true
+      · have hleq : l1 = l2 := by simpa using heq
+        subst hleq
+        by_cases hpfx : (prefixAbove (someKey (.bin p1 l1 m1 k1)) l1
+            == prefixAbove (someKey (.bin p2 l1 m2 k2)) l1) = true
+        · rw [diffU, if_pos heq, if_pos hpfx, Array.emptyWithCapacity_eq]
+          have hwa' := hwa
+          rw [WF] at hwa'
+          obtain ⟨hl1, hsz1, _, hwfk1, _, hal1⟩ := hwa'
+          have hwb' := hwb
+          rw [WF] at hwb'
+          obtain ⟨_, hsz2, _, hwfk2, _, _⟩ := hwb'
+          have hslot : ∀ c, c < 32 → testBit m1 c = true →
+              WF (diffChild m1 k1 m2 k2 c)
+              ∧ ∀ j, contains j (diffChild m1 k1 m2 k2 c) = true →
+                  ∃ j', contains j' (childAt m1 k1 c) = true ∧ j >>> 5 = j' >>> 5 := by
+            intro c hc htc
+            have hb1 : arrayIndex m1 c < k1.size := by
+              rw [hsz1]; exact arrayIndex_lt m1 c htc
+            have hcA1 : childAt m1 k1 c = k1[arrayIndex m1 c]'hb1 := by
+              unfold childAt; rw [Array.getElem?_eq_getElem hb1, Option.getD_some]
+            by_cases hm2 : testBit m2 c = true
+            · have hb2 : arrayIndex m2 c < k2.size := by
+                rw [hsz2]; exact arrayIndex_lt m2 c hm2
+              have hcA2 : childAt m2 k2 c = k2[arrayIndex m2 c]'hb2 := by
+                unfold childAt; rw [Array.getElem?_eq_getElem hb2, Option.getD_some]
+              rw [diffChild_eq m1 k1 m2 k2 c hsz1 hsz2 htc, if_pos hm2, hcA1, hcA2]
+              exact diff_WF_keys (k1[arrayIndex m1 c]'hb1) (k2[arrayIndex m2 c]'hb2)
+                (hwfk1 _ (Array.getElem_mem hb1)) (hwfk2 _ (Array.getElem_mem hb2))
+            · rw [diffChild_eq m1 k1 m2 k2 c hsz1 hsz2 htc, if_neg hm2, hcA1]
+              exact ⟨hwfk1 _ (Array.getElem_mem hb1), fun j hj => ⟨j, hj, rfl⟩⟩
+          have hal' : ∀ c, c < 32 → testBit m1 c = true →
+              AlignedAt l1 c p1 (childAt m1 (diffKids m1 k1 m2 k2 m1 #[]) c) := by
+            intro c hc htc
+            rw [childAt_diffKids m1 k1 m2 k2 c hc htc]
+            intro j hj
+            obtain ⟨j', hj', h5⟩ := (hslot c hc htc).2 j hj
+            obtain ⟨hch, hpf⟩ := hal1 c hc htc j' hj'
+            exact ⟨(chunk_eq_of_hi l1 hl1 h5).trans hch,
+                   (prefixAbove_eq_of_hi l1 h5).trans hpf⟩
+          refine ⟨WF_finalize p1 l1 m1 _ hl1 ?_ hal', ?_⟩
+          · intro c hc htc
+            rw [childAt_diffKids m1 k1 m2 k2 c hc htc]
+            exact (hslot c hc htc).1
+          · intro j hj
+            rw [contains_finalize j p1 l1 m1 _ hal'] at hj
+            obtain ⟨htj, hcj⟩ := and_split hj
+            rw [childAt_diffKids m1 k1 m2 k2 (chunk j l1) (chunk_lt j l1) htj] at hcj
+            obtain ⟨j', hj', h5⟩ := (hslot (chunk j l1) (chunk_lt j l1) htj).2 j hcj
+            refine ⟨j', ?_, h5⟩
+            rw [contains_bin]
+            obtain ⟨hch, _⟩ := hal1 (chunk j l1) (chunk_lt j l1) htj j' hj'
+            rw [hch, htj, Bool.true_and]
+            exact hj'
+        · rw [diffU, if_pos heq, if_neg hpfx]
+          exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+      · by_cases hlt : l2 < l1
+        · by_cases hcond : ((prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 == p1)
+              && testBit m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)) = true
+          · rw [diffU, if_neg heq, if_pos hlt, if_pos hcond]
+            by_cases h : arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) < k1.size
+            · rw [dif_pos h]
+              have hwfchild :
+                  WF (k1[arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)]'h) := by
+                rw [WF] at hwa; exact hwa.2.2.2.1 _ (Array.getElem_mem h)
+              obtain ⟨ihwf, ihkeys⟩ :=
+                diff_WF_keys (k1[arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)]'h)
+                  (.bin p2 l2 m2 k2) hwfchild hwb
+              exact splice_WF_keys p1 l1 m1 k1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)
+                (chunk_lt _ _) (and_split hcond).2 h _ hwa ihwf ihkeys
+            · rw [dif_neg h]
+              exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+          · rw [diffU, if_neg heq, if_pos hlt, if_neg hcond]
+            exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+        · by_cases hcond : ((prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 == p2)
+              && testBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)) = true
+          · rw [diffU, if_neg heq, if_neg hlt, if_pos hcond]
+            by_cases h : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size
+            · rw [dif_pos h]
+              have hwfchild :
+                  WF (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h) := by
+                rw [WF] at hwb; exact hwb.2.2.2.1 _ (Array.getElem_mem h)
+              exact diff_WF_keys (.bin p1 l1 m1 k1)
+                (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h) hwa hwfchild
+            · rw [dif_neg h]
+              exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+          · rw [diffU, if_neg heq, if_neg hlt, if_neg hcond]
+            exact ⟨hwa, fun j hj => ⟨j, hj, rfl⟩⟩
+termination_by a b => sizeOf a + sizeOf b
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h); omega)
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb1)
+       have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb2); omega)
+    | omega
+
+/-- `diff` preserves canonical shape. -/
+theorem WF_diff (a b : PTree L) (hwa : WF a) (hwb : WF b) : WF (diff a b) := by
+  rw [diff]; exact (diff_WF_keys a b hwa hwb).1
 
 /-- A present slot's child sits in the `kids` array (it is read at an in-range compact index). -/
 private theorem childAt_mem (mask : UInt32) (kids : Array (PTree L)) (c : UInt32)

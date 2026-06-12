@@ -32,6 +32,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   meet c a b := Node.meet (fun x y => some (c x y)) a b
   restricts := Node.restricts
   disjoint a b := (a.positionsMask &&& b.positionsMask) == 0
+  diff a b := Node.filterMap (fun i v => if testBit b.positionsMask i then none else some v) a
   toArray n := n.fold (fun acc i a => acc.push (i, a)) #[]
   filter p n := Node.filterMap (fun i a => if p i a then some a else none) n
   someSlot n := lowestSetIdx n.positionsMask
@@ -131,6 +132,9 @@ def restricts : (α → α → Bool) → NatMap α → NatMap α → Bool := Nat
 /-- Whether `m₁` and `m₂` share no key (domain disjointness — values are irrelevant).
 Short-circuits at the first shared key and never allocates. -/
 def isDisjoint : NatMap α → NatMap α → Bool := NatCollection.isDisjoint
+/-- Difference: the entries of `m₁` whose key is absent from `m₂` (`m₂`'s values are irrelevant;
+surviving values are untouched). A structural merge walk, not a per-key probe. -/
+def diff : NatMap α → NatMap α → NatMap α := NatCollection.diff
 
 /-- All `(key, value)` pairs, ascending by key. -/
 def toList : NatMap α → List (Nat × α) := NatCollection.toList
@@ -276,6 +280,15 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 #guard !((NatMap.ofList [(1, 10)]).isDisjoint (NatMap.ofList [(1, 99)]))  -- same key, ≠ values
 #guard (NatMap.empty : NatMap Nat).isDisjoint (NatMap.ofList [(1, 10)])
 #guard !((NatMap.ofList [(1, 1), (5000, 2)]).isDisjoint (NatMap.ofList [(5000, 9)]))
+
+-- diff: keys of the second map are removed (its values are irrelevant); structural merge
+#guard (NatMap.ofList [(1, 10), (2, 20), (5000, 3)]).diff (NatMap.ofList [(2, 99)])
+  == NatMap.ofList [(1, 10), (5000, 3)]
+#guard (NatMap.ofList [(1, 10)]).diff (NatMap.ofList [(1, 99)]) == (∅ : NatMap Nat)
+#guard (NatMap.ofList [(1, 10), (2, 20)]).diff (∅ : NatMap Nat) == NatMap.ofList [(1, 10), (2, 20)]
+#guard ((∅ : NatMap Nat).diff (NatMap.ofList [(1, 10)])).isEmpty
+#guard (NatMap.ofList [(1, 10), (5000, 3)]).diff (NatMap.ofList [(5000, 0)])
+  == NatMap.ofList [(1, 10)]                                              -- collapses canonically
 
 -- partition: split by predicate; parts are canonical, disjoint, and join back to the original
 #guard
