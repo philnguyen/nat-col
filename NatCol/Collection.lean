@@ -142,6 +142,57 @@ def alter (c : NatCollection L) (k : Nat) (f : Option V → Option V) : NatColle
   | some v => c.insert k v
   | none => c.erase k
 
+-- Ordered queries — delegations of the `PTree` descents (`Option`-returning, so no canonical-shape
+-- obligations), plus the inclusive and pop variants derived at this layer.
+
+/-- The least `(key, value)` pair, `none` on the empty collection. O(depth). -/
+@[specialize] def minEntry? (c : NatCollection L) : Option (Nat × V) := PTree.minEntry? c.tree
+
+/-- The greatest `(key, value)` pair, `none` on the empty collection. O(depth). -/
+@[specialize] def maxEntry? (c : NatCollection L) : Option (Nat × V) := PTree.maxEntry? c.tree
+
+/-- The least key, `none` on the empty collection. O(depth). -/
+@[specialize] def minKey? (c : NatCollection L) : Option Nat := c.minEntry?.map Prod.fst
+
+/-- The greatest key, `none` on the empty collection. O(depth). -/
+@[specialize] def maxKey? (c : NatCollection L) : Option Nat := c.maxEntry?.map Prod.fst
+
+/-- The least entry whose key is strictly greater than `k` (the successor query), `none` if there
+is none. O(depth). -/
+@[specialize] def entryGT? (c : NatCollection L) (k : Nat) : Option (Nat × V) :=
+  PTree.entryGT? k c.tree
+
+/-- The greatest entry whose key is strictly less than `k` (the predecessor query), `none` if
+there is none. O(depth). -/
+@[specialize] def entryLT? (c : NatCollection L) (k : Nat) : Option (Nat × V) :=
+  PTree.entryLT? k c.tree
+
+/-- The least entry with key `≥ k`: the entry at `k` itself when present, else the successor. -/
+@[specialize] def entryGE? (c : NatCollection L) (k : Nat) : Option (Nat × V) :=
+  match c.get? k with
+  | some v => some (k, v)
+  | none   => c.entryGT? k
+
+/-- The greatest entry with key `≤ k`: the entry at `k` itself when present, else the
+predecessor. -/
+@[specialize] def entryLE? (c : NatCollection L) (k : Nat) : Option (Nat × V) :=
+  match c.get? k with
+  | some v => some (k, v)
+  | none   => c.entryLT? k
+
+/-- The least entry together with the collection without it, `none` on the empty collection. Two
+O(depth) walks (`minEntry?` then `erase`), which keeps the canonical-shape proof `erase`'s. -/
+@[specialize] def popMinEntry? (c : NatCollection L) : Option ((Nat × V) × NatCollection L) :=
+  match c.minEntry? with
+  | none   => none
+  | some e => some (e, c.erase e.1)
+
+/-- The greatest entry together with the collection without it, `none` on the empty collection. -/
+@[specialize] def popMaxEntry? (c : NatCollection L) : Option ((Nat × V) × NatCollection L) :=
+  match c.maxEntry? with
+  | none   => none
+  | some e => some (e, c.erase e.1)
+
 /-- Monadic `filter`: keep the pairs for which `p` returns `true`, running `p` on every pair in
 ascending key order and threading its effects through `m`; the result is rebuilt from the
 survivors, so it is canonical and equals the pure `filter` when `p` is effect-free. Restricted to

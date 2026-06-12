@@ -64,6 +64,16 @@ byte counts with one multiply, all in a fixed handful of shifts/masks rather tha
 #guard lowerMask 1 = 1
 #guard lowerMask 5 = 0b11111
 
+/-- Mask of all bits strictly above `i`, for `i ≤ 31`. Built by clearing bit `i` out of
+`lowerMask`'s complement rather than as `~~~lowerMask (i + 1)`, whose shift would wrap at
+`i = 31` (`UInt32` shifts are mod 32). -/
+@[inline] def upperMask (i : UInt32) : UInt32 := ~~~(lowerMask i) &&& ~~~(1 <<< i)
+
+#guard upperMask 0 = 0xFFFFFFFE
+#guard upperMask 4 = 0xFFFFFFE0
+#guard upperMask 30 = 0x80000000
+#guard upperMask 31 = 0
+
 /-- Compact array index for slot `i` in a node whose present slots are `mask`:
 the number of present slots strictly below `i`. -/
 @[inline] def arrayIndex (mask i : UInt32) : Nat := popCount (mask &&& lowerMask i)
@@ -112,6 +122,24 @@ to step through present slots. -/
 #guard lowestSetIdx 0x80000000 = 31
 #guard clearLowest 0b10110 = 0b10100
 #guard clearLowest 1 = 0
+
+/-- Index of the highest set bit of `m`: smear the top set bit down through every lower position,
+then count bits minus one. Only meaningful for `m ≠ 0`. The descending counterpart of
+`lowestSetIdx` — max/predecessor walks select slots from the top. -/
+@[inline] def highestSetIdx (m : UInt32) : UInt32 :=
+  let x := m ||| (m >>> 1)
+  let x := x ||| (x >>> 2)
+  let x := x ||| (x >>> 4)
+  let x := x ||| (x >>> 8)
+  let x := x ||| (x >>> 16)
+  popCountAux x - 1
+
+#guard highestSetIdx 1 = 0
+#guard highestSetIdx 0b10110 = 4
+#guard highestSetIdx 0b1000 = 3
+#guard highestSetIdx 0x80000000 = 31
+#guard highestSetIdx 0xFFFFFFFF = 31
+#guard highestSetIdx 0x00010000 = 16
 
 ----------------------------------------------------------------------------------------------------
 -- Theorems

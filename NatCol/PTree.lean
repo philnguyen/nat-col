@@ -668,6 +668,118 @@ canonical (`WF_filter`). -/
 canonical (`WF_erase`). -/
 @[inline] def erase (k : Nat) (t : PTree L) : PTree L := eraseU k t
 
+-- Ordered queries — min/max and successor/predecessor. Children sit in ascending slot order and a
+-- leaf's occupancy is a bitmap (`LeafOps.slotsMask`), so the least/greatest key under any node is
+-- an O(1)-per-level descent (first/last child, lowest/highest set slot), and `entryGT?`/`entryLT?`
+-- are single routed descents with a next-sibling fallback — O(depth), where a hash structure
+-- scans all n keys.
+
+set_option linter.unusedVariables false in
+/-- The least `(key, value)` pair, `none` on the empty trie. O(depth): the first child of each
+`bin` roots the least subtree; at the `tip`, the lowest present slot is the least key. -/
+def minEntry? : PTree L → Option (Nat × V)
+  | .nil          => none
+  | .tip pfx leaf =>
+    let s := lowestSetIdx (LeafOps.slotsMask leaf)
+    (LeafOps.get? leaf s).map (fun v => ((pfx <<< 5) ||| s.toNat, v))
+  | .bin _ _ _ kids =>
+    if hb : 0 < kids.size then minEntry? (kids[0]'hb) else none
+decreasing_by
+  simp_wf
+  rename_i hb
+  have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb)
+  omega
+
+set_option linter.unusedVariables false in
+/-- The greatest `(key, value)` pair, `none` on the empty trie. O(depth): the last child of each
+`bin` roots the greatest subtree; at the `tip`, the highest present slot is the greatest key. -/
+def maxEntry? : PTree L → Option (Nat × V)
+  | .nil          => none
+  | .tip pfx leaf =>
+    let s := highestSetIdx (LeafOps.slotsMask leaf)
+    (LeafOps.get? leaf s).map (fun v => ((pfx <<< 5) ||| s.toNat, v))
+  | .bin _ _ _ kids =>
+    if hb : kids.size - 1 < kids.size then maxEntry? (kids[kids.size - 1]'hb) else none
+decreasing_by
+  simp_wf
+  rename_i hb
+  have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb)
+  omega
+
+/-- The least entry among a `bin`'s children at slots strictly above `c` (`none` when no such slot
+is present). The next-sibling fallback of `entryGT?`'s descent. -/
+private def minEntryAbove (mask : UInt32) (kids : Array (PTree L)) (c : UInt32) :
+    Option (Nat × V) :=
+  let m := mask &&& upperMask c
+  if m == 0 then none else minEntry? (childAt mask kids (lowestSetIdx m))
+
+/-- The greatest entry among a `bin`'s children at slots strictly below `c` (`none` when no such
+slot is present). The previous-sibling fallback of `entryLT?`'s descent. -/
+private def maxEntryBelow (mask : UInt32) (kids : Array (PTree L)) (c : UInt32) :
+    Option (Nat × V) :=
+  let m := mask &&& lowerMask c
+  if m == 0 then none else maxEntry? (childAt mask kids (highestSetIdx m))
+
+set_option linter.unusedVariables false in
+/-- The least `(key, value)` pair whose key is strictly greater than `k` (the successor query),
+`none` if there is none. O(depth): a node whose covered range lies wholly above `k` answers with
+its minimum, one wholly below answers `none`, and an aligned `bin` recurses into the routed child
+with the next-present-sibling minimum as the fallback (taken lazily through `<|>`, so the walk
+touches one path plus at most one sibling descent). -/
+def entryGT? (k : Nat) : PTree L → Option (Nat × V)
+  | .nil          => none
+  | .tip pfx leaf =>
+    if k >>> 5 < pfx then minEntry? (.tip pfx leaf)
+    else if pfx < k >>> 5 then none
+    else
+      let m := LeafOps.slotsMask leaf &&& upperMask (chunk k 0)
+      if m == 0 then none
+      else (LeafOps.get? leaf (lowestSetIdx m)).map
+        (fun v => ((pfx <<< 5) ||| (lowestSetIdx m).toNat, v))
+  | .bin pfx level mask kids =>
+    if prefixAbove k level < pfx then minEntry? (.bin pfx level mask kids)
+    else if pfx < prefixAbove k level then none
+    else if testBit mask (chunk k level) then
+      if hb : arrayIndex mask (chunk k level) < kids.size then
+        entryGT? k (kids[arrayIndex mask (chunk k level)]'hb)
+          <|> minEntryAbove mask kids (chunk k level)
+      else minEntryAbove mask kids (chunk k level)
+    else minEntryAbove mask kids (chunk k level)
+decreasing_by
+  simp_wf
+  rename_i hb
+  have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb)
+  omega
+
+set_option linter.unusedVariables false in
+/-- The greatest `(key, value)` pair whose key is strictly less than `k` (the predecessor query),
+`none` if there is none. The mirror of `entryGT?`: ranges wholly below `k` answer with their
+maximum, and the fallback takes the greatest entry below the routed slot. -/
+def entryLT? (k : Nat) : PTree L → Option (Nat × V)
+  | .nil          => none
+  | .tip pfx leaf =>
+    if pfx < k >>> 5 then maxEntry? (.tip pfx leaf)
+    else if k >>> 5 < pfx then none
+    else
+      let m := LeafOps.slotsMask leaf &&& lowerMask (chunk k 0)
+      if m == 0 then none
+      else (LeafOps.get? leaf (highestSetIdx m)).map
+        (fun v => ((pfx <<< 5) ||| (highestSetIdx m).toNat, v))
+  | .bin pfx level mask kids =>
+    if pfx < prefixAbove k level then maxEntry? (.bin pfx level mask kids)
+    else if prefixAbove k level < pfx then none
+    else if testBit mask (chunk k level) then
+      if hb : arrayIndex mask (chunk k level) < kids.size then
+        entryLT? k (kids[arrayIndex mask (chunk k level)]'hb)
+          <|> maxEntryBelow mask kids (chunk k level)
+      else maxEntryBelow mask kids (chunk k level)
+    else maxEntryBelow mask kids (chunk k level)
+decreasing_by
+  simp_wf
+  rename_i hb
+  have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb)
+  omega
+
 ----------------------------------------------------------------------------------------------------
 -- Validation: `PTree`'s set ops must agree with a plain-list reference semantics — an oracle
 -- independent of the trie, at the `UInt32`/`Unit` set instance (proofs are added in later stages).
@@ -770,6 +882,30 @@ private def eraseSet (a : PTree UInt32) (k : Nat) : PTree UInt32 := erase k a
 #guard beq (sparseK.foldl eraseSet (ofSet sparseK)) .nil                          -- erase everything
 #guard beq (eraseSet (ofSet sparseK) 9223372036854775807)                         -- deep sparse key
   (ofSet (sparseK.filter (· != 9223372036854775807)))
+
+-- ordered queries agree with the ascending-list oracle: min/max = head/last of `toArray`,
+-- successor/predecessor = first-above/last-below in the sorted key list
+private def keysOf (a : PTree UInt32) : List Nat := a.toArray.toList.map Prod.fst
+private def probeK : List Nat :=
+  [0, 1, 7, 30, 31, 32, 33, 41, 42, 43, 499, 500, 999, 1023, 1024, 1025, 999999, 1000000,
+   999999998, 999999999, 4294967295, 4294967296, 9223372036854775806, 9223372036854775807]
+#guard subsetCorpus.all fun ks =>
+  let t := ofSet ks
+  t.minEntry?.map Prod.fst == (keysOf t).head?
+#guard subsetCorpus.all fun ks =>
+  let t := ofSet ks
+  t.maxEntry?.map Prod.fst == (keysOf t).getLast?
+#guard subsetCorpus.all fun ks =>
+  let t := ofSet ks
+  probeK.all fun k => (entryGT? k t).map Prod.fst == (keysOf t).find? (fun j => k < j)
+#guard subsetCorpus.all fun ks =>
+  let t := ofSet ks
+  probeK.all fun k => (entryLT? k t).map Prod.fst == ((keysOf t).filter (· < k)).getLast?
+-- slot-31 anchors (`upperMask 31 = 0`/`lowerMask 0 = 0`: no in-leaf neighbor; the next leaf answers)
+#guard (entryGT? 31 (ofSet [31])).isNone
+#guard (entryGT? 31 (ofSet [31, 32])).map Prod.fst == some 32
+#guard (entryLT? 32 (ofSet [31, 32])).map Prod.fst == some 31
+#guard (entryLT? 0 (ofSet [0, 1])).isNone
 
 ----------------------------------------------------------------------------------------------------
 -- Theorems

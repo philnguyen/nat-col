@@ -37,6 +37,28 @@ def contains : NatSet → Nat → Bool := NatCollection.contains
 def insert (s : NatSet) (k : Nat) : NatSet := NatCollection.insert s k ()
 def erase : NatSet → Nat → NatSet := NatCollection.erase
 
+/-- The least element, `none` on the empty set. O(depth) — an ordered query a hash set answers
+only by scanning all n elements. -/
+def min? : NatSet → Option Nat := NatCollection.minKey?
+/-- The greatest element, `none` on the empty set. O(depth). -/
+def max? : NatSet → Option Nat := NatCollection.maxKey?
+/-- The least element strictly greater than `k` (successor), `none` if there is none. O(depth). -/
+def succ? (s : NatSet) (k : Nat) : Option Nat := (NatCollection.entryGT? s k).map Prod.fst
+/-- The greatest element strictly less than `k` (predecessor), `none` if there is none.
+O(depth). -/
+def pred? (s : NatSet) (k : Nat) : Option Nat := (NatCollection.entryLT? s k).map Prod.fst
+/-- The least element `≥ k`: `k` itself when present, else the successor. -/
+def succEq? (s : NatSet) (k : Nat) : Option Nat := (NatCollection.entryGE? s k).map Prod.fst
+/-- The greatest element `≤ k`: `k` itself when present, else the predecessor. -/
+def predEq? (s : NatSet) (k : Nat) : Option Nat := (NatCollection.entryLE? s k).map Prod.fst
+/-- The least element together with the set without it, `none` on the empty set (the
+priority-queue step). -/
+def popMin? (s : NatSet) : Option (Nat × NatSet) :=
+  (NatCollection.popMinEntry? s).map (fun e => (e.1.1, e.2))
+/-- The greatest element together with the set without it, `none` on the empty set. -/
+def popMax? (s : NatSet) : Option (Nat × NatSet) :=
+  (NatCollection.popMaxEntry? s).map (fun e => (e.1.1, e.2))
+
 /-- Union. -/
 def union (s t : NatSet) : NatSet := NatCollection.join (fun _ _ => ()) s t
 /-- Intersection. -/
@@ -151,6 +173,38 @@ section Tests
 #guard (NatSet.empty.insert 42 |>.erase 42).isEmpty
 #guard (NatSet.empty.insert 42 |>.erase 99) = NatSet.empty.insert 42
 #guard (NatSet.empty.insert 5 |>.insert 1000 |>.erase 1000) = NatSet.empty.insert 5
+
+-- ordered queries: min/max, successor/predecessor (strict and inclusive), pop
+#guard (∅ : NatSet).min? = none
+#guard (∅ : NatSet).max? = none
+#guard (NatSet.ofList [5, 1, 9]).min? = some 1
+#guard (NatSet.ofList [5, 1, 9]).max? = some 9
+#guard (NatSet.ofList [1, 9223372036854775807]).min? = some 1                  -- deep sparse keys
+#guard (NatSet.ofList [1, 9223372036854775807]).max? = some 9223372036854775807
+#guard (NatSet.ofList [10, 20, 30]).succ? 10 = some 20
+#guard (NatSet.ofList [10, 20, 30]).succ? 0 = some 10
+#guard (NatSet.ofList [10, 20, 30]).succ? 30 = none
+#guard (NatSet.ofList [10, 20, 30]).pred? 30 = some 20
+#guard (NatSet.ofList [10, 20, 30]).pred? 10 = none
+#guard (NatSet.ofList [10, 20, 30]).succEq? 20 = some 20
+#guard (NatSet.ofList [10, 20, 30]).succEq? 21 = some 30
+#guard (NatSet.ofList [10, 20, 30]).predEq? 20 = some 20
+#guard (NatSet.ofList [10, 20, 30]).predEq? 19 = some 10
+#guard (NatSet.ofList [31, 32]).succ? 31 = some 32          -- across the leaf seam (slot 31 → 0)
+#guard (NatSet.ofList [5, 1000000]).succ? 5 = some 1000000  -- across a compressed path
+#guard (NatSet.ofList [3, 1, 2]).popMin? = some (1, NatSet.ofList [2, 3])
+#guard (NatSet.ofList [7, 5000]).popMax? = some (5000, NatSet.ofList [7])      -- collapses canonically
+#guard (∅ : NatSet).popMin? = none
+
+-- popMin? drains in ascending order: collecting the popped elements recovers `toList`
+private def drainMin : Nat → NatSet → List Nat
+  | 0, _ => []
+  | fuel + 1, s =>
+    match s.popMin? with
+    | none => []
+    | some (k, rest) => k :: drainMin fuel rest
+#guard drainMin 10 (NatSet.ofList [5, 1, 1000, 32]) = [1, 5, 32, 1000]
+#guard drainMin 10 (NatSet.ofList [5, 1, 1000, 32]) = (NatSet.ofList [5, 1, 1000, 32]).toList
 
 -- ofList / toList round trip (deduplicated, sorted)
 #guard (NatSet.ofList [3, 1, 2, 1, 3]).toList = [1, 2, 3]

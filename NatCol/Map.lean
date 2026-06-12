@@ -34,6 +34,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   toArray n := n.fold (fun acc i a => acc.push (i, a)) #[]
   filter p n := Node.filterMap (fun i a => if p i a then some a else none) n
   someSlot n := lowestSetIdx n.positionsMask
+  slotsMask n := n.positionsMask
   contains_eq_isSome n i := Node.testBit_eq_isSome_get? n i
   insert_ne_empty := Node.isEmpty_insert
   isEmpty_modify n i g := Node.isEmpty_alter_invariant n i (Option.map g) (fun o => by cases o <;> rfl)
@@ -92,6 +93,33 @@ def modify : NatMap α → Nat → (α → α) → NatMap α := NatCollection.mo
 `none` if absent) and returns the value to store, or `none` to leave the key absent. Generalizes
 `insert`, `erase`, and `modify`. -/
 def alter : NatMap α → Nat → (Option α → Option α) → NatMap α := NatCollection.alter
+
+/-- The least key, `none` on the empty map. O(depth) — an ordered query a hash map answers only
+by scanning all n entries. -/
+def minKey? : NatMap α → Option Nat := NatCollection.minKey?
+/-- The greatest key, `none` on the empty map. O(depth). -/
+def maxKey? : NatMap α → Option Nat := NatCollection.maxKey?
+/-- The entry with the least key, `none` on the empty map. O(depth). -/
+def minEntry? : NatMap α → Option (Nat × α) := NatCollection.minEntry?
+/-- The entry with the greatest key, `none` on the empty map. O(depth). -/
+def maxEntry? : NatMap α → Option (Nat × α) := NatCollection.maxEntry?
+/-- The entry with the least key strictly greater than `k` (successor), `none` if there is none.
+O(depth). -/
+def entryGT? : NatMap α → Nat → Option (Nat × α) := NatCollection.entryGT?
+/-- The entry with the greatest key strictly less than `k` (predecessor), `none` if there is
+none. O(depth). -/
+def entryLT? : NatMap α → Nat → Option (Nat × α) := NatCollection.entryLT?
+/-- The entry with the least key `≥ k`: the entry at `k` itself when present, else the
+successor's. -/
+def entryGE? : NatMap α → Nat → Option (Nat × α) := NatCollection.entryGE?
+/-- The entry with the greatest key `≤ k`: the entry at `k` itself when present, else the
+predecessor's. -/
+def entryLE? : NatMap α → Nat → Option (Nat × α) := NatCollection.entryLE?
+/-- The least-key entry together with the map without it, `none` on the empty map (the
+priority-queue step). -/
+def popMinEntry? : NatMap α → Option ((Nat × α) × NatMap α) := NatCollection.popMinEntry?
+/-- The greatest-key entry together with the map without it, `none` on the empty map. -/
+def popMaxEntry? : NatMap α → Option ((Nat × α) × NatMap α) := NatCollection.popMaxEntry?
 
 /-- Union; `combine` resolves values at coinciding keys. -/
 def join : (α → α → α) → NatMap α → NatMap α → NatMap α := NatCollection.join
@@ -233,6 +261,25 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 #guard (m1.erase 2).get? 2 = none
 #guard (m1.erase 2).size = 2
 #guard (NatMap.empty.insert 42 1 |>.erase 42) = (NatMap.empty : NatMap Nat)
+
+-- ordered queries: min/max, successor/predecessor (values ride along), pop
+#guard (NatMap.ofList [(2, 20), (9, 90)]).minEntry? = some (2, 20)
+#guard (NatMap.ofList [(2, 20), (9, 90)]).maxEntry? = some (9, 90)
+#guard (NatMap.ofList [(2, 20), (9, 90)]).minKey? = some 2
+#guard (NatMap.ofList [(2, 20), (5000, 3)]).maxKey? = some 5000                -- mixed heights
+#guard (NatMap.empty : NatMap Nat).minEntry? = none
+#guard (NatMap.empty : NatMap Nat).maxKey? = none
+#guard (NatMap.ofList [(3, 30), (40, 400)]).entryGT? 3 = some (40, 400)
+#guard (NatMap.ofList [(3, 30), (40, 400)]).entryGT? 40 = none
+#guard (NatMap.ofList [(3, 30), (40, 400)]).entryLT? 40 = some (3, 30)
+#guard (NatMap.ofList [(3, 30), (40, 400)]).entryLT? 3 = none
+#guard (NatMap.ofList [(3, 30), (40, 400)]).entryGE? 3 = some (3, 30)
+#guard (NatMap.ofList [(3, 30), (40, 400)]).entryGE? 4 = some (40, 400)
+#guard (NatMap.ofList [(3, 30), (40, 400)]).entryLE? 39 = some (3, 30)
+#guard (NatMap.ofList [(3, 30), (40, 400)]).entryLE? 40 = some (40, 400)
+#guard (NatMap.ofList [(1, 10), (2, 20)]).popMinEntry? = some ((1, 10), NatMap.ofList [(2, 20)])
+#guard (NatMap.ofList [(1, 10), (2, 20)]).popMaxEntry? = some ((2, 20), NatMap.ofList [(1, 10)])
+#guard (NatMap.empty : NatMap Nat).popMinEntry? = none
 
 -- toList sorted by key irrespective of insertion order
 #guard (NatMap.empty.insert 3 30 |>.insert 1 10 |>.insert 2 20).toList = [(1, 10), (2, 20), (3, 30)]

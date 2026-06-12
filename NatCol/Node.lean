@@ -108,6 +108,10 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   reconstructs a representative key for a `tip` from this (`someKey`, `witnessKey`), which its
   branch/`join` routing needs to recover a node's shared prefix. -/
   someSlot  : L → UInt32
+  /-- The occupancy bitmap: bit `i` is set iff slot `i` is present (agrees with `contains`).
+  Powers the ordered queries (`PTree.minEntry?`/`entryGT?`/…), which pick slots by masked
+  bit-scans (`lowestSetIdx`/`highestSetIdx` under `lowerMask`/`upperMask`). -/
+  slotsMask : L → UInt32
   /-- `contains` agrees with `get?`'s presence: the `Bool` fast path matches the denotational
   lookup. Lets the collection layer keep its `get?`-based membership lemmas after routing
   `contains` through the boxing-free path. -/
@@ -202,6 +206,7 @@ instance : LeafOps UInt32 Unit where
     let iu := UInt32.ofNat i
     if testBit u iu && p iu () then setBit acc iu else acc) (0 : UInt32)
   someSlot := lowestSetIdx
+  slotsMask u := u
   contains_eq_isSome u i := by
     show testBit u i = (if testBit u i then some () else none).isSome
     cases testBit u i <;> rfl
