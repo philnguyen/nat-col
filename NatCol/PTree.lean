@@ -4902,6 +4902,96 @@ theorem diff_empty (a : PTree L) : diff a empty = a := by
   | tip p b => rw [diffU]
   | bin p l m k => rw [diffU]
 
+/-- `compactify` keeps nothing when every child is `nil`: each step takes the skip branch, so the
+accumulators come back untouched. -/
+private theorem compactify_of_all_nil (mask : UInt32) (kids : Array (PTree L))
+    (hk : ∀ t ∈ kids, t = .nil) :
+    ∀ (n : Nat) (rem : UInt32), rem.toNat = n → ∀ (accM : UInt32) (acc : Array (PTree L)),
+      compactify mask kids rem accM acc = (accM, acc) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro rem hrem accM acc
+    by_cases h0 : (rem == 0) = true
+    · rw [compactify, dif_pos h0]
+    · have hrem0 : rem ≠ 0 := fun h => h0 (by rw [h]; rfl)
+      have hnil : isNil (childAt mask kids (lowestSetIdx rem)) = true := by
+        unfold childAt
+        by_cases hb : arrayIndex mask (lowestSetIdx rem) < kids.size
+        · rw [Array.getElem?_eq_getElem hb, Option.getD_some, hk _ (Array.getElem_mem hb)]
+          rfl
+        · rw [Array.getElem?_eq_none (Nat.le_of_not_lt hb), Option.getD_none]
+          rfl
+      have hlt : (clearLowest rem).toNat < n := by
+        rw [← hrem]; exact toNat_clearLowest_lt rem hrem0
+      rw [compactify, dif_neg h0, if_pos hnil]
+      exact IH (clearLowest rem).toNat hlt (clearLowest rem) rfl accM acc
+
+/-- `finalize` of an all-`nil` child array is `nil`: `compactify` drops every child, leaving the
+empty mask. -/
+private theorem finalize_nil_of_all_nil (p l : Nat) (mask : UInt32) (kids : Array (PTree L))
+    (hk : ∀ t ∈ kids, t = .nil) : finalize p l mask kids = .nil := by
+  rw [finalize, compactify_of_all_nil mask kids hk mask.toNat mask rfl 0 #[]]
+  rfl
+
+/-- Differencing a mask's children against themselves appends only `nil`s: every scanned slot of
+`rem ⊆ m` is present on BOTH sides, so `diffChild` recurses on the same child, which cancels. -/
+private theorem diffKids_self_nil (m : UInt32) (k : Array (PTree L))
+    (ih : ∀ t ∈ k, diffU t t = .nil) :
+    ∀ (n : Nat) (rem : UInt32), rem.toNat = n →
+      (∀ c, testBit rem c = true → testBit m c = true) →
+      ∀ (acc : Array (PTree L)), (∀ t ∈ acc, t = .nil) →
+      ∀ t ∈ diffKids m k m k rem acc, t = .nil := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro rem hrem hsub acc hacc
+    by_cases h0 : (rem == 0) = true
+    · rw [diffKids, dif_pos h0]; exact hacc
+    · have hrem0 : rem ≠ 0 := fun h => h0 (by rw [h]; rfl)
+      have hm : testBit m (lowestSetIdx rem) = true :=
+        hsub _ (testBit_lowestSetIdx rem hrem0)
+      have hchild : diffChild m k m k (lowestSetIdx rem) = .nil := by
+        rw [diffChild]
+        by_cases hb : arrayIndex m (lowestSetIdx rem) < k.size
+        · rw [dif_pos hb, if_pos hm, dif_pos hb]
+          exact ih _ (Array.getElem_mem hb)
+        · rw [dif_neg hb]
+      have hlt : (clearLowest rem).toNat < n := by
+        rw [← hrem]; exact toNat_clearLowest_lt rem hrem0
+      rw [diffKids, dif_neg h0]
+      refine IH (clearLowest rem).toNat hlt (clearLowest rem) rfl
+        (fun c hc => hsub c (testBit_of_clearLowest rem c hc)) _ ?_
+      intro t ht
+      rcases Array.mem_push.mp ht with h | h
+      · exact hacc t h
+      · exact h.trans hchild
+
+/-- Subtracting a trie from itself leaves nothing: aligned leaves cancel
+(`LeafOps.isEmpty_diff_self`) and every aligned child differences against ITSELF to `nil`, so
+`finalize`'s re-compression collapses each `bin`. Purely structural — no well-formedness needed
+(the divergence arms of `diffU` are unreachable when both operands are the same tree). -/
+private theorem diffU_self : (a : PTree L) → diffU a a = .nil
+  | .nil => by rw [diffU]
+  | .tip p b => by
+    rw [diffU, if_pos (beq_self_eq_true p), if_pos (LeafOps.isEmpty_diff_self b)]
+  | .bin p l m k => by
+    rw [diffU, if_pos (beq_self_eq_true l), if_pos (beq_self_eq_true _),
+        Array.emptyWithCapacity_eq]
+    exact finalize_nil_of_all_nil p l m _
+      (diffKids_self_nil m k (fun t _ht => diffU_self t) m.toNat m rfl (fun _ hc => hc) #[]
+        (fun t ht => by simp at ht))
+termination_by a => sizeOf a
+decreasing_by
+  simp_wf
+  have := Array.sizeOf_lt_of_mem _ht
+  omega
+
+/-- Subtracting a trie from itself yields the empty trie. Structural — no well-formedness
+needed. -/
+theorem diff_self (a : PTree L) : diff a a = empty :=
+  diffU_self a
+
 /-! ### Symmetric difference
 
 `symmDiffU` removes AND adds keys (one-sided subtrees survive, shared keys cancel), so its `WF`

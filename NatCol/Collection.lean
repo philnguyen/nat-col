@@ -366,6 +366,12 @@ back `a`'s tree itself, whole. -/
 theorem diff_empty (a : NatCollection L) : a.diff empty = a := by
   apply ext_tree; exact PTree.diff_empty a.tree
 
+/-- Subtracting a collection from itself leaves nothing — structurally: aligned leaves cancel
+and `finalize` collapses every emptied branch. -/
+@[simp, grind =]
+theorem diff_self (a : NatCollection L) : a.diff a = empty := by
+  apply ext_tree; exact PTree.diff_self a.tree
+
 /-- The empty collection restricts every collection. -/
 @[simp, grind =]
 theorem restricts_empty_left (rel : V → V → Bool) (b : NatCollection L) :

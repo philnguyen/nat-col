@@ -932,6 +932,10 @@ theorem not_mem_of_isDisjoint {s t : NatSet} {k : Nat} (h : s.isDisjoint t = tru
 theorem diff_empty (s : NatSet) : s \ ∅ = s :=
   NatCollection.diff_empty s
 
+/-- Subtracting a set from itself leaves the empty set. -/
+theorem diff_self (s : NatSet) : s \ s = ∅ :=
+  NatCollection.diff_self s
+
 /-- `popMin?` pops the minimum: the popped element is `min?`'s answer (so `min?_mem` and
 `min?_le` apply to it). -/
 theorem popMin?_min {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMin? = some (k, s')) :

@@ -211,6 +211,8 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   `slotsMask`s share no bit. With `testBit_slotsMask`, the single law `PTree.isDisjoint`'s
   no-shared-key characterization bottoms out in. -/
   disjoint_eq_slotsMask : ∀ (a b : L), disjoint a b = (slotsMask a &&& slotsMask b == 0)
+  /-- Subtracting a leaf from itself empties it. The leaf base case of `PTree.diff_self`. -/
+  isEmpty_diff_self : ∀ (l : L), isEmpty (diff l l) = true
 
 /-- Leaf operations for sets: a `UInt32` is a 32-element bitset; the value type is `Unit`. This is
 the set leaf instance the path-compressed `PTree` (and `NatSet`) instantiates at; it lives here in
@@ -336,6 +338,9 @@ instance : LeafOps UInt32 Unit where
   contains_someSlot u h := testBit_lowestSetIdx u (beq_eq_false_iff_ne.mp h)
   testBit_slotsMask _ _ _ := rfl
   disjoint_eq_slotsMask _ _ := rfl
+  isEmpty_diff_self u := by
+    show ((u &&& ~~~u) == 0) = true
+    simp [show u &&& ~~~u = 0 from by bv_decide]
 
 namespace Node
 

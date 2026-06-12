@@ -68,6 +68,22 @@ instance {α : Type u} : LeafOps (Node α) α where
   contains_someSlot n h := testBit_lowestSetIdx n.positionsMask (beq_eq_false_iff_ne.mp h)
   testBit_slotsMask _ _ _ := rfl
   disjoint_eq_slotsMask _ _ := rfl
+  isEmpty_diff_self n := by
+    -- every present slot of `n` has its bit set in `n.positionsMask`, so the `filterMap`
+    -- drops everything and the result is the empty node
+    have h : Node.filterMap (fun i v => if testBit n.positionsMask i then none else some v) n
+        = Node.empty := by
+      apply Node.ext
+      intro i hi
+      rw [Node.get?_filterMap _ n i hi, Node.get?_empty]
+      cases hg : n.get? i with
+      | none => rfl
+      | some v =>
+        have htb : testBit n.positionsMask i = true := by
+          rw [Node.testBit_eq_isSome_get?, hg]; rfl
+        simp [htb]
+    show Node.isEmpty (Node.filterMap (fun i v => if testBit n.positionsMask i then none else some v) n) = true
+    rw [h]; rfl
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -1148,6 +1164,10 @@ theorem not_mem_of_isDisjoint {m m' : NatMap α} {k : Nat} (h : m.isDisjoint m' 
 /-- The empty map is a right identity of `diff`. -/
 theorem diff_empty (m : NatMap α) : m.diff ∅ = m :=
   NatCollection.diff_empty m
+
+/-- Subtracting a map from itself leaves the empty map. -/
+theorem diff_self (m : NatMap α) : m.diff m = ∅ :=
+  NatCollection.diff_self m
 
 end NatMap
 
