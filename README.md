@@ -129,7 +129,8 @@ equality.
 Proven generically over `NatCollection` and lifted to `NatSet`/`NatMap` (the `NatMap` versions are
 *relative* to the supplied `combine`/`rel`, e.g. needing it to be associative/commutative/reflexive):
 
-- `∅` is a two-sided **identity** of `join` and a two-sided **annihilator** of `meet`; `∅ ⊆` everything.
+- `∅` is a two-sided **identity** of `join`, a two-sided **annihilator** of `meet`, and a right
+  identity of `diff` (`s \ ∅ = s`); `∅ ⊆` everything.
 - `join`/`meet` are **commutative**, **associative**, and **idempotent** (`s ∪ s = s`, `s ∩ s = s`); **absorption** holds.
 - `restricts` is a **partial order**: reflexive, transitive, anti-symmetric (anti-symmetry gives `⊆`-based extensionality).
 - `join` is the **least upper bound** and `meet` the **greatest lower bound** for `restricts`.

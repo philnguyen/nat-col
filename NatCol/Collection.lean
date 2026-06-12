@@ -360,6 +360,12 @@ theorem meet_empty_right (combine : V → V → V) (a : NatCollection L) :
     meet combine a empty = empty := by
   apply ext_tree; exact PTree.meet_empty combine a.tree a.wf
 
+/-- The empty collection is a right identity of `diff` — structurally: the merge walk hands
+back `a`'s tree itself, whole. -/
+@[simp, grind =]
+theorem diff_empty (a : NatCollection L) : a.diff empty = a := by
+  apply ext_tree; exact PTree.diff_empty a.tree
+
 /-- The empty collection restricts every collection. -/
 @[simp, grind =]
 theorem restricts_empty_left (rel : V → V → Bool) (b : NatCollection L) :

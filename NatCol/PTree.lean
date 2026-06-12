@@ -4893,6 +4893,15 @@ decreasing_by
 theorem WF_diff (a b : PTree L) (hwa : WF a) (hwb : WF b) : WF (diff a b) := by
   rw [diff]; exact (diff_WF_keys a b hwa hwb).1
 
+/-- The empty trie is a right identity of `diff` — and structurally so: every `.nil`-right arm
+of `diffU` returns the left tree itself, whole, so no well-formedness is needed. -/
+theorem diff_empty (a : PTree L) : diff a empty = a := by
+  show diffU a .nil = a
+  cases a with
+  | nil => rw [diffU]
+  | tip p b => rw [diffU]
+  | bin p l m k => rw [diffU]
+
 /-! ### Symmetric difference
 
 `symmDiffU` removes AND adds keys (one-sided subtrees survive, shared keys cancel), so its `WF`

@@ -1145,6 +1145,10 @@ theorem not_mem_of_isDisjoint {m m' : NatMap α} {k : Nat} (h : m.isDisjoint m' 
     (hk : k ∈ m) : k ∉ m' :=
   isDisjoint_iff.mp h k hk
 
+/-- The empty map is a right identity of `diff`. -/
+theorem diff_empty (m : NatMap α) : m.diff ∅ = m :=
+  NatCollection.diff_empty m
+
 end NatMap
 
 /-- `NatMap` is a lawful functor: `map` satisfies the identity and composition laws (and the
