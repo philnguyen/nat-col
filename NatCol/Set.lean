@@ -1099,6 +1099,42 @@ theorem symmDiff_symmDiff_cancel (s t : NatSet) : (s.symmDiff t).symmDiff t = s 
     | none => rfl
     | some w => cases w; rfl
 
+/-- **Symmetric difference is associative** (on sets): membership on each side is the parity of
+the three memberships. Set-only — on maps the two sides disagree on which *value* survives a key
+present in all three operands. -/
+theorem symmDiff_assoc (s t u : NatSet) :
+    (s.symmDiff t).symmDiff u = s.symmDiff (t.symmDiff u) := by
+  apply NatCollection.ext_get?
+  intro k
+  show NatCollection.get? (NatCollection.symmDiff (NatCollection.symmDiff s t) u) k
+      = NatCollection.get? (NatCollection.symmDiff s (NatCollection.symmDiff t u)) k
+  rw [NatCollection.get?_symmDiff, NatCollection.get?_symmDiff,
+      NatCollection.get?_symmDiff, NatCollection.get?_symmDiff]
+  cases hgs : NatCollection.get? s k with
+  | none =>
+    cases hgt : NatCollection.get? t k with
+    | none =>
+      cases hgu : NatCollection.get? u k with
+      | none => rfl
+      | some w => cases w; rfl
+    | some v =>
+      cases v
+      cases hgu : NatCollection.get? u k with
+      | none => rfl
+      | some w => cases w; rfl
+  | some v =>
+    cases v
+    cases hgt : NatCollection.get? t k with
+    | none =>
+      cases hgu : NatCollection.get? u k with
+      | none => rfl
+      | some w => cases w; rfl
+    | some w =>
+      cases w
+      cases hgu : NatCollection.get? u k with
+      | none => rfl
+      | some w => cases w; rfl
+
 /-- `popMin?` pops the minimum: the popped element is `min?`'s answer (so `min?_mem` and
 `min?_le` apply to it). -/
 theorem popMin?_min {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMin? = some (k, s')) :
