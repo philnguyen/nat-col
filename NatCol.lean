@@ -6,3 +6,4 @@ import NatCol.PTree
 import NatCol.Collection
 import NatCol.Set
 import NatCol.Map
+import NatCol.Countable
