@@ -88,6 +88,14 @@ def optVdiff {V : Type u} : Option V → Option V → Option V
   | ox, none   => ox
   | _,  some _ => none
 
+/-- Value-level symmetric difference of two lookups: a key survives exactly when present on one
+side only, carrying that side's value (shared keys cancel, so there is no combine). The companion
+of `optVdiff` for `symmDiff`. -/
+def optVsymmDiff {V : Type u} : Option V → Option V → Option V
+  | ox,     none   => ox
+  | none,   some y => some y
+  | some _, some _ => none
+
 /-- A leaf collection: maps 5-bit slot indices to values of type `V`. This is the single
 seam that distinguishes sets (`UInt32` leaves, `V = Unit`) from maps (`Node α` leaves,
 `V = α`); everything else is shared. -/
@@ -225,6 +233,11 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   `PTree.get?_diff`. -/
   get?_diff : ∀ (a b : L) (i : UInt32), i < 32 →
     get? (diff a b) i = optVdiff (get? a i) (get? b i)
+  /-- `get?` reads a `symmDiff` pointwise: a slot survives exactly when present on one side only,
+  with that side's value (`optVsymmDiff`; shared slots cancel). The leaf base case of
+  `PTree.get?_symmDiff`. -/
+  get?_symmDiff : ∀ (a b : L) (i : UInt32), i < 32 →
+    get? (symmDiff a b) i = optVsymmDiff (get? a i) (get? b i)
 
 /-- Leaf operations for sets: a `UInt32` is a 32-element bitset; the value type is `Unit`. This is
 the set leaf instance the path-compressed `PTree` (and `NatSet`) instantiates at; it lives here in
@@ -361,6 +374,16 @@ instance : LeafOps UInt32 Unit where
     rw [htb]
     by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;>
       simp [ha, hb, optVdiff]
+  get?_symmDiff a b i _ := by
+    have htb : testBit (a ^^^ b) i
+        = ((testBit a i && !testBit b i) || (!testBit a i && testBit b i)) := by
+      unfold testBit; bv_decide
+    show (if testBit (a ^^^ b) i then some () else none)
+        = optVsymmDiff (if testBit a i then some () else none)
+            (if testBit b i then some () else none)
+    rw [htb]
+    by_cases ha : testBit a i = true <;> by_cases hb : testBit b i = true <;>
+      simp [ha, hb, optVsymmDiff]
 
 namespace Node
 

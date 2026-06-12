@@ -991,6 +991,114 @@ theorem diff_eq_empty_iff_subset {s t : NatSet} : s \ t = ∅ ↔ s ⊆ t := by
 theorem diff_eq_empty_of_subset {s t : NatSet} (h : s ⊆ t) : s \ t = ∅ :=
   diff_eq_empty_iff_subset.mpr h
 
+/-- The empty set is a right identity of symmetric difference. -/
+theorem symmDiff_empty (s : NatSet) : s.symmDiff ∅ = s :=
+  NatCollection.symmDiff_empty s
+
+/-- The empty set is a left identity of symmetric difference. -/
+theorem empty_symmDiff (s : NatSet) : (∅ : NatSet).symmDiff s = s :=
+  NatCollection.empty_symmDiff s
+
+/-- A set cancels against itself: its symmetric difference with itself is empty. -/
+theorem symmDiff_self (s : NatSet) : s.symmDiff s = ∅ :=
+  NatCollection.symmDiff_self s
+
+/-- **Symmetric difference is commutative.** -/
+theorem symmDiff_comm (s t : NatSet) : s.symmDiff t = t.symmDiff s :=
+  NatCollection.symmDiff_comm s t
+
+/-- Membership in a symmetric difference: `j ∈ s.symmDiff t` exactly when `j` is in exactly one
+of the two sets. -/
+theorem mem_symmDiff {s t : NatSet} {j : Nat} :
+    j ∈ s.symmDiff t ↔ (j ∈ s ∧ j ∉ t) ∨ (j ∉ s ∧ j ∈ t) := by
+  show NatCollection.contains (NatCollection.symmDiff s t) j = true ↔ _
+  rw [NatCollection.contains_symmDiff]
+  constructor
+  · intro h
+    cases hs : NatCollection.contains s j with
+    | true =>
+      refine Or.inl ⟨hs, fun hmem => ?_⟩
+      replace hmem : NatCollection.contains t j = true := hmem
+      rw [hs, hmem] at h
+      exact absurd h (by decide)
+    | false =>
+      cases ht : NatCollection.contains t j with
+      | true =>
+        refine Or.inr ⟨fun hmem => ?_, ht⟩
+        replace hmem : NatCollection.contains s j = true := hmem
+        rw [hmem] at hs
+        exact absurd hs (by decide)
+      | false =>
+        rw [hs, ht] at h
+        exact absurd h (by decide)
+  · intro h
+    rcases h with ⟨h1, h2⟩ | ⟨h1, h2⟩
+    · replace h1 : NatCollection.contains s j = true := h1
+      have h2' : NatCollection.contains t j = false := by
+        cases hc : NatCollection.contains t j with
+        | false => rfl
+        | true => exact absurd (show j ∈ t from hc) h2
+      rw [h1, h2']; rfl
+    · replace h2 : NatCollection.contains t j = true := h2
+      have h1' : NatCollection.contains s j = false := by
+        cases hc : NatCollection.contains s j with
+        | false => rfl
+        | true => exact absurd (show j ∈ s from hc) h1
+      rw [h1', h2]; rfl
+
+/-- **Symmetric difference detects equality**: `s.symmDiff t` is empty exactly when `s = t` —
+the `symmDiff` companion of `diff_eq_empty_iff_subset` (`symmDiff_self` is the reflexive
+instance). -/
+theorem symmDiff_eq_empty_iff {s t : NatSet} : s.symmDiff t = ∅ ↔ s = t := by
+  constructor
+  · intro h
+    have hc := (NatCollection.symmDiff_eq_empty_iff s t).mp h
+    apply NatCollection.ext_get?
+    intro k
+    have hk := hc k
+    rw [NatCollection.contains_eq, NatCollection.contains_eq] at hk
+    cases hga : NatCollection.get? s k with
+    | none =>
+      cases hgb : NatCollection.get? t k with
+      | none => rfl
+      | some w => rw [hga, hgb] at hk; simp at hk
+    | some v =>
+      cases hgb : NatCollection.get? t k with
+      | none => rw [hga, hgb] at hk; simp at hk
+      | some w => cases v; cases w; rfl
+  · intro h
+    rw [h]
+    exact symmDiff_self t
+
+/-- **The symmetric difference is the union of the two one-sided differences** — in one pass:
+the structural merge computes `(s \ t) ∪ (t \ s)` without building either side. -/
+theorem symmDiff_eq_union_diff (s t : NatSet) : s.symmDiff t = (s \ t) ∪ (t \ s) :=
+  NatCollection.symmDiff_eq_join_diff (fun _ _ => ()) s t
+
+/-- **A subset's symmetric difference is the reverse difference**: when `s ⊆ t`, all of `s`
+cancels and exactly `t \ s` remains. -/
+theorem symmDiff_eq_diff_of_subset {s t : NatSet} (h : s ⊆ t) : s.symmDiff t = t \ s :=
+  NatCollection.symmDiff_eq_diff_of_restricts (fun _ _ => true) (fun _ => rfl) s t h
+
+/-- Symmetric difference is an involution in its second operand: differencing with `t` twice
+gives `s` back (`(s.symmDiff t).symmDiff t = s`). -/
+theorem symmDiff_symmDiff_cancel (s t : NatSet) : (s.symmDiff t).symmDiff t = s := by
+  apply NatCollection.ext_get?
+  intro k
+  show NatCollection.get? (NatCollection.symmDiff (NatCollection.symmDiff s t) t) k
+      = NatCollection.get? s k
+  rw [NatCollection.get?_symmDiff, NatCollection.get?_symmDiff]
+  cases hga : NatCollection.get? s k with
+  | none =>
+    cases hgb : NatCollection.get? t k with
+    | none => rfl
+    | some w => cases w; rfl
+  | some v =>
+    cases v
+    cases hgb : NatCollection.get? t k with
+    | none => rfl
+    | some w => cases w; rfl
+
 /-- `popMin?` pops the minimum: the popped element is `min?`'s answer (so `min?_mem` and
 `min?_le` apply to it). -/
 theorem popMin?_min {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMin? = some (k, s')) :

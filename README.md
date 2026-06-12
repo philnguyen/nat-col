@@ -135,6 +135,12 @@ Proven generically over `NatCollection` and lifted to `NatSet`/`NatMap` (the `Na
   is `m`'s own) and **collapses exactly on the order**: `s \ t = ∅ ↔ s ⊆ t` (on maps `restricts`
   forces an empty `diff`, and an empty `diff` is exactly domain inclusion); `s \ s = ∅` is the
   reflexive instance.
+- `symmDiff` has its full **lookup spec** too (a key reads through with its own side's value
+  exactly when in exactly one operand), is **commutative** with `∅` a two-sided identity, equals
+  `(s \ t) ∪ (t \ s)`, and **collapses exactly on equality**: `s.symmDiff t = ∅ ↔ s = t` (on maps:
+  same key set — shared keys cancel whatever their values). Under inclusion it degenerates to the
+  reverse difference (`s ⊆ t → s.symmDiff t = t \ s`, so `s.symmDiff s = ∅`), and on sets it is an
+  involution: `(s.symmDiff t).symmDiff t = s`.
 - `join`/`meet` are **commutative**, **associative**, and **idempotent** (`s ∪ s = s`, `s ∩ s = s`); **absorption** holds.
 - `restricts` is a **partial order**: reflexive, transitive, anti-symmetric (anti-symmetry gives `⊆`-based extensionality).
 - `join` is the **least upper bound** and `meet` the **greatest lower bound** for `restricts`.

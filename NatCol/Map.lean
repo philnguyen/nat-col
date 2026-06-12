@@ -91,6 +91,12 @@ instance {α : Type u} : LeafOps (Node α) α where
     cases hga : Node.get? a i with
     | none => cases Node.get? b i <;> rfl
     | some v => cases Node.get? b i <;> rfl
+  get?_symmDiff a b i hi := by
+    -- `Node.join` with the always-`none` combine drops exactly the shared slots
+    show Node.get? (Node.join (fun _ _ => none) a b) i
+        = optVsymmDiff (Node.get? a i) (Node.get? b i)
+    rw [Node.get?_join (fun _ _ => none) a b i hi]
+    cases Node.get? a i <;> cases Node.get? b i <;> rfl
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -1222,6 +1228,126 @@ order. -/
 theorem diff_eq_empty_of_restricts (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
     {m t : NatMap α} (h : m.restricts rel t = true) : m.diff t = ∅ :=
   NatCollection.diff_eq_empty_of_restricts rel hrefl m t h
+
+/-- The empty map is a right identity of `symmDiff`. -/
+theorem symmDiff_empty (m : NatMap α) : m.symmDiff ∅ = m :=
+  NatCollection.symmDiff_empty m
+
+/-- The empty map is a left identity of `symmDiff`. -/
+theorem empty_symmDiff (m : NatMap α) : (∅ : NatMap α).symmDiff m = m :=
+  NatCollection.empty_symmDiff m
+
+/-- A map cancels against itself: every key is shared, so everything drops. -/
+theorem symmDiff_self (m : NatMap α) : m.symmDiff m = ∅ :=
+  NatCollection.symmDiff_self m
+
+/-- **`symmDiff` is commutative** — there is no combine to order: the surviving value always
+comes from whichever map holds the key alone. -/
+theorem symmDiff_comm (m t : NatMap α) : m.symmDiff t = t.symmDiff m :=
+  NatCollection.symmDiff_comm m t
+
+/-- `get?` after `symmDiff`: a key reads its value from whichever map holds it alone, and reads
+nothing where the two key sets overlap (shared keys cancel, whatever the values). -/
+theorem get?_symmDiff (m t : NatMap α) (k : Nat) :
+    (m.symmDiff t).get? k =
+      if m.contains k = true then (if t.contains k = true then none else m.get? k)
+      else t.get? k := by
+  show NatCollection.get? (NatCollection.symmDiff m t) k
+      = if NatCollection.contains m k = true
+        then (if NatCollection.contains t k = true then none else NatCollection.get? m k)
+        else NatCollection.get? t k
+  rw [NatCollection.get?_symmDiff, NatCollection.contains_eq, NatCollection.contains_eq]
+  cases hga : NatCollection.get? m k with
+  | none =>
+    rw [if_neg (by simp)]
+    cases NatCollection.get? t k <;> rfl
+  | some v =>
+    rw [if_pos (show (some v : Option α).isSome = true from rfl)]
+    cases hgb : NatCollection.get? t k with
+    | none => rw [if_neg (by simp)]; rfl
+    | some w => rw [if_pos (show (some w : Option α).isSome = true from rfl)]; rfl
+
+/-- Membership in a `symmDiff`: `j ∈ m.symmDiff t` exactly when `j` is a key of exactly one of
+the two maps. -/
+theorem mem_symmDiff {m t : NatMap α} {j : Nat} :
+    j ∈ m.symmDiff t ↔ (j ∈ m ∧ j ∉ t) ∨ (j ∉ m ∧ j ∈ t) := by
+  show NatCollection.contains (NatCollection.symmDiff m t) j = true ↔ _
+  rw [NatCollection.contains_symmDiff]
+  constructor
+  · intro h
+    cases hs : NatCollection.contains m j with
+    | true =>
+      refine Or.inl ⟨hs, fun hmem => ?_⟩
+      replace hmem : NatCollection.contains t j = true := hmem
+      rw [hs, hmem] at h
+      exact absurd h (by decide)
+    | false =>
+      cases ht : NatCollection.contains t j with
+      | true =>
+        refine Or.inr ⟨fun hmem => ?_, ht⟩
+        replace hmem : NatCollection.contains m j = true := hmem
+        rw [hmem] at hs
+        exact absurd hs (by decide)
+      | false =>
+        rw [hs, ht] at h
+        exact absurd h (by decide)
+  · intro h
+    rcases h with ⟨h1, h2⟩ | ⟨h1, h2⟩
+    · replace h1 : NatCollection.contains m j = true := h1
+      have h2' : NatCollection.contains t j = false := by
+        cases hc : NatCollection.contains t j with
+        | false => rfl
+        | true => exact absurd (show j ∈ t from hc) h2
+      rw [h1, h2']; rfl
+    · replace h2 : NatCollection.contains t j = true := h2
+      have h1' : NatCollection.contains m j = false := by
+        cases hc : NatCollection.contains m j with
+        | false => rfl
+        | true => exact absurd (show j ∈ m from hc) h1
+      rw [h1', h2]; rfl
+
+/-- **`symmDiff` collapses exactly on domain equality**: the symmetric difference is empty iff
+the two maps hold the same keys — the values are irrelevant (shared keys cancel even when their
+values differ, e.g. `{(1, 10)}.symmDiff {(1, 99)} = ∅`). -/
+theorem symmDiff_eq_empty_iff {m t : NatMap α} :
+    m.symmDiff t = ∅ ↔ ∀ k, (k ∈ m ↔ k ∈ t) := by
+  show NatCollection.symmDiff m t = NatCollection.empty ↔ _
+  rw [NatCollection.symmDiff_eq_empty_iff]
+  constructor
+  · intro h k
+    constructor
+    · intro hk
+      show NatCollection.contains t k = true
+      rw [← h k]; exact hk
+    · intro hk
+      show NatCollection.contains m k = true
+      rw [h k]; exact hk
+  · intro h k
+    cases hm : NatCollection.contains m k with
+    | true =>
+      have htt : NatCollection.contains t k = true := (h k).mp hm
+      rw [htt]
+    | false =>
+      cases ht : NatCollection.contains t k with
+      | false => rfl
+      | true =>
+        have hmm : NatCollection.contains m k = true := (h k).mpr ht
+        rw [hmm] at hm
+        exact absurd hm (by decide)
+
+/-- **`symmDiff` decomposes as the `join` of the two one-sided differences** — for any combine:
+the differences hold disjoint keys, so the combine never fires and each surviving key keeps its
+own map's value. -/
+theorem symmDiff_eq_join_diff (combine : α → α → α) (m t : NatMap α) :
+    m.symmDiff t = (m.diff t).join combine (t.diff m) :=
+  NatCollection.symmDiff_eq_join_diff combine m t
+
+/-- **Restriction turns `symmDiff` into the reverse difference** (for reflexive `rel`): if `m`
+restricts `t`, every key of `m` is shared (and cancels), leaving exactly `t`'s entries outside
+`m` — with `t`'s values. -/
+theorem symmDiff_eq_diff_of_restricts (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    {m t : NatMap α} (h : m.restricts rel t = true) : m.symmDiff t = t.diff m :=
+  NatCollection.symmDiff_eq_diff_of_restricts rel hrefl m t h
 
 end NatMap
 

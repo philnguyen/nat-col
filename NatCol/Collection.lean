@@ -329,6 +329,18 @@ theorem contains_diff (a b : NatCollection L) (k : Nat) :
     (a.diff b).contains k = (a.contains k && !b.contains k) :=
   PTree.contains_diff k a.tree b.tree a.wf b.wf
 
+/-- **`get?` of a `symmDiff`**: the value-level symmetric difference of the two lookups — a key
+reads through with its own side's value exactly when present in exactly one operand (shared keys
+cancel, whatever their values). -/
+theorem get?_symmDiff (a b : NatCollection L) (k : Nat) :
+    (a.symmDiff b).get? k = optVsymmDiff (a.get? k) (b.get? k) :=
+  PTree.get?_symmDiff k a.tree b.tree a.wf b.wf
+
+/-- Membership in a `symmDiff`: a key survives exactly when it is in exactly one operand. -/
+theorem contains_symmDiff (a b : NatCollection L) (k : Nat) :
+    (a.symmDiff b).contains k = (a.contains k != b.contains k) :=
+  PTree.contains_symmDiff k a.tree b.tree a.wf b.wf
+
 /-- **`get?` of an `insert`**: the inserted key reads the new value; every other key is read
 unchanged. -/
 theorem get?_insert (c : NatCollection L) (k : Nat) (v : V) (j : Nat) :
@@ -407,6 +419,74 @@ theorem diff_eq_empty_iff (a b : NatCollection L) :
       | none => rw [hgb] at hkb; simp at hkb
       | some w => rfl
 
+/-- The empty collection is a right identity of `symmDiff` — structurally: the merge walk hands
+back `a`'s tree itself, whole. -/
+@[simp, grind =]
+theorem symmDiff_empty (a : NatCollection L) : a.symmDiff empty = a := by
+  apply ext_tree; exact PTree.symmDiff_empty a.tree
+
+/-- The empty collection is a left identity of `symmDiff` — structurally: the merge walk hands
+back `b`'s tree itself, whole. -/
+@[simp, grind =]
+theorem empty_symmDiff (b : NatCollection L) : symmDiff empty b = b := by
+  apply ext_tree; exact PTree.empty_symmDiff b.tree
+
+/-- **`symmDiff` is commutative** — there is no combine to order: the surviving value always
+comes from whichever operand holds the key alone. -/
+theorem symmDiff_comm (a b : NatCollection L) : a.symmDiff b = b.symmDiff a := by
+  apply ext_get?
+  intro k
+  rw [get?_symmDiff, get?_symmDiff]
+  cases a.get? k <;> cases b.get? k <;> rfl
+
+/-- A collection cancels against itself: every key is shared, so everything drops. -/
+@[simp, grind =]
+theorem symmDiff_self (a : NatCollection L) : a.symmDiff a = empty := by
+  apply ext_get?
+  intro k
+  rw [get?_symmDiff, get?_empty]
+  cases a.get? k <;> rfl
+
+/-- **`symmDiff` collapses exactly on key-set equality**: the symmetric difference is empty iff
+the two collections hold the same keys (the values are irrelevant — shared keys cancel whatever
+their values). -/
+theorem symmDiff_eq_empty_iff (a b : NatCollection L) :
+    a.symmDiff b = empty ↔ ∀ k, a.contains k = b.contains k := by
+  constructor
+  · intro h k
+    have hd : (a.symmDiff b).contains k = false := by rw [h, contains_eq, get?_empty]; rfl
+    rw [contains_symmDiff] at hd
+    cases ha : a.contains k <;> cases hb : b.contains k
+    · rfl
+    · rw [ha, hb] at hd; exact absurd hd (by decide)
+    · rw [ha, hb] at hd; exact absurd hd (by decide)
+    · rfl
+  · intro h
+    apply ext_get?
+    intro k
+    rw [get?_symmDiff, get?_empty]
+    have hk := h k
+    rw [contains_eq, contains_eq] at hk
+    cases hga : a.get? k with
+    | none =>
+      cases hgb : b.get? k with
+      | none => rfl
+      | some w => rw [hga, hgb] at hk; simp at hk
+    | some v =>
+      cases hgb : b.get? k with
+      | none => rw [hga, hgb] at hk; simp at hk
+      | some w => rfl
+
+/-- **`symmDiff` decomposes as the `join` of the two one-sided differences** — for any combine:
+the two differences hold disjoint keys, so the combine never fires and each key reads its own
+side's value. -/
+theorem symmDiff_eq_join_diff (combine : V → V → V) (a b : NatCollection L) :
+    a.symmDiff b = join combine (a.diff b) (b.diff a) := by
+  apply ext_get?
+  intro k
+  rw [get?_symmDiff, get?_join, get?_diff, get?_diff]
+  cases a.get? k <;> cases b.get? k <;> rfl
+
 /-- The empty collection restricts every collection. -/
 @[simp, grind =]
 theorem restricts_empty_left (rel : V → V → Bool) (b : NatCollection L) :
@@ -475,6 +555,26 @@ theorem diff_eq_empty_of_restricts (rel : V → V → Bool) (hrefl : ∀ x, rel 
     cases hgb : b.get? k with
     | none =>
       rw [hgb] at hk
+      have hf : optRel rel (some x) (none : Option V) = false := rfl
+      rw [hf] at hk
+      exact absurd hk (by decide)
+    | some y => rfl
+
+/-- **Restriction turns `symmDiff` into the reverse difference** (for reflexive `rel`): if `a`
+restricts `b`, every key of `a` is shared (and cancels), leaving exactly `b`'s keys outside `a`
+— with `b`'s values. -/
+theorem symmDiff_eq_diff_of_restricts (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (a b : NatCollection L) (h : restricts rel a b = true) : a.symmDiff b = b.diff a := by
+  apply ext_get?
+  intro k
+  rw [get?_symmDiff, get?_diff]
+  have hk := (get?_restricts rel hrefl a b).mp h k
+  cases hga : a.get? k with
+  | none => cases b.get? k <;> rfl
+  | some x =>
+    cases hgb : b.get? k with
+    | none =>
+      rw [hga, hgb] at hk
       have hf : optRel rel (some x) (none : Option V) = false := rfl
       rw [hf] at hk
       exact absurd hk (by decide)
