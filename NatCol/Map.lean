@@ -33,6 +33,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   restricts := Node.restricts
   disjoint a b := (a.positionsMask &&& b.positionsMask) == 0
   diff a b := Node.filterMap (fun i v => if testBit b.positionsMask i then none else some v) a
+  symmDiff a b := Node.join (fun _ _ => none) a b
   toArray n := n.fold (fun acc i a => acc.push (i, a)) #[]
   filter p n := Node.filterMap (fun i a => if p i a then some a else none) n
   someSlot n := lowestSetIdx n.positionsMask
@@ -135,6 +136,9 @@ def isDisjoint : NatMap α → NatMap α → Bool := NatCollection.isDisjoint
 /-- Difference: the entries of `m₁` whose key is absent from `m₂` (`m₂`'s values are irrelevant;
 surviving values are untouched). A structural merge walk, not a per-key probe. -/
 def diff : NatMap α → NatMap α → NatMap α := NatCollection.diff
+/-- Symmetric difference: the entries whose key is in exactly one of `m₁`, `m₂` (entries at
+shared keys are dropped, whatever their values). A structural merge walk. -/
+def symmDiff : NatMap α → NatMap α → NatMap α := NatCollection.symmDiff
 
 /-- All `(key, value)` pairs, ascending by key. -/
 def toList : NatMap α → List (Nat × α) := NatCollection.toList
@@ -289,6 +293,14 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 #guard ((∅ : NatMap Nat).diff (NatMap.ofList [(1, 10)])).isEmpty
 #guard (NatMap.ofList [(1, 10), (5000, 3)]).diff (NatMap.ofList [(5000, 0)])
   == NatMap.ofList [(1, 10)]                                              -- collapses canonically
+
+-- symmDiff: entries whose key is in exactly one map (shared keys drop, whatever the values)
+#guard (NatMap.ofList [(1, 10), (2, 20)]).symmDiff (NatMap.ofList [(2, 99), (3, 30)])
+  == NatMap.ofList [(1, 10), (3, 30)]
+#guard
+  let m := NatMap.ofList [(1, 10), (5000, 3)]
+  (m.symmDiff m).isEmpty && m.symmDiff (∅ : NatMap Nat) == m
+#guard (NatMap.ofList [(1, 10)]).symmDiff (NatMap.ofList [(1, 99)]) == (∅ : NatMap Nat)
 
 -- partition: split by predicate; parts are canonical, disjoint, and join back to the original
 #guard

@@ -90,6 +90,12 @@ meet `b` are kept whole (and shared), never rebuilt or probed per key. -/
 @[specialize] def diff (a b : NatCollection L) : NatCollection L :=
   ⟨PTree.diff a.tree b.tree, PTree.WF_diff a.tree b.tree a.wf b.wf⟩
 
+/-- Symmetric difference: the `(key, value)` pairs whose key is in exactly one of `a`, `b`
+(shared keys cancel, equal subtrees cancel entirely and the surrounding branch re-compresses).
+One-sided subtrees are carried over whole (shared). -/
+@[specialize] def symmDiff (a b : NatCollection L) : NatCollection L :=
+  ⟨PTree.symmDiff a.tree b.tree, PTree.WF_symmDiff a.tree b.tree a.wf b.wf⟩
+
 /-- All `(key, value)` pairs, ascending by key. -/
 @[specialize] def toList (c : NatCollection L) : List (Nat × V) := (PTree.toArray c.tree).toList
 

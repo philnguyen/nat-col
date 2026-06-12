@@ -858,6 +858,133 @@ irrelevant). A structural merge — subtrees of `a` that cannot meet `b` are kep
 shared), never rebuilt or probed per key; the result is canonical (`WF_diff`). -/
 @[inline] def diff (a b : PTree L) : PTree L := diffU a b
 
+-- Symmetric difference — `unionU`'s skeleton with shrink handling: one-sided subtrees are carried
+-- over whole (shared) exactly like union's, but where the operands genuinely overlap the entries
+-- CANCEL (leaf case `LeafOps.symmDiff`; equal subtrees vanish entirely), so every recursion that
+-- can shrink routes its result through `finalize` (the `set`+`finalize` splice, never union's
+-- bare `setIfInBounds`), and the aligned-bin scan (`symmKids`/`symmChild`, `mergeKids`' twins
+-- over `m1 ||| m2`) re-compresses through `finalize` too.
+set_option linter.unusedVariables false in
+mutual
+/-- Symmetric-difference driver: entries whose key is in exactly one operand. `nil` is the
+identity; aligned `tip`s cancel shared slots (dropping an emptied tip); an operand routed to a
+present slot splices the recursive result back through `finalize` (it may have shrunk); one
+routed to an absent slot is inserted whole; divergent prefixes `join` both operands whole; two
+aligned `bin`s rebuild the union mask's children (`symmKids`) and re-compress. -/
+private def symmDiffU : PTree L → PTree L → PTree L
+  | .nil, t => t
+  | .tip p1 b1, .nil => .tip p1 b1
+  | .bin bp bl bm bk, .nil => .bin bp bl bm bk
+  | .tip p1 b1, .tip p2 b2 =>
+    if p1 == p2 then
+      if LeafOps.isEmpty (LeafOps.symmDiff b1 b2) then .nil
+      else .tip p1 (LeafOps.symmDiff b1 b2)
+    else join (someKey (.tip p1 b1)) (.tip p1 b1) (someKey (.tip p2 b2)) (.tip p2 b2)
+  | .tip p1 b1, .bin bp bl bm bk =>
+    if prefixAbove (someKey (.tip p1 b1)) bl == bp then
+      if testBit bm (chunk (someKey (.tip p1 b1)) bl) then
+        if h : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size then
+          finalize bp bl bm
+            (bk.set (arrayIndex bm (chunk (someKey (.tip p1 b1)) bl))
+              (symmDiffU (.tip p1 b1) (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h)) h)
+        else .bin bp bl bm bk
+      else .bin bp bl (setBit bm (chunk (someKey (.tip p1 b1)) bl))
+        (bk.insertIdx! (arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)) (.tip p1 b1))
+    else join (someKey (.bin bp bl bm bk)) (.bin bp bl bm bk) (someKey (.tip p1 b1)) (.tip p1 b1)
+  | .bin bp bl bm bk, .tip p2 b2 =>
+    if prefixAbove (someKey (.tip p2 b2)) bl == bp then
+      if testBit bm (chunk (someKey (.tip p2 b2)) bl) then
+        if h : arrayIndex bm (chunk (someKey (.tip p2 b2)) bl) < bk.size then
+          finalize bp bl bm
+            (bk.set (arrayIndex bm (chunk (someKey (.tip p2 b2)) bl))
+              (symmDiffU (bk[arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)]'h) (.tip p2 b2)) h)
+        else .bin bp bl bm bk
+      else .bin bp bl (setBit bm (chunk (someKey (.tip p2 b2)) bl))
+        (bk.insertIdx! (arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)) (.tip p2 b2))
+    else join (someKey (.bin bp bl bm bk)) (.bin bp bl bm bk) (someKey (.tip p2 b2)) (.tip p2 b2)
+  | .bin p1 l1 m1 k1, .bin p2 l2 m2 k2 =>
+    if l1 == l2 && p1 == p2 then
+      finalize p1 l1 (m1 ||| m2)
+        (symmKids m1 k1 m2 k2 (m1 ||| m2) (Array.emptyWithCapacity (popCount (m1 ||| m2))))
+    else if l1 == l2 then
+      join (someKey (.bin p1 l1 m1 k1)) (.bin p1 l1 m1 k1)
+        (someKey (.bin p2 l2 m2 k2)) (.bin p2 l2 m2 k2)
+    else if l2 < l1 then
+      if prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 == p1 then
+        if testBit m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) then
+          if h : arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) < k1.size then
+            finalize p1 l1 m1
+              (k1.set (arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1))
+                (symmDiffU (k1[arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)]'h)
+                  (.bin p2 l2 m2 k2)) h)
+          else .bin p1 l1 m1 k1
+        else .bin p1 l1 (setBit m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1))
+          (k1.insertIdx! (arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)) (.bin p2 l2 m2 k2))
+      else join (someKey (.bin p1 l1 m1 k1)) (.bin p1 l1 m1 k1)
+        (someKey (.bin p2 l2 m2 k2)) (.bin p2 l2 m2 k2)
+    else
+      if prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 == p2 then
+        if testBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) then
+          if h : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size then
+            finalize p2 l2 m2
+              (k2.set (arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2))
+                (symmDiffU (.bin p1 l1 m1 k1)
+                  (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h)) h)
+          else .bin p2 l2 m2 k2
+        else .bin p2 l2 (setBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2))
+          (k2.insertIdx! (arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)) (.bin p1 l1 m1 k1))
+      else join (someKey (.bin p2 l2 m2 k2)) (.bin p2 l2 m2 k2)
+        (someKey (.bin p1 l1 m1 k1)) (.bin p1 l1 m1 k1)
+termination_by a b => (sizeOf a + sizeOf b, 0)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h); omega)
+
+/-- The symmetric-difference child at one union-mask slot `i`: present in both → recurse with
+`symmDiffU` (the result may be `nil` — equal subtrees cancel; pruned later by `compactify`);
+present in one → carry that side over whole. `mergeChild`'s shape. -/
+private def symmChild (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L))
+    (i : UInt32) : PTree L :=
+  if testBit m1 i then
+    if testBit m2 i then
+      if h1 : arrayIndex m1 i < k1.size then
+        if h2 : arrayIndex m2 i < k2.size then
+          symmDiffU (k1[arrayIndex m1 i]'h1) (k2[arrayIndex m2 i]'h2)
+        else k1[arrayIndex m1 i]'h1
+      else .nil
+    else if h1 : arrayIndex m1 i < k1.size then k1[arrayIndex m1 i]'h1 else .nil
+  else if h2 : arrayIndex m2 i < k2.size then k2[arrayIndex m2 i]'h2 else .nil
+termination_by (sizeOf k1 + sizeOf k2, 0)
+decreasing_by
+  all_goals simp_wf
+  all_goals (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h1)
+             have := Array.sizeOf_lt_of_mem (Array.getElem_mem h2); omega)
+
+/-- Fold over the leftover union mask `rem`, appending each present slot's `symmChild` to `acc`
+(lowest first): compact under `m1 ||| m2`, `nil` where the two children cancelled (pruned later
+by `compactify`). -/
+private def symmKids (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32) (k2 : Array (PTree L))
+    (rem : UInt32) (acc : Array (PTree L)) : Array (PTree L) :=
+  if hrem : rem == 0 then acc
+  else
+    symmKids m1 k1 m2 k2 (clearLowest rem) (acc.push (symmChild m1 k1 m2 k2 (lowestSetIdx rem)))
+termination_by (sizeOf k1 + sizeOf k2 + 1, rem.toNat)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have : (clearLowest rem).toNat < rem.toNat :=
+         toNat_clearLowest_lt rem (by simp_all); omega)
+end
+
+/-- Symmetric difference: the entries whose key is in exactly one of `a`, `b`. Shared keys cancel
+at the leaves (one `XOR` for the set leaf), equal subtrees cancel to nothing and the surrounding
+branch re-compresses; one-sided subtrees are carried over whole (shared, untouched). The result
+is canonical (`WF_symmDiff`). -/
+@[inline] def symmDiff (a b : PTree L) : PTree L := symmDiffU a b
+
 -- Ordered queries — min/max and successor/predecessor. Children sit in ascending slot order and a
 -- leaf's occupancy is a bitmap (`LeafOps.slotsMask`), so the least/greatest key under any node is
 -- an O(1)-per-level descent (first/last child, lowest/highest set slot), and `entryGT?`/`entryLT?`
@@ -1043,6 +1170,21 @@ private def subsetCorpus : List (List Nat) :=
 #guard beq (diff (ofSet [7, 5000]) (ofSet [5000])) (ofSet [7])      -- lone survivor lifts
 #guard beq (diff (ofSet sparseK) (ofSet seqK))                       -- deep keys survive a dense cut
   (ofSet (sparseK.filter (· ≥ 1000)))
+
+-- symmetric difference agrees with the reference (keys in exactly one operand), re-canonicalizes,
+-- and matches its (a \ b) ∪ (b \ a) decomposition
+#guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
+  beq (symmDiff (ofSet a) (ofSet b))
+    (ofSet (a.filter (fun k => !(b.contains k)) ++ b.filter (fun k => !(a.contains k))))
+#guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
+  beq (symmDiff (ofSet a) (ofSet b))
+    (unionSet (diff (ofSet a) (ofSet b)) (diff (ofSet b) (ofSet a)))
+#guard (symmDiff (ofSet seqK) (ofSet seqK)).size == 0                -- total cancellation → nil
+#guard beq (symmDiff (ofSet sparseK) (ofSet [])) (ofSet sparseK)     -- right identity
+#guard beq (symmDiff (ofSet []) (ofSet sparseK)) (ofSet sparseK)     -- left identity
+#guard beq (symmDiff (ofSet [1, 5000]) (ofSet [5000])) (ofSet [1])   -- deep cancel, height collapses
+#guard beq (symmDiff (symmDiff (ofSet sparseK) (ofSet evenK)) (ofSet evenK)) (ofSet sparseK)
+  -- involution: (a △ b) △ b = a
 
 -- intersection sizes agree with the reference (distinct keys of `a` that also lie in `b`)
 #guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
@@ -4612,6 +4754,650 @@ decreasing_by
 /-- `diff` preserves canonical shape. -/
 theorem WF_diff (a b : PTree L) (hwa : WF a) (hwb : WF b) : WF (diff a b) := by
   rw [diff]; exact (diff_WF_keys a b hwa hwb).1
+
+/-! ### Symmetric difference
+
+`symmDiffU` removes AND adds keys (one-sided subtrees survive, shared keys cancel), so its `WF`
+proof carries a two-sided provenance: every surviving key shares its high bits with a key of one
+OPERAND. The aligned-`bin` case rebuilds the union mask's children (the `diffKids` pattern over
+`m1 ||| m2`), the routed shrink cases go through `splice2_WF_keys` (the two-sided
+`splice_WF_keys`), the grow cases through union's `WF_splice`/`contains_splice`, and the
+divergence cases through `join_WF_keys`. -/
+
+/-- `symmKids`' fold invariant — the verbatim `diffKids_spec` shape for the union mask. -/
+private theorem symmKids_spec (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) :
+    ∀ (n : Nat) (rem : UInt32), rem.toNat = n → ∀ (acc : Array (PTree L)),
+      (symmKids m1 k1 m2 k2 rem acc).size = acc.size + popCount rem
+      ∧ (∀ i, i < acc.size → (symmKids m1 k1 m2 k2 rem acc)[i]? = acc[i]?)
+      ∧ (∀ c, c < 32 → testBit rem c = true →
+           (symmKids m1 k1 m2 k2 rem acc)[acc.size + arrayIndex rem c]?
+             = some (symmChild m1 k1 m2 k2 c)) := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n IH =>
+    intro rem hrem acc
+    by_cases h0 : (rem == 0) = true
+    · have hr0 : rem = 0 := by simpa using h0
+      rw [symmKids, dif_pos h0]
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hr0, show popCount (0 : UInt32) = 0 from rfl, Nat.add_zero]
+      · intro i hi; rfl
+      · intro c hc htb; rw [hr0, testBit_zero] at htb; exact absurd htb (by decide)
+    · have hrem0 : rem ≠ 0 := by intro h; exact h0 (by rw [h]; rfl)
+      have hstep : symmKids m1 k1 m2 k2 rem acc
+          = symmKids m1 k1 m2 k2 (clearLowest rem)
+              (acc.push (symmChild m1 k1 m2 k2 (lowestSetIdx rem))) := by
+        rw [symmKids, dif_neg h0]
+      have hlt : (clearLowest rem).toNat < n := by
+        rw [← hrem]; exact toNat_clearLowest_lt rem hrem0
+      obtain ⟨ihsize, ihpref, ihthird⟩ :=
+        IH (clearLowest rem).toNat hlt (clearLowest rem) rfl
+          (acc.push (symmChild m1 k1 m2 k2 (lowestSetIdx rem)))
+      have hpc : popCount (clearLowest rem) + 1 = popCount rem := popCount_clearLowest rem hrem0
+      have haccsz : (acc.push (symmChild m1 k1 m2 k2 (lowestSetIdx rem))).size = acc.size + 1 :=
+        Array.size_push ..
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hstep, ihsize, haccsz]; omega
+      · intro i hi
+        rw [hstep, ihpref i (by omega), Array.getElem?_push_lt hi, Array.getElem?_eq_getElem hi]
+      · intro c hc htb
+        rw [hstep]
+        by_cases hclo : c = lowestSetIdx rem
+        · subst hclo
+          rw [arrayIndex_lowestSetIdx rem hrem0, Nat.add_zero,
+              ihpref acc.size (by omega), Array.getElem?_push_size]
+        · have htb' : testBit (clearLowest rem) c = true := by
+            rw [testBit_clearLowest_of_ne rem c hc hclo]; exact htb
+          have hidx : arrayIndex rem c = arrayIndex (clearLowest rem) c + 1 :=
+            arrayIndex_clearLowest_of_ne rem c hc htb hclo
+          have key := ihthird c hc htb'
+          rw [haccsz] at key
+          rw [hidx, show acc.size + (arrayIndex (clearLowest rem) c + 1)
+                = acc.size + 1 + arrayIndex (clearLowest rem) c from by omega]
+          exact key
+
+/-- Reading a present slot of the rebuilt union-mask array recovers that slot's `symmChild`. -/
+private theorem childAt_symmKids (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) (c : UInt32) (hc : c < 32) (htb : testBit (m1 ||| m2) c = true) :
+    childAt (m1 ||| m2) (symmKids m1 k1 m2 k2 (m1 ||| m2) #[]) c = symmChild m1 k1 m2 k2 c := by
+  obtain ⟨_, _, hthird⟩ := symmKids_spec m1 k1 m2 k2 (m1 ||| m2).toNat (m1 ||| m2) rfl #[]
+  have hc' := hthird c hc htb
+  unfold childAt
+  rw [show (#[] : Array (PTree L)).size = 0 from rfl, Nat.zero_add] at hc'
+  rw [hc', Option.getD_some]
+
+/-- `symmChild` reads as the three-way slot split: shared → recurse, one-sided → that side's
+child whole. -/
+private theorem symmChild_eq (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) (c : UInt32) (hsz1 : k1.size = popCount m1)
+    (hsz2 : k2.size = popCount m2) :
+    symmChild m1 k1 m2 k2 c
+      = if testBit m1 c then
+          (if testBit m2 c then symmDiffU (childAt m1 k1 c) (childAt m2 k2 c)
+           else childAt m1 k1 c)
+        else childAt m2 k2 c := by
+  by_cases ht1 : testBit m1 c = true
+  · have h1 : arrayIndex m1 c < k1.size := by rw [hsz1]; exact arrayIndex_lt m1 c ht1
+    have hcA1 : childAt m1 k1 c = k1[arrayIndex m1 c]'h1 := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h1, Option.getD_some]
+    by_cases ht2 : testBit m2 c = true
+    · have h2 : arrayIndex m2 c < k2.size := by rw [hsz2]; exact arrayIndex_lt m2 c ht2
+      have hcA2 : childAt m2 k2 c = k2[arrayIndex m2 c]'h2 := by
+        unfold childAt; rw [Array.getElem?_eq_getElem h2, Option.getD_some]
+      rw [symmChild, if_pos ht1, if_pos ht2, dif_pos h1, dif_pos h2,
+          if_pos ht1, if_pos ht2, hcA1, hcA2]
+    · rw [symmChild, if_pos ht1, if_neg ht2, dif_pos h1, if_pos ht1, if_neg ht2, hcA1]
+  · rw [symmChild, if_neg ht1, if_neg ht1]
+    unfold childAt
+    by_cases h2 : arrayIndex m2 c < k2.size
+    · rw [dif_pos h2, Array.getElem?_eq_getElem h2, Option.getD_some]
+    · rw [dif_neg h2, Array.getElem?_eq_none (Nat.le_of_not_lt h2), Option.getD_none]
+
+/-- The two-sided `splice_WF_keys`: the replacement `t'` may also carry keys of a routed operand
+`op` (aligned at the spliced slot), and the provenance disjunction tracks both sources. The
+routed-shrink cases of `symmDiffU` splice through this. -/
+private theorem splice2_WF_keys (bp bl : Nat) (bm : UInt32) (bk : Array (PTree L)) (c0 : UInt32)
+    (hc0 : c0 < 32) (htb : testBit bm c0 = true) (h : arrayIndex bm c0 < bk.size)
+    (t' op : PTree L) (hwf : WF (.bin bp bl bm bk)) (ihwf : WF t')
+    (hopal : AlignedAt bl c0 bp op)
+    (ihkeys : ∀ j, contains j t' = true →
+        (∃ j', contains j' (bk[arrayIndex bm c0]'h) = true ∧ j >>> 5 = j' >>> 5)
+        ∨ (∃ j', contains j' op = true ∧ j >>> 5 = j' >>> 5)) :
+    WF (finalize bp bl bm (bk.set (arrayIndex bm c0) t' h))
+      ∧ ∀ j, contains j (finalize bp bl bm (bk.set (arrayIndex bm c0) t' h)) = true →
+          (∃ j', contains j' (.bin bp bl bm bk) = true ∧ j >>> 5 = j' >>> 5)
+          ∨ (∃ j', contains j' op = true ∧ j >>> 5 = j' >>> 5) := by
+  have hwf' := hwf
+  rw [WF] at hwf'
+  obtain ⟨hl, hsz, _, hwfk, _, hal⟩ := hwf'
+  have hcA : childAt bm bk c0 = bk[arrayIndex bm c0]'h := by
+    unfold childAt; rw [Array.getElem?_eq_getElem h, Option.getD_some]
+  have hset : ∀ c, c < 32 → testBit bm c = true →
+      childAt bm (bk.set (arrayIndex bm c0) t' h) c
+        = if c = c0 then t' else childAt bm bk c := by
+    intro c hc htc
+    unfold childAt
+    rw [Array.getElem?_set h]
+    by_cases hcc : c = c0
+    · subst hcc
+      rw [if_pos rfl, if_pos rfl, Option.getD_some]
+    · rw [if_neg hcc,
+          if_neg (arrayIndex_inj bm c0 c hc0 hc htb htc (fun hh => hcc hh.symm))]
+  have hal' : ∀ c, c < 32 → testBit bm c = true →
+      AlignedAt bl c bp (childAt bm (bk.set (arrayIndex bm c0) t' h) c) := by
+    intro c hc htc
+    rw [hset c hc htc]
+    by_cases hcc : c = c0
+    · rw [if_pos hcc]
+      intro j hj
+      rcases ihkeys j hj with ⟨j', hj', h5⟩ | ⟨j', hj', h5⟩
+      · have hj'A : contains j' (childAt bm bk c) = true := by
+          rw [hcc, hcA]; exact hj'
+        obtain ⟨hch, hpf⟩ := hal c hc htc j' hj'A
+        exact ⟨(chunk_eq_of_hi bl hl h5).trans hch,
+               (prefixAbove_eq_of_hi bl h5).trans hpf⟩
+      · obtain ⟨hch, hpf⟩ := hopal j' hj'
+        rw [hcc]
+        exact ⟨(chunk_eq_of_hi bl hl h5).trans hch,
+               (prefixAbove_eq_of_hi bl h5).trans hpf⟩
+    · rw [if_neg hcc]
+      exact hal c hc htc
+  refine ⟨WF_finalize bp bl bm _ hl ?_ hal', ?_⟩
+  · intro c hc htc
+    rw [hset c hc htc]
+    by_cases hcc : c = c0
+    · rw [if_pos hcc]; exact ihwf
+    · rw [if_neg hcc]
+      have hbc : arrayIndex bm c < bk.size := by
+        rw [hsz]; exact arrayIndex_lt bm c htc
+      have hcA' : childAt bm bk c = bk[arrayIndex bm c]'hbc := by
+        unfold childAt; rw [Array.getElem?_eq_getElem hbc, Option.getD_some]
+      rw [hcA']
+      exact hwfk _ (Array.getElem_mem hbc)
+  · intro j hj
+    rw [contains_finalize j bp bl bm _ hal'] at hj
+    obtain ⟨htj, hcj⟩ := and_split hj
+    rw [hset (chunk j bl) (chunk_lt j bl) htj] at hcj
+    by_cases hcc : chunk j bl = c0
+    · rw [if_pos hcc] at hcj
+      rcases ihkeys j hcj with ⟨j', hj', h5⟩ | ⟨j', hj', h5⟩
+      · refine Or.inl ⟨j', ?_, h5⟩
+        rw [contains_bin]
+        have hj'A : contains j' (childAt bm bk c0) = true := by
+          rw [hcA]; exact hj'
+        obtain ⟨hch, _⟩ := hal c0 hc0 htb j' hj'A
+        rw [hch, htb, Bool.true_and, hcA]
+        exact hj'
+      · exact Or.inr ⟨j', hj', h5⟩
+    · rw [if_neg hcc] at hcj
+      refine Or.inl ⟨j, ?_, rfl⟩
+      rw [contains_bin, htj, Bool.true_and]
+      exact hcj
+
+/-- A divergent-prefix `join` of two aligned, well-formed, non-`nil` subtrees is well-formed, and
+its keys are exactly the operands' keys. The shared tail of every prefix-mismatch case of the
+symmetric difference. -/
+private theorem join_WF_keys (ka kb : Nat) (A B : PTree L) (hkne : ka ≠ kb)
+    (hl0 : 0 < branchLevel ka kb)
+    (ha : AlignedAt (branchLevel ka kb) (chunk ka (branchLevel ka kb))
+            (prefixAbove ka (branchLevel ka kb)) A)
+    (hb : AlignedAt (branchLevel ka kb) (chunk kb (branchLevel ka kb))
+            (prefixAbove ka (branchLevel ka kb)) B)
+    (hwa : WF A) (hwb : WF B) (hane : A ≠ .nil) (hbne : B ≠ .nil) :
+    WF (join ka A kb B)
+      ∧ ∀ j, contains j (join ka A kb B) = true →
+          contains j A = true ∨ contains j B = true := by
+  constructor
+  · rw [join]
+    exact WF_join _ _ _ _ A B hl0 (chunk_lt _ _) (chunk_lt _ _)
+      (chunk_branchLevel_ne ka kb hkne) ha hb hwa hwb hane hbne
+  · intro j hj
+    rw [contains_join_eq j ka kb A B hkne ha hb, Bool.or_eq_true] at hj
+    exact hj
+
+set_option maxHeartbeats 800000 in
+/-- `symmDiffU` preserves `WF`, and every surviving key shares its high bits with a key of one of
+the operands (two-sided provenance — the `AlignedAt`-transfer fact `finalize` and the splices
+need). Member recursion on the combined size, mirroring the walk's routing. -/
+private theorem symmDiff_WF_keys : (a b : PTree L) → WF a → WF b →
+    WF (symmDiffU a b)
+      ∧ ∀ j, contains j (symmDiffU a b) = true →
+          (∃ j', contains j' a = true ∧ j >>> 5 = j' >>> 5)
+          ∨ (∃ j', contains j' b = true ∧ j >>> 5 = j' >>> 5)
+  | .nil, t => fun _ hwb => by
+      rw [symmDiffU]
+      exact ⟨hwb, fun j hj => Or.inr ⟨j, hj, rfl⟩⟩
+  | .tip p1 b1, .nil => fun hwa _ => by
+      rw [symmDiffU]
+      exact ⟨hwa, fun j hj => Or.inl ⟨j, hj, rfl⟩⟩
+  | .bin bp bl bm bk, .nil => fun hwa _ => by
+      rw [symmDiffU]
+      exact ⟨hwa, fun j hj => Or.inl ⟨j, hj, rfl⟩⟩
+  | .tip p1 b1, .tip p2 b2 => fun hwa hwb => by
+      have hb1 : LeafOps.isEmpty b1 = false := by rw [WF] at hwa; exact hwa
+      have hb2 : LeafOps.isEmpty b2 = false := by rw [WF] at hwb; exact hwb
+      rw [symmDiffU]
+      by_cases hp : (p1 == p2) = true
+      · rw [if_pos hp]
+        by_cases he : LeafOps.isEmpty (LeafOps.symmDiff b1 b2) = true
+        · rw [if_pos he]
+          exact ⟨by rw [WF]; trivial,
+                 fun j hj => by rw [contains_nil] at hj; exact absurd hj (by decide)⟩
+        · rw [if_neg he]
+          refine ⟨by rw [WF]; simpa using he, ?_⟩
+          intro j hj
+          obtain ⟨j', hj'⟩ := exists_mem (.tip p1 b1) hwa (by simp)
+          exact Or.inl ⟨j', hj', (hi_eq_of_contains_tip hj).trans (hi_eq_of_contains_tip hj').symm⟩
+      · rw [if_neg hp]
+        have hpne : p1 ≠ p2 := fun h => hp (by rw [h]; exact beq_self_eq_true p2)
+        have hsk1 : someKey (.tip p1 b1) >>> 5 = p1 := someKey_tip_shiftRight5 p1 b1 hb1
+        have hsk2 : someKey (.tip p2 b2) >>> 5 = p2 := someKey_tip_shiftRight5 p2 b2 hb2
+        have hkne : someKey (.tip p1 b1) ≠ someKey (.tip p2 b2) := by
+          intro h; apply hpne; rw [← hsk1, ← hsk2, h]
+        have hkne5 : someKey (.tip p1 b1) >>> 5 ≠ someKey (.tip p2 b2) >>> 5 := by
+          rw [hsk1, hsk2]; exact hpne
+        have hl0 : 0 < branchLevel (someKey (.tip p1 b1)) (someKey (.tip p2 b2)) :=
+          branchLevel_pos _ _ hkne5
+        obtain ⟨jwf, jkeys⟩ := join_WF_keys (someKey (.tip p1 b1)) (someKey (.tip p2 b2))
+          (.tip p1 b1) (.tip p2 b2) hkne hl0 (aligned_tip p1 b1 hb1 _ hl0)
+          (by rw [prefixAbove_branchLevel_eq (someKey (.tip p1 b1)) (someKey (.tip p2 b2))]
+              exact aligned_tip p2 b2 hb2 _ hl0)
+          hwa hwb (by simp) (by simp)
+        refine ⟨jwf, fun j hj => ?_⟩
+        rcases jkeys j hj with hA | hB
+        · exact Or.inl ⟨j, hA, rfl⟩
+        · exact Or.inr ⟨j, hB, rfl⟩
+  | .tip p1 b1, .bin bp bl bm bk => fun hwa hwb => by
+      have hb1 : LeafOps.isEmpty b1 = false := by rw [WF] at hwa; exact hwa
+      have hbl0 : 0 < bl := by rw [WF] at hwb; exact hwb.1
+      by_cases hpfx : (prefixAbove (someKey (.tip p1 b1)) bl == bp) = true
+      · have hpfxeq : prefixAbove (someKey (.tip p1 b1)) bl = bp := by simpa using hpfx
+        have halign : AlignedAt bl (chunk (someKey (.tip p1 b1)) bl) bp (.tip p1 b1) :=
+          by rw [← hpfxeq]; exact aligned_tip p1 b1 hb1 bl hbl0
+        by_cases htb : testBit bm (chunk (someKey (.tip p1 b1)) bl) = true
+        · by_cases h : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size
+          · rw [symmDiffU, if_pos hpfx, if_pos htb, dif_pos h]
+            have hwfchild : WF (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h) := by
+              rw [WF] at hwb; exact hwb.2.2.2.1 _ (Array.getElem_mem h)
+            obtain ⟨ihwf, ihkeys⟩ :=
+              symmDiff_WF_keys (.tip p1 b1)
+                (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h) hwa hwfchild
+            obtain ⟨swf, skeys⟩ := splice2_WF_keys bp bl bm bk
+              (chunk (someKey (.tip p1 b1)) bl) (chunk_lt _ _) htb h _ (.tip p1 b1)
+              hwb ihwf halign (fun j hj => (ihkeys j hj).elim Or.inr Or.inl)
+            exact ⟨swf, fun j hj => (skeys j hj).elim Or.inr Or.inl⟩
+          · rw [symmDiffU, if_pos hpfx, if_pos htb, dif_neg h]
+            exact ⟨hwb, fun j hj => Or.inr ⟨j, hj, rfl⟩⟩
+        · rw [symmDiffU, if_pos hpfx, if_neg htb]
+          have htbf : testBit bm (chunk (someKey (.tip p1 b1)) bl) = false := by simpa using htb
+          refine ⟨WF_splice (.tip p1 b1) bp bl bm bk (chunk (someKey (.tip p1 b1)) bl)
+            (chunk_lt _ _) hwb halign hwa (by simp) htbf, ?_⟩
+          intro j hj
+          rw [contains_splice j (.tip p1 b1) bp bl bm bk (chunk (someKey (.tip p1 b1)) bl)
+              (chunk_lt _ _) hwb halign htbf, Bool.or_eq_true] at hj
+          rcases hj with hj1 | hj2
+          · exact Or.inl ⟨j, hj1, rfl⟩
+          · exact Or.inr ⟨j, hj2, rfl⟩
+      · rw [symmDiffU, if_neg hpfx]
+        have hmne : bm ≠ 0 := by
+          rw [WF] at hwb; obtain ⟨_, _, hpc, _, _, _⟩ := hwb
+          intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+        have hskbin : prefixAbove (someKey (.bin bp bl bm bk)) bl = bp :=
+          someKey_bin_prefixAbove bp bl bm bk hmne
+        have hpfxne : prefixAbove (someKey (.tip p1 b1)) bl ≠ bp := by
+          intro h; exact hpfx (by rw [h]; exact beq_self_eq_true bp)
+        have hdiv : someKey (.bin bp bl bm bk) >>> (5 * (bl + 1))
+            ≠ someKey (.tip p1 b1) >>> (5 * (bl + 1)) := by
+          show prefixAbove (someKey (.bin bp bl bm bk)) bl ≠ prefixAbove (someKey (.tip p1 b1)) bl
+          rw [hskbin]; exact fun h => hpfxne h.symm
+        have hkne : someKey (.bin bp bl bm bk) ≠ someKey (.tip p1 b1) := fun h => hdiv (by rw [h])
+        have hbl_lt : bl < branchLevel (someKey (.bin bp bl bm bk)) (someKey (.tip p1 b1)) :=
+          lt_branchLevel _ _ bl hdiv
+        have hl0 : 0 < branchLevel (someKey (.bin bp bl bm bk)) (someKey (.tip p1 b1)) :=
+          Nat.lt_trans hbl0 hbl_lt
+        obtain ⟨jwf, jkeys⟩ := join_WF_keys (someKey (.bin bp bl bm bk)) (someKey (.tip p1 b1))
+          (.bin bp bl bm bk) (.tip p1 b1) hkne hl0
+          (aligned_bin bp bl bm bk hwb _ hbl_lt)
+          (by rw [prefixAbove_branchLevel_eq (someKey (.bin bp bl bm bk)) (someKey (.tip p1 b1))]
+              exact aligned_tip p1 b1 hb1 _ hl0)
+          hwb hwa (by simp) (by simp)
+        refine ⟨jwf, fun j hj => ?_⟩
+        rcases jkeys j hj with hB | hA
+        · exact Or.inr ⟨j, hB, rfl⟩
+        · exact Or.inl ⟨j, hA, rfl⟩
+  | .bin bp bl bm bk, .tip p2 b2 => fun hwa hwb => by
+      have hb2 : LeafOps.isEmpty b2 = false := by rw [WF] at hwb; exact hwb
+      have hbl0 : 0 < bl := by rw [WF] at hwa; exact hwa.1
+      by_cases hpfx : (prefixAbove (someKey (.tip p2 b2)) bl == bp) = true
+      · have hpfxeq : prefixAbove (someKey (.tip p2 b2)) bl = bp := by simpa using hpfx
+        have halign : AlignedAt bl (chunk (someKey (.tip p2 b2)) bl) bp (.tip p2 b2) :=
+          by rw [← hpfxeq]; exact aligned_tip p2 b2 hb2 bl hbl0
+        by_cases htb : testBit bm (chunk (someKey (.tip p2 b2)) bl) = true
+        · by_cases h : arrayIndex bm (chunk (someKey (.tip p2 b2)) bl) < bk.size
+          · rw [symmDiffU, if_pos hpfx, if_pos htb, dif_pos h]
+            have hwfchild : WF (bk[arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)]'h) := by
+              rw [WF] at hwa; exact hwa.2.2.2.1 _ (Array.getElem_mem h)
+            obtain ⟨ihwf, ihkeys⟩ :=
+              symmDiff_WF_keys (bk[arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)]'h)
+                (.tip p2 b2) hwfchild hwb
+            exact splice2_WF_keys bp bl bm bk (chunk (someKey (.tip p2 b2)) bl)
+              (chunk_lt _ _) htb h _ (.tip p2 b2) hwa ihwf halign ihkeys
+          · rw [symmDiffU, if_pos hpfx, if_pos htb, dif_neg h]
+            exact ⟨hwa, fun j hj => Or.inl ⟨j, hj, rfl⟩⟩
+        · rw [symmDiffU, if_pos hpfx, if_neg htb]
+          have htbf : testBit bm (chunk (someKey (.tip p2 b2)) bl) = false := by simpa using htb
+          refine ⟨WF_splice (.tip p2 b2) bp bl bm bk (chunk (someKey (.tip p2 b2)) bl)
+            (chunk_lt _ _) hwa halign hwb (by simp) htbf, ?_⟩
+          intro j hj
+          rw [contains_splice j (.tip p2 b2) bp bl bm bk (chunk (someKey (.tip p2 b2)) bl)
+              (chunk_lt _ _) hwa halign htbf, Bool.or_eq_true] at hj
+          rcases hj with hj2 | hj1
+          · exact Or.inr ⟨j, hj2, rfl⟩
+          · exact Or.inl ⟨j, hj1, rfl⟩
+      · rw [symmDiffU, if_neg hpfx]
+        have hmne : bm ≠ 0 := by
+          rw [WF] at hwa; obtain ⟨_, _, hpc, _, _, _⟩ := hwa
+          intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+        have hskbin : prefixAbove (someKey (.bin bp bl bm bk)) bl = bp :=
+          someKey_bin_prefixAbove bp bl bm bk hmne
+        have hpfxne : prefixAbove (someKey (.tip p2 b2)) bl ≠ bp := by
+          intro h; exact hpfx (by rw [h]; exact beq_self_eq_true bp)
+        have hdiv : someKey (.bin bp bl bm bk) >>> (5 * (bl + 1))
+            ≠ someKey (.tip p2 b2) >>> (5 * (bl + 1)) := by
+          show prefixAbove (someKey (.bin bp bl bm bk)) bl ≠ prefixAbove (someKey (.tip p2 b2)) bl
+          rw [hskbin]; exact fun h => hpfxne h.symm
+        have hkne : someKey (.bin bp bl bm bk) ≠ someKey (.tip p2 b2) := fun h => hdiv (by rw [h])
+        have hbl_lt : bl < branchLevel (someKey (.bin bp bl bm bk)) (someKey (.tip p2 b2)) :=
+          lt_branchLevel _ _ bl hdiv
+        have hl0 : 0 < branchLevel (someKey (.bin bp bl bm bk)) (someKey (.tip p2 b2)) :=
+          Nat.lt_trans hbl0 hbl_lt
+        obtain ⟨jwf, jkeys⟩ := join_WF_keys (someKey (.bin bp bl bm bk)) (someKey (.tip p2 b2))
+          (.bin bp bl bm bk) (.tip p2 b2) hkne hl0
+          (aligned_bin bp bl bm bk hwa _ hbl_lt)
+          (by rw [prefixAbove_branchLevel_eq (someKey (.bin bp bl bm bk)) (someKey (.tip p2 b2))]
+              exact aligned_tip p2 b2 hb2 _ hl0)
+          hwa hwb (by simp) (by simp)
+        refine ⟨jwf, fun j hj => ?_⟩
+        rcases jkeys j hj with hA | hB
+        · exact Or.inl ⟨j, hA, rfl⟩
+        · exact Or.inr ⟨j, hB, rfl⟩
+  | .bin p1 l1 m1 k1, .bin p2 l2 m2 k2 => fun hwa hwb => by
+      by_cases hcond1 : (l1 == l2 && p1 == p2) = true
+      · obtain ⟨hleq, hpeq⟩ : l1 = l2 ∧ p1 = p2 := by
+          rw [Bool.and_eq_true, beq_iff_eq, beq_iff_eq] at hcond1; exact hcond1
+        subst hleq; subst hpeq
+        rw [symmDiffU, if_pos hcond1, Array.emptyWithCapacity_eq]
+        have hwa' := hwa
+        rw [WF] at hwa'
+        obtain ⟨hl0, hsz1, _, hwfk1, _, hrout1⟩ := hwa'
+        have hwb' := hwb
+        rw [WF] at hwb'
+        obtain ⟨_, hsz2, _, hwfk2, _, hrout2⟩ := hwb'
+        have hslot : ∀ c, c < 32 → testBit (m1 ||| m2) c = true →
+            WF (symmChild m1 k1 m2 k2 c)
+            ∧ ∀ j, contains j (symmChild m1 k1 m2 k2 c) = true →
+                (testBit m1 c = true
+                  ∧ ∃ j', contains j' (childAt m1 k1 c) = true ∧ j >>> 5 = j' >>> 5)
+                ∨ (testBit m2 c = true
+                  ∧ ∃ j', contains j' (childAt m2 k2 c) = true ∧ j >>> 5 = j' >>> 5) := by
+          intro c hc htc
+          by_cases ht1 : testBit m1 c = true
+          · have hb1c : arrayIndex m1 c < k1.size := by
+              rw [hsz1]; exact arrayIndex_lt m1 c ht1
+            have hcA1 : childAt m1 k1 c = k1[arrayIndex m1 c]'hb1c := by
+              unfold childAt; rw [Array.getElem?_eq_getElem hb1c, Option.getD_some]
+            by_cases ht2 : testBit m2 c = true
+            · have hb2c : arrayIndex m2 c < k2.size := by
+                rw [hsz2]; exact arrayIndex_lt m2 c ht2
+              have hcA2 : childAt m2 k2 c = k2[arrayIndex m2 c]'hb2c := by
+                unfold childAt; rw [Array.getElem?_eq_getElem hb2c, Option.getD_some]
+              rw [symmChild_eq m1 k1 m2 k2 c hsz1 hsz2, if_pos ht1, if_pos ht2, hcA1, hcA2]
+              obtain ⟨ihwf, ihkeys⟩ :=
+                symmDiff_WF_keys (k1[arrayIndex m1 c]'hb1c) (k2[arrayIndex m2 c]'hb2c)
+                  (hwfk1 _ (Array.getElem_mem hb1c)) (hwfk2 _ (Array.getElem_mem hb2c))
+              refine ⟨ihwf, fun j hj => ?_⟩
+              rcases ihkeys j hj with ⟨j', hj', h5⟩ | ⟨j', hj', h5⟩
+              · exact Or.inl ⟨ht1, j', hj', h5⟩
+              · exact Or.inr ⟨ht2, j', hj', h5⟩
+            · rw [symmChild_eq m1 k1 m2 k2 c hsz1 hsz2, if_pos ht1, if_neg ht2, hcA1]
+              exact ⟨hwfk1 _ (Array.getElem_mem hb1c),
+                     fun j hj => Or.inl ⟨ht1, j, hj, rfl⟩⟩
+          · have hf1 : testBit m1 c = false := by simpa using ht1
+            have ht2 : testBit m2 c = true := by
+              rw [testBit_or, hf1, Bool.false_or] at htc; exact htc
+            have hb2c : arrayIndex m2 c < k2.size := by
+              rw [hsz2]; exact arrayIndex_lt m2 c ht2
+            have hcA2 : childAt m2 k2 c = k2[arrayIndex m2 c]'hb2c := by
+              unfold childAt; rw [Array.getElem?_eq_getElem hb2c, Option.getD_some]
+            rw [symmChild_eq m1 k1 m2 k2 c hsz1 hsz2, if_neg ht1, hcA2]
+            exact ⟨hwfk2 _ (Array.getElem_mem hb2c),
+                   fun j hj => Or.inr ⟨ht2, j, hj, rfl⟩⟩
+        have hal' : ∀ c, c < 32 → testBit (m1 ||| m2) c = true →
+            AlignedAt l1 c p1 (childAt (m1 ||| m2) (symmKids m1 k1 m2 k2 (m1 ||| m2) #[]) c) := by
+          intro c hc htc
+          rw [childAt_symmKids m1 k1 m2 k2 c hc htc]
+          intro j hj
+          rcases (hslot c hc htc).2 j hj with ⟨ht1, j', hj', h5⟩ | ⟨ht2, j', hj', h5⟩
+          · obtain ⟨hch, hpf⟩ := hrout1 c hc ht1 j' hj'
+            exact ⟨(chunk_eq_of_hi l1 hl0 h5).trans hch,
+                   (prefixAbove_eq_of_hi l1 h5).trans hpf⟩
+          · obtain ⟨hch, hpf⟩ := hrout2 c hc ht2 j' hj'
+            exact ⟨(chunk_eq_of_hi l1 hl0 h5).trans hch,
+                   (prefixAbove_eq_of_hi l1 h5).trans hpf⟩
+        refine ⟨WF_finalize p1 l1 (m1 ||| m2) _ hl0 ?_ hal', ?_⟩
+        · intro c hc htc
+          rw [childAt_symmKids m1 k1 m2 k2 c hc htc]
+          exact (hslot c hc htc).1
+        · intro j hj
+          rw [contains_finalize j p1 l1 (m1 ||| m2) _ hal'] at hj
+          obtain ⟨htj, hcj⟩ := and_split hj
+          rw [childAt_symmKids m1 k1 m2 k2 (chunk j l1) (chunk_lt j l1) htj] at hcj
+          rcases (hslot (chunk j l1) (chunk_lt j l1) htj).2 j hcj with
+            ⟨ht1, j', hj', h5⟩ | ⟨ht2, j', hj', h5⟩
+          · refine Or.inl ⟨j', ?_, h5⟩
+            rw [contains_bin]
+            obtain ⟨hch, _⟩ := hrout1 (chunk j l1) (chunk_lt j l1) ht1 j' hj'
+            rw [hch, ht1, Bool.true_and]
+            exact hj'
+          · refine Or.inr ⟨j', ?_, h5⟩
+            rw [contains_bin]
+            obtain ⟨hch, _⟩ := hrout2 (chunk j l1) (chunk_lt j l1) ht2 j' hj'
+            rw [hch, ht2, Bool.true_and]
+            exact hj'
+      · by_cases hcond2 : (l1 == l2) = true
+        · have hleq : l1 = l2 := by simpa using hcond2
+          subst hleq
+          rw [symmDiffU, if_neg hcond1, if_pos hcond2]
+          have hpne : p1 ≠ p2 := by
+            intro h; apply hcond1
+            rw [Bool.and_eq_true, beq_iff_eq, beq_iff_eq]; exact ⟨rfl, h⟩
+          have hl0 : 0 < l1 := by rw [WF] at hwa; exact hwa.1
+          have hm1ne : m1 ≠ 0 := by
+            rw [WF] at hwa; obtain ⟨_, _, hpc, _, _, _⟩ := hwa
+            intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+          have hm2ne : m2 ≠ 0 := by
+            rw [WF] at hwb; obtain ⟨_, _, hpc, _, _, _⟩ := hwb
+            intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+          have hsk1 : prefixAbove (someKey (.bin p1 l1 m1 k1)) l1 = p1 :=
+            someKey_bin_prefixAbove p1 l1 m1 k1 hm1ne
+          have hsk2 : prefixAbove (someKey (.bin p2 l1 m2 k2)) l1 = p2 :=
+            someKey_bin_prefixAbove p2 l1 m2 k2 hm2ne
+          have hdiv : someKey (.bin p1 l1 m1 k1) >>> (5 * (l1 + 1))
+              ≠ someKey (.bin p2 l1 m2 k2) >>> (5 * (l1 + 1)) := by
+            show prefixAbove (someKey (.bin p1 l1 m1 k1)) l1
+              ≠ prefixAbove (someKey (.bin p2 l1 m2 k2)) l1
+            rw [hsk1, hsk2]; exact hpne
+          have hkne : someKey (.bin p1 l1 m1 k1) ≠ someKey (.bin p2 l1 m2 k2) :=
+            fun h => hdiv (by rw [h])
+          have hbl_lt : l1 < branchLevel (someKey (.bin p1 l1 m1 k1)) (someKey (.bin p2 l1 m2 k2)) :=
+            lt_branchLevel _ _ l1 hdiv
+          have hl0' : 0 < branchLevel (someKey (.bin p1 l1 m1 k1)) (someKey (.bin p2 l1 m2 k2)) :=
+            Nat.lt_trans hl0 hbl_lt
+          obtain ⟨jwf, jkeys⟩ := join_WF_keys (someKey (.bin p1 l1 m1 k1))
+            (someKey (.bin p2 l1 m2 k2)) (.bin p1 l1 m1 k1) (.bin p2 l1 m2 k2) hkne hl0'
+            (aligned_bin p1 l1 m1 k1 hwa _ hbl_lt)
+            (by rw [prefixAbove_branchLevel_eq (someKey (.bin p1 l1 m1 k1))
+                  (someKey (.bin p2 l1 m2 k2))]
+                exact aligned_bin p2 l1 m2 k2 hwb _ hbl_lt)
+            hwa hwb (by simp) (by simp)
+          refine ⟨jwf, fun j hj => ?_⟩
+          rcases jkeys j hj with hA | hB
+          · exact Or.inl ⟨j, hA, rfl⟩
+          · exact Or.inr ⟨j, hB, rfl⟩
+        · by_cases hlt : l2 < l1
+          · have hbl0 : 0 < l1 := by rw [WF] at hwa; exact hwa.1
+            by_cases hpfx : (prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 == p1) = true
+            · have hpfxeq : prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 = p1 := by
+                simpa using hpfx
+              have halign : AlignedAt l1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) p1
+                  (.bin p2 l2 m2 k2) :=
+                by rw [← hpfxeq]; exact aligned_bin p2 l2 m2 k2 hwb l1 hlt
+              by_cases htb : testBit m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) = true
+              · by_cases h : arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) < k1.size
+                · rw [symmDiffU, if_neg hcond1, if_neg hcond2, if_pos hlt, if_pos hpfx,
+                      if_pos htb, dif_pos h]
+                  have hwfchild :
+                      WF (k1[arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)]'h) := by
+                    rw [WF] at hwa; exact hwa.2.2.2.1 _ (Array.getElem_mem h)
+                  obtain ⟨ihwf, ihkeys⟩ :=
+                    symmDiff_WF_keys (k1[arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)]'h)
+                      (.bin p2 l2 m2 k2) hwfchild hwb
+                  exact splice2_WF_keys p1 l1 m1 k1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)
+                    (chunk_lt _ _) htb h _ (.bin p2 l2 m2 k2) hwa ihwf halign ihkeys
+                · rw [symmDiffU, if_neg hcond1, if_neg hcond2, if_pos hlt, if_pos hpfx,
+                      if_pos htb, dif_neg h]
+                  exact ⟨hwa, fun j hj => Or.inl ⟨j, hj, rfl⟩⟩
+              · rw [symmDiffU, if_neg hcond1, if_neg hcond2, if_pos hlt, if_pos hpfx, if_neg htb]
+                have htbf : testBit m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) = false := by
+                  simpa using htb
+                refine ⟨WF_splice (.bin p2 l2 m2 k2) p1 l1 m1 k1
+                  (chunk (someKey (.bin p2 l2 m2 k2)) l1) (chunk_lt _ _) hwa halign hwb
+                  (by simp) htbf, ?_⟩
+                intro j hj
+                rw [contains_splice j (.bin p2 l2 m2 k2) p1 l1 m1 k1
+                    (chunk (someKey (.bin p2 l2 m2 k2)) l1) (chunk_lt _ _) hwa halign htbf,
+                    Bool.or_eq_true] at hj
+                rcases hj with hj2 | hj1
+                · exact Or.inr ⟨j, hj2, rfl⟩
+                · exact Or.inl ⟨j, hj1, rfl⟩
+            · rw [symmDiffU, if_neg hcond1, if_neg hcond2, if_pos hlt, if_neg hpfx]
+              have hm1ne : m1 ≠ 0 := by
+                rw [WF] at hwa; obtain ⟨_, _, hpc, _, _, _⟩ := hwa
+                intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+              have hsk1 : prefixAbove (someKey (.bin p1 l1 m1 k1)) l1 = p1 :=
+                someKey_bin_prefixAbove p1 l1 m1 k1 hm1ne
+              have hpfxne : prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 ≠ p1 := by
+                intro h; exact hpfx (by rw [h]; exact beq_self_eq_true p1)
+              have hdiv : someKey (.bin p1 l1 m1 k1) >>> (5 * (l1 + 1))
+                  ≠ someKey (.bin p2 l2 m2 k2) >>> (5 * (l1 + 1)) := by
+                show prefixAbove (someKey (.bin p1 l1 m1 k1)) l1
+                  ≠ prefixAbove (someKey (.bin p2 l2 m2 k2)) l1
+                rw [hsk1]; exact fun h => hpfxne h.symm
+              have hkne : someKey (.bin p1 l1 m1 k1) ≠ someKey (.bin p2 l2 m2 k2) :=
+                fun h => hdiv (by rw [h])
+              have hbl_lt :
+                  l1 < branchLevel (someKey (.bin p1 l1 m1 k1)) (someKey (.bin p2 l2 m2 k2)) :=
+                lt_branchLevel _ _ l1 hdiv
+              have hl0' :
+                  0 < branchLevel (someKey (.bin p1 l1 m1 k1)) (someKey (.bin p2 l2 m2 k2)) :=
+                Nat.lt_trans hbl0 hbl_lt
+              obtain ⟨jwf, jkeys⟩ := join_WF_keys (someKey (.bin p1 l1 m1 k1))
+                (someKey (.bin p2 l2 m2 k2)) (.bin p1 l1 m1 k1) (.bin p2 l2 m2 k2) hkne hl0'
+                (aligned_bin p1 l1 m1 k1 hwa _ hbl_lt)
+                (by rw [prefixAbove_branchLevel_eq (someKey (.bin p1 l1 m1 k1))
+                      (someKey (.bin p2 l2 m2 k2))]
+                    exact aligned_bin p2 l2 m2 k2 hwb _ (Nat.lt_trans hlt hbl_lt))
+                hwa hwb (by simp) (by simp)
+              refine ⟨jwf, fun j hj => ?_⟩
+              rcases jkeys j hj with hA | hB
+              · exact Or.inl ⟨j, hA, rfl⟩
+              · exact Or.inr ⟨j, hB, rfl⟩
+          · have hl12 : l1 < l2 := by
+              have hne12 : l1 ≠ l2 := by simpa using hcond2
+              omega
+            have hbl0 : 0 < l2 := by rw [WF] at hwb; exact hwb.1
+            by_cases hpfx : (prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 == p2) = true
+            · have hpfxeq : prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 = p2 := by
+                simpa using hpfx
+              have halign : AlignedAt l2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) p2
+                  (.bin p1 l1 m1 k1) :=
+                by rw [← hpfxeq]; exact aligned_bin p1 l1 m1 k1 hwa l2 hl12
+              by_cases htb : testBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) = true
+              · by_cases h : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size
+                · rw [symmDiffU, if_neg hcond1, if_neg hcond2, if_neg hlt, if_pos hpfx,
+                      if_pos htb, dif_pos h]
+                  have hwfchild :
+                      WF (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h) := by
+                    rw [WF] at hwb; exact hwb.2.2.2.1 _ (Array.getElem_mem h)
+                  obtain ⟨ihwf, ihkeys⟩ :=
+                    symmDiff_WF_keys (.bin p1 l1 m1 k1)
+                      (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h) hwa hwfchild
+                  obtain ⟨swf, skeys⟩ := splice2_WF_keys p2 l2 m2 k2
+                    (chunk (someKey (.bin p1 l1 m1 k1)) l2) (chunk_lt _ _) htb h _
+                    (.bin p1 l1 m1 k1) hwb ihwf halign
+                    (fun j hj => (ihkeys j hj).elim Or.inr Or.inl)
+                  exact ⟨swf, fun j hj => (skeys j hj).elim Or.inr Or.inl⟩
+                · rw [symmDiffU, if_neg hcond1, if_neg hcond2, if_neg hlt, if_pos hpfx,
+                      if_pos htb, dif_neg h]
+                  exact ⟨hwb, fun j hj => Or.inr ⟨j, hj, rfl⟩⟩
+              · rw [symmDiffU, if_neg hcond1, if_neg hcond2, if_neg hlt, if_pos hpfx, if_neg htb]
+                have htbf : testBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) = false := by
+                  simpa using htb
+                refine ⟨WF_splice (.bin p1 l1 m1 k1) p2 l2 m2 k2
+                  (chunk (someKey (.bin p1 l1 m1 k1)) l2) (chunk_lt _ _) hwb halign hwa
+                  (by simp) htbf, ?_⟩
+                intro j hj
+                rw [contains_splice j (.bin p1 l1 m1 k1) p2 l2 m2 k2
+                    (chunk (someKey (.bin p1 l1 m1 k1)) l2) (chunk_lt _ _) hwb halign htbf,
+                    Bool.or_eq_true] at hj
+                rcases hj with hj1 | hj2
+                · exact Or.inl ⟨j, hj1, rfl⟩
+                · exact Or.inr ⟨j, hj2, rfl⟩
+            · rw [symmDiffU, if_neg hcond1, if_neg hcond2, if_neg hlt, if_neg hpfx]
+              have hm2ne : m2 ≠ 0 := by
+                rw [WF] at hwb; obtain ⟨_, _, hpc, _, _, _⟩ := hwb
+                intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+              have hsk2 : prefixAbove (someKey (.bin p2 l2 m2 k2)) l2 = p2 :=
+                someKey_bin_prefixAbove p2 l2 m2 k2 hm2ne
+              have hpfxne : prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 ≠ p2 := by
+                intro h; exact hpfx (by rw [h]; exact beq_self_eq_true p2)
+              have hdiv : someKey (.bin p2 l2 m2 k2) >>> (5 * (l2 + 1))
+                  ≠ someKey (.bin p1 l1 m1 k1) >>> (5 * (l2 + 1)) := by
+                show prefixAbove (someKey (.bin p2 l2 m2 k2)) l2
+                  ≠ prefixAbove (someKey (.bin p1 l1 m1 k1)) l2
+                rw [hsk2]; exact fun h => hpfxne h.symm
+              have hkne : someKey (.bin p2 l2 m2 k2) ≠ someKey (.bin p1 l1 m1 k1) :=
+                fun h => hdiv (by rw [h])
+              have hbl_lt :
+                  l2 < branchLevel (someKey (.bin p2 l2 m2 k2)) (someKey (.bin p1 l1 m1 k1)) :=
+                lt_branchLevel _ _ l2 hdiv
+              have hl0' :
+                  0 < branchLevel (someKey (.bin p2 l2 m2 k2)) (someKey (.bin p1 l1 m1 k1)) :=
+                Nat.lt_trans hbl0 hbl_lt
+              obtain ⟨jwf, jkeys⟩ := join_WF_keys (someKey (.bin p2 l2 m2 k2))
+                (someKey (.bin p1 l1 m1 k1)) (.bin p2 l2 m2 k2) (.bin p1 l1 m1 k1) hkne hl0'
+                (aligned_bin p2 l2 m2 k2 hwb _ hbl_lt)
+                (by rw [prefixAbove_branchLevel_eq (someKey (.bin p2 l2 m2 k2))
+                      (someKey (.bin p1 l1 m1 k1))]
+                    exact aligned_bin p1 l1 m1 k1 hwa _ (Nat.lt_trans hl12 hbl_lt))
+                hwb hwa (by simp) (by simp)
+              refine ⟨jwf, fun j hj => ?_⟩
+              rcases jkeys j hj with hB | hA
+              · exact Or.inr ⟨j, hB, rfl⟩
+              · exact Or.inl ⟨j, hA, rfl⟩
+termination_by a b => sizeOf a + sizeOf b
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h); omega)
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb1c)
+       have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb2c); omega)
+    | omega
+
+/-- `symmDiff` preserves canonical shape. -/
+theorem WF_symmDiff (a b : PTree L) (hwa : WF a) (hwb : WF b) : WF (symmDiff a b) := by
+  rw [symmDiff]; exact (symmDiff_WF_keys a b hwa hwb).1
 
 /-- A present slot's child sits in the `kids` array (it is read at an in-range compact index). -/
 private theorem childAt_mem (mask : UInt32) (kids : Array (PTree L)) (c : UInt32)

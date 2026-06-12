@@ -68,6 +68,10 @@ probe: subtrees of `s` that cannot meet `t` are kept whole (and shared) in O(1),
 subtract with one `AND NOT`, and the result is canonical (the height shrinks when the deep keys
 are removed). -/
 def diff (s t : NatSet) : NatSet := NatCollection.diff s t
+/-- Symmetric difference: the elements in exactly one of `s`, `t` — a structural merge where
+shared leaves cancel with one `XOR` and equal subtrees cancel entirely; one-sided subtrees are
+carried over whole (shared). Equals `(s \ t) ∪ (t \ s)` in one pass. -/
+def symmDiff (s t : NatSet) : NatSet := NatCollection.symmDiff s t
 /-- Subset test. -/
 def subset (s t : NatSet) : Bool := NatCollection.restricts (fun _ _ => true) s t
 /-- Whether `s` and `t` share no element — the intersection's structural walk without building
@@ -196,6 +200,23 @@ section Tests
   let a := NatSet.ofList [0, 31, 32, 1000, 1000000]
   let b := NatSet.ofList [31, 1000000, 7]
   (a \ b).toList = a.toList.filter (fun k => !(b.contains k))
+
+-- symmDiff: elements in exactly one operand; cancellation, identities, involution, oracle
+#guard (NatSet.ofList [1, 2, 3]).symmDiff (NatSet.ofList [2, 3, 4]) = NatSet.ofList [1, 4]
+#guard
+  let a := NatSet.ofList [1, 2, 3]
+  a.symmDiff a = (∅ : NatSet)                                       -- total cancellation → nil
+#guard
+  let a := NatSet.ofList [5, 1000, 32]
+  a.symmDiff ∅ = a && (∅ : NatSet).symmDiff a = a                   -- identities
+#guard
+  let a := NatSet.ofList [1, 32, 5000]
+  let b := NatSet.ofList [2, 32, 999999]
+  a.symmDiff b = b.symmDiff a                                       -- commutative
+    && a.symmDiff b = (a \ b) ∪ (b \ a)                             -- decomposition oracle
+    && (a.symmDiff b).symmDiff b = a                                -- involution
+#guard (NatSet.ofList [1, 5000]).symmDiff (NatSet.ofList [5000]) = NatSet.ofList [1]
+  -- deep cancel: the height collapses canonically
 
 -- ordered queries: min/max, successor/predecessor (strict and inclusive), pop
 #guard (∅ : NatSet).min? = none

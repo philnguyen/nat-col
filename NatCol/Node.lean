@@ -104,6 +104,9 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   /-- Keep `a`'s slots absent from `b` (set difference at the leaf; `b`'s values are irrelevant).
   The leaf base case of `PTree.diff`. -/
   diff      : L → L → L
+  /-- Keep the slots present in exactly one leaf (shared slots cancel). The leaf base case of
+  `PTree.symmDiff`. -/
+  symmDiff  : L → L → L
   /-- Present `(slot, value)` pairs in ascending slot order. -/
   toArray   : L → Array (UInt32 × V)
   /-- Keep only the slots whose `(slot, value)` satisfies `p`. The leaf base case of
@@ -207,6 +210,7 @@ instance : LeafOps UInt32 Unit where
   restricts _ a b := (a &&& b) == a
   disjoint a b := (a &&& b) == 0
   diff a b := a &&& ~~~b
+  symmDiff a b := a ^^^ b
   toArray u := Nat.fold 32 (fun i _ acc =>
     let iu := UInt32.ofNat i
     if testBit u iu then acc.push (iu, ()) else acc) #[]
