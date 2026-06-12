@@ -318,6 +318,17 @@ theorem get?_join (combine : V → V → V) (a b : NatCollection L) (k : Nat) :
     (join combine a b).get? k = optVjoin combine (a.get? k) (b.get? k) :=
   PTree.get?_union combine k a.tree b.tree a.wf b.wf
 
+/-- **`get?` of a `diff`**: the value-level difference of the two lookups — a key of `a` reads
+through exactly when it is absent from `b` (`b`'s values are irrelevant). -/
+theorem get?_diff (a b : NatCollection L) (k : Nat) :
+    (a.diff b).get? k = optVdiff (a.get? k) (b.get? k) :=
+  PTree.get?_diff k a.tree b.tree a.wf b.wf
+
+/-- Membership in a `diff`: a key survives exactly when present in `a` and absent from `b`. -/
+theorem contains_diff (a b : NatCollection L) (k : Nat) :
+    (a.diff b).contains k = (a.contains k && !b.contains k) :=
+  PTree.contains_diff k a.tree b.tree a.wf b.wf
+
 /-- **`get?` of an `insert`**: the inserted key reads the new value; every other key is read
 unchanged. -/
 theorem get?_insert (c : NatCollection L) (k : Nat) (v : V) (j : Nat) :
@@ -372,6 +383,30 @@ and `finalize` collapses every emptied branch. -/
 theorem diff_self (a : NatCollection L) : a.diff a = empty := by
   apply ext_tree; exact PTree.diff_self a.tree
 
+/-- **`diff` collapses exactly on the key-subset order**: subtracting `b` leaves nothing iff every
+key of `a` is present in `b` (values are irrelevant on both sides). -/
+theorem diff_eq_empty_iff (a b : NatCollection L) :
+    a.diff b = empty ↔ ∀ k, a.contains k = true → b.contains k = true := by
+  constructor
+  · intro h k hka
+    have hd : (a.diff b).contains k = false := by rw [h, contains_eq, get?_empty]; rfl
+    rw [contains_diff, hka, Bool.true_and] at hd
+    cases hkb : b.contains k with
+    | true => rfl
+    | false => rw [hkb] at hd; exact absurd hd (by decide)
+  · intro h
+    apply ext_get?
+    intro k
+    rw [get?_diff, get?_empty]
+    cases hga : a.get? k with
+    | none => cases b.get? k <;> rfl
+    | some v =>
+      have hkb : b.contains k = true := h k (by rw [contains_eq, hga]; rfl)
+      rw [contains_eq] at hkb
+      cases hgb : b.get? k with
+      | none => rw [hgb] at hkb; simp at hkb
+      | some w => rfl
+
 /-- The empty collection restricts every collection. -/
 @[simp, grind =]
 theorem restricts_empty_left (rel : V → V → Bool) (b : NatCollection L) :
@@ -424,6 +459,26 @@ when `optRel rel` relates their lookups at every key. -/
 theorem get?_restricts (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (a b : NatCollection L) :
     restricts rel a b = true ↔ ∀ k, optRel rel (a.get? k) (b.get? k) = true :=
   PTree.subset_iff_eq rel hrefl a.tree b.tree a.wf b.wf
+
+/-- **Restriction collapses `diff`** (for reflexive `rel`): if `a` restricts `b`, subtracting `b`
+from `a` leaves nothing — the strengthening of `diff_self` from reflexivity to the full order. -/
+theorem diff_eq_empty_of_restricts (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)
+    (a b : NatCollection L) (h : restricts rel a b = true) : a.diff b = empty := by
+  rw [diff_eq_empty_iff]
+  intro k hka
+  have hk := (get?_restricts rel hrefl a b).mp h k
+  rw [contains_eq] at hka ⊢
+  cases hga : a.get? k with
+  | none => rw [hga] at hka; simp at hka
+  | some x =>
+    rw [hga] at hk
+    cases hgb : b.get? k with
+    | none =>
+      rw [hgb] at hk
+      have hf : optRel rel (some x) (none : Option V) = false := rfl
+      rw [hf] at hk
+      exact absurd hk (by decide)
+    | some y => rfl
 
 /-- **`restricts` is transitive** when `rel` is a preorder. -/
 theorem restricts_trans (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true)

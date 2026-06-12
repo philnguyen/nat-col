@@ -84,6 +84,13 @@ instance {α : Type u} : LeafOps (Node α) α where
         simp [htb]
     show Node.isEmpty (Node.filterMap (fun i v => if testBit n.positionsMask i then none else some v) n) = true
     rw [h]; rfl
+  get?_diff a b i hi := by
+    show Node.get? (Node.filterMap (fun s v => if testBit b.positionsMask s then none else some v) a) i
+        = optVdiff (Node.get? a i) (Node.get? b i)
+    rw [Node.get?_filterMap _ a i hi, Node.testBit_eq_isSome_get? b i]
+    cases hga : Node.get? a i with
+    | none => cases Node.get? b i <;> rfl
+    | some v => cases Node.get? b i <;> rfl
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -1168,6 +1175,53 @@ theorem diff_empty (m : NatMap α) : m.diff ∅ = m :=
 /-- Subtracting a map from itself leaves the empty map. -/
 theorem diff_self (m : NatMap α) : m.diff m = ∅ :=
   NatCollection.diff_self m
+
+/-- `get?` after `diff`: a key of `m` reads its original value exactly when absent from `t`
+(`t`'s values are irrelevant). -/
+theorem get?_diff (m t : NatMap α) (k : Nat) :
+    (m.diff t).get? k = if t.contains k = true then none else m.get? k := by
+  show NatCollection.get? (NatCollection.diff m t) k
+      = if NatCollection.contains t k = true then none else NatCollection.get? m k
+  rw [NatCollection.get?_diff, NatCollection.contains_eq]
+  cases hgb : NatCollection.get? t k with
+  | none =>
+    rw [if_neg (by simp)]
+    rfl
+  | some w =>
+    rw [if_pos (show (some w : Option α).isSome = true from rfl)]
+    cases NatCollection.get? m k <;> rfl
+
+/-- Membership in a difference: `j ∈ m.diff t` exactly when `j ∈ m` and `j ∉ t`. -/
+theorem mem_diff {m t : NatMap α} {j : Nat} : j ∈ m.diff t ↔ j ∈ m ∧ j ∉ t := by
+  show NatCollection.contains (NatCollection.diff m t) j = true ↔ _
+  rw [NatCollection.contains_diff, Bool.and_eq_true]
+  constructor
+  · intro h
+    obtain ⟨h1, h2⟩ := h
+    refine ⟨h1, fun hmem => ?_⟩
+    replace hmem : NatCollection.contains t j = true := hmem
+    rw [hmem] at h2
+    exact absurd h2 (by decide)
+  · intro h
+    obtain ⟨h1, h2⟩ := h
+    refine ⟨h1, ?_⟩
+    cases hc : NatCollection.contains t j with
+    | false => rfl
+    | true => exact absurd (show j ∈ t from hc) h2
+
+/-- **`diff` collapses exactly on the domain-subset order**: subtracting `t` leaves the empty map
+iff every key of `m` is a key of `t` (the values on both sides are irrelevant). -/
+theorem diff_eq_empty_iff {m t : NatMap α} : m.diff t = ∅ ↔ ∀ k, k ∈ m → k ∈ t := by
+  show NatCollection.diff m t = NatCollection.empty ↔ _
+  rw [NatCollection.diff_eq_empty_iff]
+  exact Iff.rfl
+
+/-- **Restriction collapses `diff`** (for reflexive `rel`): if `m` restricts `t`, subtracting `t`
+leaves the empty map — the strengthening of `diff_self` from reflexivity to the full `restricts`
+order. -/
+theorem diff_eq_empty_of_restricts (rel : α → α → Bool) (hrefl : ∀ x, rel x x = true)
+    {m t : NatMap α} (h : m.restricts rel t = true) : m.diff t = ∅ :=
+  NatCollection.diff_eq_empty_of_restricts rel hrefl m t h
 
 end NatMap
 

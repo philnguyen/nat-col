@@ -936,6 +936,61 @@ theorem diff_empty (s : NatSet) : s \ ∅ = s :=
 theorem diff_self (s : NatSet) : s \ s = ∅ :=
   NatCollection.diff_self s
 
+/-- Membership in a difference: `j ∈ s \ t` exactly when `j ∈ s` and `j ∉ t`. -/
+theorem mem_diff {s t : NatSet} {j : Nat} : j ∈ s \ t ↔ j ∈ s ∧ j ∉ t := by
+  show NatCollection.contains (NatCollection.diff s t) j = true ↔ _
+  rw [NatCollection.contains_diff, Bool.and_eq_true]
+  constructor
+  · intro h
+    obtain ⟨h1, h2⟩ := h
+    refine ⟨h1, fun hmem => ?_⟩
+    replace hmem : NatCollection.contains t j = true := hmem
+    rw [hmem] at h2
+    exact absurd h2 (by decide)
+  · intro h
+    obtain ⟨h1, h2⟩ := h
+    refine ⟨h1, ?_⟩
+    cases hc : NatCollection.contains t j with
+    | false => rfl
+    | true => exact absurd (show j ∈ t from hc) h2
+
+/-- **Difference detects the subset order**: `s \ t` is empty exactly when `s ⊆ t` — the
+strengthening of `diff_self` (the `s ⊆ s` instance) to the full order. -/
+theorem diff_eq_empty_iff_subset {s t : NatSet} : s \ t = ∅ ↔ s ⊆ t := by
+  show NatCollection.diff s t = NatCollection.empty
+      ↔ NatCollection.restricts (fun _ _ => true) s t = true
+  rw [NatCollection.diff_eq_empty_iff,
+      NatCollection.get?_restricts (fun _ _ => true) (fun _ => rfl)]
+  constructor
+  · intro h k
+    cases hga : NatCollection.get? s k with
+    | none => rfl
+    | some x =>
+      have hkb := h k (by rw [NatCollection.contains_eq, hga]; rfl)
+      rw [NatCollection.contains_eq] at hkb
+      cases hgb : NatCollection.get? t k with
+      | none => rw [hgb] at hkb; exact absurd hkb (by decide)
+      | some y => rfl
+  · intro h k hka
+    have hk := h k
+    rw [NatCollection.contains_eq] at hka ⊢
+    cases hga : NatCollection.get? s k with
+    | none => rw [hga] at hka; exact absurd hka (by decide)
+    | some x =>
+      rw [hga] at hk
+      cases hgb : NatCollection.get? t k with
+      | none =>
+        rw [hgb] at hk
+        have hf : optRel (fun _ _ => true) (some x) (none : Option Unit) = false := rfl
+        rw [hf] at hk
+        exact absurd hk (by decide)
+      | some y => rfl
+
+/-- Subtracting a superset leaves the empty set (the `mp` direction of
+`diff_eq_empty_iff_subset`, in the order's usual direction). -/
+theorem diff_eq_empty_of_subset {s t : NatSet} (h : s ⊆ t) : s \ t = ∅ :=
+  diff_eq_empty_iff_subset.mpr h
+
 /-- `popMin?` pops the minimum: the popped element is `min?`'s answer (so `min?_mem` and
 `min?_le` apply to it). -/
 theorem popMin?_min {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMin? = some (k, s')) :
