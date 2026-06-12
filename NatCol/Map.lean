@@ -925,6 +925,81 @@ theorem ge_of_entryLT?_eq_none {m : NatMap α} {k j : Nat} (h : m.entryLT? k = n
     (hj : j ∈ m) : k ≤ j :=
   NatCollection.ge_of_entryLT?_eq_none m k h j hj
 
+/-- The entry `entryGE?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_entryGE? {m : NatMap α} {k j : Nat} {v : α} (h : m.entryGE? k = some (j, v)) :
+    m.get? j = some v :=
+  NatCollection.get?_of_entryGE? m k j v h
+
+/-- `entryGE?`'s key is at or above the query key (it is `k` itself exactly when `k` is
+present). -/
+theorem entryGE?_ge {m : NatMap α} {k j : Nat} {v : α} (h : m.entryGE? k = some (j, v)) :
+    k ≤ j :=
+  NatCollection.entryGE?_ge m k j v h
+
+/-- `entryGE?` returns the *least* key at or beyond the query key. -/
+theorem entryGE?_le {m : NatMap α} {k j' j : Nat} {v : α} (h : m.entryGE? k = some (j', v))
+    (hj : j ∈ m) (hk : k ≤ j) : j' ≤ j :=
+  NatCollection.entryGE?_le m k j' v j h hj hk
+
+/-- A `none` from `entryGE?` is complete: every key of the map lies strictly below the query
+key. -/
+theorem lt_of_entryGE?_eq_none {m : NatMap α} {k j : Nat} (h : m.entryGE? k = none)
+    (hj : j ∈ m) : j < k :=
+  NatCollection.lt_of_entryGE?_eq_none m k h j hj
+
+/-- The entry `entryLE?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_entryLE? {m : NatMap α} {k j : Nat} {v : α} (h : m.entryLE? k = some (j, v)) :
+    m.get? j = some v :=
+  NatCollection.get?_of_entryLE? m k j v h
+
+/-- `entryLE?`'s key is at or below the query key (it is `k` itself exactly when `k` is
+present). -/
+theorem entryLE?_le {m : NatMap α} {k j : Nat} {v : α} (h : m.entryLE? k = some (j, v)) :
+    j ≤ k :=
+  NatCollection.entryLE?_le m k j v h
+
+/-- `entryLE?` returns the *greatest* key at or below the query key. -/
+theorem le_entryLE? {m : NatMap α} {k j' j : Nat} {v : α} (h : m.entryLE? k = some (j', v))
+    (hj : j ∈ m) (hk : j ≤ k) : j ≤ j' :=
+  NatCollection.le_entryLE? m k j' v j h hj hk
+
+/-- A `none` from `entryLE?` is complete: every key of the map lies strictly above the query
+key. -/
+theorem gt_of_entryLE?_eq_none {m : NatMap α} {k j : Nat} (h : m.entryLE? k = none)
+    (hj : j ∈ m) : k < j :=
+  NatCollection.gt_of_entryLE?_eq_none m k h j hj
+
+/-- `popMinEntry?` pops the least entry: its entry is `minEntry?`'s answer (so
+`get?_of_minEntry?` and `minEntry?_le` apply to it). -/
+theorem minEntry?_of_popMinEntry? {m : NatMap α} {e : Nat × α} {m' : NatMap α}
+    (h : m.popMinEntry? = some (e, m')) : m.minEntry? = some e :=
+  NatCollection.minEntry?_of_popMinEntry? m e m' h
+
+/-- `popMinEntry?`'s rest is the map with the popped key erased. -/
+theorem popMinEntry?_erase {m : NatMap α} {e : Nat × α} {m' : NatMap α}
+    (h : m.popMinEntry? = some (e, m')) : m' = m.erase e.1 :=
+  NatCollection.popMinEntry?_erase m e m' h
+
+/-- `popMinEntry?` answers `none` exactly on the empty map (totality: a non-empty map always
+pops). -/
+theorem popMinEntry?_eq_none {m : NatMap α} : m.popMinEntry? = none ↔ m = NatMap.empty :=
+  NatCollection.popMinEntry?_eq_none m
+
+/-- `popMaxEntry?` pops the greatest entry: its entry is `maxEntry?`'s answer (so
+`get?_of_maxEntry?` and `le_maxEntry?` apply to it). -/
+theorem maxEntry?_of_popMaxEntry? {m : NatMap α} {e : Nat × α} {m' : NatMap α}
+    (h : m.popMaxEntry? = some (e, m')) : m.maxEntry? = some e :=
+  NatCollection.maxEntry?_of_popMaxEntry? m e m' h
+
+/-- `popMaxEntry?`'s rest is the map with the popped key erased. -/
+theorem popMaxEntry?_erase {m : NatMap α} {e : Nat × α} {m' : NatMap α}
+    (h : m.popMaxEntry? = some (e, m')) : m' = m.erase e.1 :=
+  NatCollection.popMaxEntry?_erase m e m' h
+
+/-- `popMaxEntry?` answers `none` exactly on the empty map. -/
+theorem popMaxEntry?_eq_none {m : NatMap α} : m.popMaxEntry? = none ↔ m = NatMap.empty :=
+  NatCollection.popMaxEntry?_eq_none m
+
 end NatMap
 
 /-- `NatMap` is a lawful functor: `map` satisfies the identity and composition laws (and the

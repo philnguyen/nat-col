@@ -736,6 +736,160 @@ theorem ge_of_pred?_eq_none {s : NatSet} {k j : Nat} (h : s.pred? k = none) (hj 
     rw [hlt] at h
     exact absurd h (by simp)
 
+/-- `succEq?`'s answer is a member: a `succEq? k = some j` answer is an element of the set. -/
+theorem succEq?_mem {s : NatSet} {k j : Nat} (h : s.succEq? k = some j) : j ∈ s := by
+  replace h : (NatCollection.entryGE? s k).map Prod.fst = some j := h
+  obtain ⟨⟨j', v⟩, hge, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj : j' = j := hfst
+  subst hj
+  show NatCollection.contains s j' = true
+  rw [NatCollection.contains_eq, NatCollection.get?_of_entryGE? s k j' v hge]
+  rfl
+
+/-- `succEq?`'s answer is at or above `k` (it is `k` itself exactly when `k ∈ s`). -/
+theorem succEq?_ge {s : NatSet} {k j : Nat} (h : s.succEq? k = some j) : k ≤ j := by
+  replace h : (NatCollection.entryGE? s k).map Prod.fst = some j := h
+  obtain ⟨⟨j', v⟩, hge, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj : j' = j := hfst
+  subst hj
+  exact NatCollection.entryGE?_ge s k j' v hge
+
+/-- `succEq?` returns the *least* element at or above `k`: any member at or above `k` is at or
+above `succEq? k`'s answer. With `succEq?_mem` and `succEq?_ge`, this pins it exactly. -/
+theorem succEq?_le {s : NatSet} {k j' j : Nat} (h : s.succEq? k = some j') (hj : j ∈ s)
+    (hk : k ≤ j) : j' ≤ j := by
+  replace h : (NatCollection.entryGE? s k).map Prod.fst = some j' := h
+  obtain ⟨⟨j'', v⟩, hge, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj'' : j'' = j' := hfst
+  subst hj''
+  exact NatCollection.entryGE?_le s k j'' v j hge hj hk
+
+/-- A `none` from `succEq?` is complete: every element of the set lies strictly below `k`. -/
+theorem lt_of_succEq?_eq_none {s : NatSet} {k j : Nat} (h : s.succEq? k = none) (hj : j ∈ s) :
+    j < k := by
+  cases hge : NatCollection.entryGE? s k with
+  | none => exact NatCollection.lt_of_entryGE?_eq_none s k hge j hj
+  | some e =>
+    replace h : (NatCollection.entryGE? s k).map Prod.fst = none := h
+    rw [hge] at h
+    exact absurd h (by simp)
+
+/-- `predEq?`'s answer is a member: a `predEq? k = some j` answer is an element of the set. -/
+theorem predEq?_mem {s : NatSet} {k j : Nat} (h : s.predEq? k = some j) : j ∈ s := by
+  replace h : (NatCollection.entryLE? s k).map Prod.fst = some j := h
+  obtain ⟨⟨j', v⟩, hle, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj : j' = j := hfst
+  subst hj
+  show NatCollection.contains s j' = true
+  rw [NatCollection.contains_eq, NatCollection.get?_of_entryLE? s k j' v hle]
+  rfl
+
+/-- `predEq?`'s answer is at or below `k` (it is `k` itself exactly when `k ∈ s`). -/
+theorem predEq?_le {s : NatSet} {k j : Nat} (h : s.predEq? k = some j) : j ≤ k := by
+  replace h : (NatCollection.entryLE? s k).map Prod.fst = some j := h
+  obtain ⟨⟨j', v⟩, hle, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj : j' = j := hfst
+  subst hj
+  exact NatCollection.entryLE?_le s k j' v hle
+
+/-- `predEq?` returns the *greatest* element at or below `k`: any member at or below `k` is at
+or below `predEq? k`'s answer. With `predEq?_mem` and `predEq?_le`, this pins it exactly. -/
+theorem le_predEq? {s : NatSet} {k j' j : Nat} (h : s.predEq? k = some j') (hj : j ∈ s)
+    (hk : j ≤ k) : j ≤ j' := by
+  replace h : (NatCollection.entryLE? s k).map Prod.fst = some j' := h
+  obtain ⟨⟨j'', v⟩, hle, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj'' : j'' = j' := hfst
+  subst hj''
+  exact NatCollection.le_entryLE? s k j'' v j hle hj hk
+
+/-- A `none` from `predEq?` is complete: every element of the set lies strictly above `k`. -/
+theorem gt_of_predEq?_eq_none {s : NatSet} {k j : Nat} (h : s.predEq? k = none) (hj : j ∈ s) :
+    k < j := by
+  cases hle : NatCollection.entryLE? s k with
+  | none => exact NatCollection.gt_of_entryLE?_eq_none s k hle j hj
+  | some e =>
+    replace h : (NatCollection.entryLE? s k).map Prod.fst = none := h
+    rw [hle] at h
+    exact absurd h (by simp)
+
+/-- `popMin?` pops the minimum: the popped element is `min?`'s answer (so `min?_mem` and
+`min?_le` apply to it). -/
+theorem popMin?_min {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMin? = some (k, s')) :
+    s.min? = some k := by
+  replace h : (NatCollection.popMinEntry? s).map (fun e => (e.1.1, e.2)) = some (k, s') := h
+  obtain ⟨⟨⟨k', v⟩, c'⟩, hpop, hpair⟩ := Option.map_eq_some_iff.mp h
+  replace hpair : (k', c') = (k, s') := hpair
+  injection hpair with hk hc
+  subst hk
+  show (NatCollection.minEntry? s).map Prod.fst = some k'
+  rw [NatCollection.minEntry?_of_popMinEntry? s (k', v) c' hpop]
+  rfl
+
+/-- `popMin?`'s rest is the set with the popped element erased. -/
+theorem popMin?_erase {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMin? = some (k, s')) :
+    s' = s.erase k := by
+  replace h : (NatCollection.popMinEntry? s).map (fun e => (e.1.1, e.2)) = some (k, s') := h
+  obtain ⟨⟨⟨k', v⟩, c'⟩, hpop, hpair⟩ := Option.map_eq_some_iff.mp h
+  replace hpair : (k', c') = (k, s') := hpair
+  injection hpair with hk hc
+  subst hk; subst hc
+  exact NatCollection.popMinEntry?_erase s (k', v) c' hpop
+
+/-- `popMin?` answers `none` exactly on the empty set (totality: a non-empty set always pops). -/
+theorem popMin?_eq_none {s : NatSet} : s.popMin? = none ↔ s = ∅ := by
+  constructor
+  · intro h
+    cases hpop : NatCollection.popMinEntry? s with
+    | none => exact (NatCollection.popMinEntry?_eq_none s).mp hpop
+    | some e =>
+      replace h : (NatCollection.popMinEntry? s).map (fun e => (e.1.1, e.2)) = none := h
+      rw [hpop] at h
+      exact absurd h (by simp)
+  · intro h
+    subst h
+    show (NatCollection.popMinEntry? (∅ : NatSet)).map (fun e => (e.1.1, e.2)) = none
+    rw [(NatCollection.popMinEntry?_eq_none (∅ : NatSet)).mpr rfl]
+    rfl
+
+/-- `popMax?` pops the maximum: the popped element is `max?`'s answer (so `max?_mem` and
+`le_max?` apply to it). -/
+theorem popMax?_max {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMax? = some (k, s')) :
+    s.max? = some k := by
+  replace h : (NatCollection.popMaxEntry? s).map (fun e => (e.1.1, e.2)) = some (k, s') := h
+  obtain ⟨⟨⟨k', v⟩, c'⟩, hpop, hpair⟩ := Option.map_eq_some_iff.mp h
+  replace hpair : (k', c') = (k, s') := hpair
+  injection hpair with hk hc
+  subst hk
+  show (NatCollection.maxEntry? s).map Prod.fst = some k'
+  rw [NatCollection.maxEntry?_of_popMaxEntry? s (k', v) c' hpop]
+  rfl
+
+/-- `popMax?`'s rest is the set with the popped element erased. -/
+theorem popMax?_erase {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMax? = some (k, s')) :
+    s' = s.erase k := by
+  replace h : (NatCollection.popMaxEntry? s).map (fun e => (e.1.1, e.2)) = some (k, s') := h
+  obtain ⟨⟨⟨k', v⟩, c'⟩, hpop, hpair⟩ := Option.map_eq_some_iff.mp h
+  replace hpair : (k', c') = (k, s') := hpair
+  injection hpair with hk hc
+  subst hk; subst hc
+  exact NatCollection.popMaxEntry?_erase s (k', v) c' hpop
+
+/-- `popMax?` answers `none` exactly on the empty set. -/
+theorem popMax?_eq_none {s : NatSet} : s.popMax? = none ↔ s = ∅ := by
+  constructor
+  · intro h
+    cases hpop : NatCollection.popMaxEntry? s with
+    | none => exact (NatCollection.popMaxEntry?_eq_none s).mp hpop
+    | some e =>
+      replace h : (NatCollection.popMaxEntry? s).map (fun e => (e.1.1, e.2)) = none := h
+      rw [hpop] at h
+      exact absurd h (by simp)
+  · intro h
+    subst h
+    show (NatCollection.popMaxEntry? (∅ : NatSet)).map (fun e => (e.1.1, e.2)) = none
+    rw [(NatCollection.popMaxEntry?_eq_none (∅ : NatSet)).mpr rfl]
+    rfl
+
 end NatSet
 
 end NatCol

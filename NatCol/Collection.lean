@@ -600,6 +600,283 @@ theorem ge_of_entryLT?_eq_none (c : NatCollection L) (k : Nat) (h : c.entryLT? k
     (j : Nat) (hj : c.contains j = true) : k ≤ j :=
   PTree.ge_of_entryLT?_eq_none c.tree c.wf k h j hj
 
+/-- The entry `entryGE?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_entryGE? (c : NatCollection L) (k j : Nat) (v : V)
+    (h : c.entryGE? k = some (j, v)) : c.get? j = some v := by
+  unfold entryGE? at h
+  cases hg : c.get? k with
+  | some w =>
+    rw [hg] at h
+    replace h : some (k, w) = some (j, v) := h
+    injection h with h1
+    injection h1 with hk hv
+    subst hk; subst hv
+    exact hg
+  | none =>
+    rw [hg] at h
+    replace h : c.entryGT? k = some (j, v) := h
+    exact get?_of_entryGT? c k j v h
+
+/-- `entryGE?`'s key is at or above the query key. -/
+theorem entryGE?_ge (c : NatCollection L) (k j : Nat) (v : V)
+    (h : c.entryGE? k = some (j, v)) : k ≤ j := by
+  unfold entryGE? at h
+  cases hg : c.get? k with
+  | some w =>
+    rw [hg] at h
+    replace h : some (k, w) = some (j, v) := h
+    injection h with h1
+    injection h1 with hk hv
+    subst hk
+    exact Nat.le_refl _
+  | none =>
+    rw [hg] at h
+    replace h : c.entryGT? k = some (j, v) := h
+    exact Nat.le_of_lt (entryGT?_gt c k j v h)
+
+/-- `entryGE?` returns the *least* key at or beyond the query key. -/
+theorem entryGE?_le (c : NatCollection L) (k j' : Nat) (v : V) (j : Nat)
+    (h : c.entryGE? k = some (j', v)) (hj : c.contains j = true) (hk : k ≤ j) : j' ≤ j := by
+  unfold entryGE? at h
+  cases hg : c.get? k with
+  | some w =>
+    rw [hg] at h
+    replace h : some (k, w) = some (j', v) := h
+    injection h with h1
+    injection h1 with hk' hv
+    subst hk'
+    exact hk
+  | none =>
+    rw [hg] at h
+    replace h : c.entryGT? k = some (j', v) := h
+    have hne : k ≠ j := by
+      intro he
+      rw [contains_eq, ← he, hg] at hj
+      simp at hj
+    exact entryGT?_le c k j' v j h hj (Nat.lt_of_le_of_ne hk hne)
+
+/-- A `none` from `entryGE?` is complete: every present key lies strictly below the query key. -/
+theorem lt_of_entryGE?_eq_none (c : NatCollection L) (k : Nat) (h : c.entryGE? k = none)
+    (j : Nat) (hj : c.contains j = true) : j < k := by
+  unfold entryGE? at h
+  cases hg : c.get? k with
+  | some w =>
+    rw [hg] at h
+    replace h : some (k, w) = none := h
+    simp at h
+  | none =>
+    rw [hg] at h
+    replace h : c.entryGT? k = none := h
+    have hle := le_of_entryGT?_eq_none c k h j hj
+    have hne : j ≠ k := by
+      intro he
+      rw [contains_eq, he, hg] at hj
+      simp at hj
+    exact Nat.lt_of_le_of_ne hle hne
+
+/-- The entry `entryLE?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_entryLE? (c : NatCollection L) (k j : Nat) (v : V)
+    (h : c.entryLE? k = some (j, v)) : c.get? j = some v := by
+  unfold entryLE? at h
+  cases hg : c.get? k with
+  | some w =>
+    rw [hg] at h
+    replace h : some (k, w) = some (j, v) := h
+    injection h with h1
+    injection h1 with hk hv
+    subst hk; subst hv
+    exact hg
+  | none =>
+    rw [hg] at h
+    replace h : c.entryLT? k = some (j, v) := h
+    exact get?_of_entryLT? c k j v h
+
+/-- `entryLE?`'s key is at or below the query key. -/
+theorem entryLE?_le (c : NatCollection L) (k j : Nat) (v : V)
+    (h : c.entryLE? k = some (j, v)) : j ≤ k := by
+  unfold entryLE? at h
+  cases hg : c.get? k with
+  | some w =>
+    rw [hg] at h
+    replace h : some (k, w) = some (j, v) := h
+    injection h with h1
+    injection h1 with hk hv
+    subst hk
+    exact Nat.le_refl _
+  | none =>
+    rw [hg] at h
+    replace h : c.entryLT? k = some (j, v) := h
+    exact Nat.le_of_lt (entryLT?_lt c k j v h)
+
+/-- `entryLE?` returns the *greatest* key at or below the query key. -/
+theorem le_entryLE? (c : NatCollection L) (k j' : Nat) (v : V) (j : Nat)
+    (h : c.entryLE? k = some (j', v)) (hj : c.contains j = true) (hk : j ≤ k) : j ≤ j' := by
+  unfold entryLE? at h
+  cases hg : c.get? k with
+  | some w =>
+    rw [hg] at h
+    replace h : some (k, w) = some (j', v) := h
+    injection h with h1
+    injection h1 with hk' hv
+    subst hk'
+    exact hk
+  | none =>
+    rw [hg] at h
+    replace h : c.entryLT? k = some (j', v) := h
+    have hne : j ≠ k := by
+      intro he
+      rw [contains_eq, he, hg] at hj
+      simp at hj
+    exact le_entryLT? c k j' v j h hj (Nat.lt_of_le_of_ne hk hne)
+
+/-- A `none` from `entryLE?` is complete: every present key lies strictly above the query key. -/
+theorem gt_of_entryLE?_eq_none (c : NatCollection L) (k : Nat) (h : c.entryLE? k = none)
+    (j : Nat) (hj : c.contains j = true) : k < j := by
+  unfold entryLE? at h
+  cases hg : c.get? k with
+  | some w =>
+    rw [hg] at h
+    replace h : some (k, w) = none := h
+    simp at h
+  | none =>
+    rw [hg] at h
+    replace h : c.entryLT? k = none := h
+    have hge := ge_of_entryLT?_eq_none c k h j hj
+    have hne : k ≠ j := by
+      intro he
+      rw [contains_eq, ← he, hg] at hj
+      simp at hj
+    exact Nat.lt_of_le_of_ne hge hne
+
+/-- `popMinEntry?`'s entry is the collection's least entry (so `get?_of_minEntry?` and
+`minEntry?_le` apply to it). -/
+theorem minEntry?_of_popMinEntry? (c : NatCollection L) (e : Nat × V) (c' : NatCollection L)
+    (h : c.popMinEntry? = some (e, c')) : c.minEntry? = some e := by
+  unfold popMinEntry? at h
+  cases hm : c.minEntry? with
+  | none =>
+    rw [hm] at h
+    replace h : (none : Option ((Nat × V) × NatCollection L)) = some (e, c') := h
+    simp at h
+  | some e2 =>
+    rw [hm] at h
+    replace h : some (e2, c.erase e2.1) = some (e, c') := h
+    injection h with h1
+    injection h1 with he hc
+    subst he
+    rfl
+
+/-- `popMinEntry?`'s rest is the collection with the popped key erased. -/
+theorem popMinEntry?_erase (c : NatCollection L) (e : Nat × V) (c' : NatCollection L)
+    (h : c.popMinEntry? = some (e, c')) : c' = c.erase e.1 := by
+  unfold popMinEntry? at h
+  cases hm : c.minEntry? with
+  | none =>
+    rw [hm] at h
+    replace h : (none : Option ((Nat × V) × NatCollection L)) = some (e, c') := h
+    simp at h
+  | some e2 =>
+    rw [hm] at h
+    replace h : some (e2, c.erase e2.1) = some (e, c') := h
+    injection h with h1
+    injection h1 with he hc
+    subst he
+    exact hc.symm
+
+/-- `popMinEntry?` answers `none` exactly on the empty collection (totality: a non-empty
+collection always pops). -/
+theorem popMinEntry?_eq_none (c : NatCollection L) :
+    c.popMinEntry? = none ↔ c = empty := by
+  constructor
+  · intro h
+    unfold popMinEntry? at h
+    cases hm : c.minEntry? with
+    | some e =>
+      rw [hm] at h
+      replace h : some (e, c.erase e.1) = none := h
+      simp at h
+    | none =>
+      refine eq_empty_of_isEmpty c ?_
+      show PTree.isNil c.tree = true
+      by_cases hne : c.tree = .nil
+      · rw [hne]; rfl
+      · exfalso
+        have hs := PTree.isSome_minEntry? c.tree c.wf hne
+        replace hm : PTree.minEntry? c.tree = none := hm
+        rw [hm] at hs
+        simp at hs
+  · intro h
+    subst h
+    unfold popMinEntry?
+    have hm : (empty : NatCollection L).minEntry? = none := by
+      show PTree.minEntry? (.nil : PTree L) = none
+      rw [PTree.minEntry?]
+    rw [hm]
+
+/-- `popMaxEntry?`'s entry is the collection's greatest entry (so `get?_of_maxEntry?` and
+`le_maxEntry?` apply to it). -/
+theorem maxEntry?_of_popMaxEntry? (c : NatCollection L) (e : Nat × V) (c' : NatCollection L)
+    (h : c.popMaxEntry? = some (e, c')) : c.maxEntry? = some e := by
+  unfold popMaxEntry? at h
+  cases hm : c.maxEntry? with
+  | none =>
+    rw [hm] at h
+    replace h : (none : Option ((Nat × V) × NatCollection L)) = some (e, c') := h
+    simp at h
+  | some e2 =>
+    rw [hm] at h
+    replace h : some (e2, c.erase e2.1) = some (e, c') := h
+    injection h with h1
+    injection h1 with he hc
+    subst he
+    rfl
+
+/-- `popMaxEntry?`'s rest is the collection with the popped key erased. -/
+theorem popMaxEntry?_erase (c : NatCollection L) (e : Nat × V) (c' : NatCollection L)
+    (h : c.popMaxEntry? = some (e, c')) : c' = c.erase e.1 := by
+  unfold popMaxEntry? at h
+  cases hm : c.maxEntry? with
+  | none =>
+    rw [hm] at h
+    replace h : (none : Option ((Nat × V) × NatCollection L)) = some (e, c') := h
+    simp at h
+  | some e2 =>
+    rw [hm] at h
+    replace h : some (e2, c.erase e2.1) = some (e, c') := h
+    injection h with h1
+    injection h1 with he hc
+    subst he
+    exact hc.symm
+
+/-- `popMaxEntry?` answers `none` exactly on the empty collection. -/
+theorem popMaxEntry?_eq_none (c : NatCollection L) :
+    c.popMaxEntry? = none ↔ c = empty := by
+  constructor
+  · intro h
+    unfold popMaxEntry? at h
+    cases hm : c.maxEntry? with
+    | some e =>
+      rw [hm] at h
+      replace h : some (e, c.erase e.1) = none := h
+      simp at h
+    | none =>
+      refine eq_empty_of_isEmpty c ?_
+      show PTree.isNil c.tree = true
+      by_cases hne : c.tree = .nil
+      · rw [hne]; rfl
+      · exfalso
+        have hs := PTree.isSome_maxEntry? c.tree c.wf hne
+        replace hm : PTree.maxEntry? c.tree = none := hm
+        rw [hm] at hs
+        simp at hs
+  · intro h
+    subst h
+    unfold popMaxEntry?
+    have hm : (empty : NatCollection L).maxEntry? = none := by
+      show PTree.maxEntry? (.nil : PTree L) = none
+      rw [PTree.maxEntry?]
+    rw [hm]
+
 end NatCollection
 
 end NatCol
