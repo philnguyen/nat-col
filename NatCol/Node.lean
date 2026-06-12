@@ -177,6 +177,11 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   which are. The leaf base case of `PTree.get?_insert`. -/
   get?_insert : ∀ (l : L) (i j : UInt32) (v : V), i < 32 → j < 32 →
     get? (insert l i v) j = if j = i then some v else get? l j
+  /-- `get?` reads an `erase` pointwise: the erased slot reads `none`, every other slot is
+  unchanged. Stated on in-range slots (`< 32`), like `get?_insert`. The leaf base case of
+  `PTree.get?_erase`. -/
+  get?_erase : ∀ (l : L) (i j : UInt32), i < 32 → j < 32 →
+    get? (erase l i) j = if j = i then none else get? l j
   /-- A leaf is determined by its `get?` at in-range slots. The leaf base case of `PTree.ext_get?`. -/
   get?_ext : ∀ (a b : L), (∀ i, i < 32 → get? a i = get? b i) → a = b
   /-- `restricts` reads denotationally: it holds exactly when, slot by slot, a present left value
@@ -268,6 +273,15 @@ instance : LeafOps UInt32 Unit where
     · subst hji
       simp
     · rw [if_neg hji, beq_eq_false_iff_ne.mpr (fun hc => hji hc.symm), Bool.or_false]
+  get?_erase l i j hi hj := by
+    show (if testBit (clearBit l i) j then some () else none)
+        = if j = i then none else (if testBit l j then some () else none)
+    rw [testBit_clearBit l i j hi hj]
+    by_cases hji : j = i
+    · subst hji
+      simp
+    · rw [if_neg hji, beq_eq_false_iff_ne.mpr (fun hc => hji hc.symm), Bool.not_false,
+          Bool.and_true]
   get?_ext a b h := by
     apply eq_of_testBit_eq
     intro i hi
@@ -1178,6 +1192,63 @@ theorem get?_insert (n : Node α) (i : UInt32) (v : α) (j : UInt32) (hi : i < 3
         · -- j < i : the index is below the insertion point, unchanged
           rw [arrayIndex_setBit_of_le _ _ _ hi hj (UInt32.le_of_lt hlt),
               Array.getElem?_insertIdx_of_lt hsize (arrayIndex_lt_of_lt _ j i hj hi hbj hlt)]
+      · rw [if_neg hbj, if_neg hbj]
+
+/-- `get?` after `erase`: slot `i` reads `none`, every other slot is unchanged — `get?_insert`'s
+erase mirror. An absent slot makes `erase` a no-op; a present slot `eraseIdx`s its element, and
+the compact `arrayIndex` of every higher slot drops by one. -/
+theorem get?_erase (n : Node α) (i j : UInt32) (hi : i < 32) (hj : j < 32) :
+    (n.erase i).get? j = if j = i then none else n.get? j := by
+  cases hpres : testBit n.positionsMask i with
+  | false =>
+    -- absent slot: erase is a no-op, and slot `i` already reads `none`
+    have herase : n.erase i = n := by
+      unfold Node.erase Node.alter
+      simp only []
+      split
+      · rename_i htb; rw [hpres] at htb; exact absurd htb (by decide)
+      · rfl
+    rw [herase]
+    by_cases hji : j = i
+    · subst hji
+      rw [if_pos rfl, get?_eq_getElem?, if_neg (by rw [hpres]; exact Bool.false_ne_true)]
+    · rw [if_neg hji]
+  | true =>
+    have hidx_lt : arrayIndex n.positionsMask i < n.elements.size := by
+      rw [n.elements_compact]; exact arrayIndex_lt _ _ hpres
+    have hmask : (n.erase i).positionsMask = clearBit n.positionsMask i := by
+      unfold Node.erase Node.alter
+      simp only []
+      split
+      · rfl
+      · rename_i htb; rw [hpres] at htb; exact absurd htb (by decide)
+    have hel : (n.erase i).elements
+        = n.elements.eraseIdx (arrayIndex n.positionsMask i) hidx_lt := by
+      unfold Node.erase Node.alter
+      simp only []
+      split
+      · exact dif_pos hidx_lt
+      · rename_i htb; rw [hpres] at htb; exact absurd htb (by decide)
+    rw [get?_eq_getElem? (n.erase i) j, get?_eq_getElem? n j, hmask, hel]
+    by_cases hji : j = i
+    · subst hji
+      rw [if_pos rfl, if_neg (by rw [testBit_clearBit _ _ _ hi hi]; simp)]
+    · rw [if_neg hji]
+      have htbcb : testBit (clearBit n.positionsMask i) j = testBit n.positionsMask j := by
+        rw [testBit_clearBit _ _ _ hi hj, beq_eq_false_iff_ne.mpr (fun hc => hji hc.symm),
+            Bool.not_false, Bool.and_true]
+      rw [htbcb]
+      by_cases hbj : testBit n.positionsMask j = true
+      · rw [if_pos hbj, if_pos hbj]
+        rcases UInt32.lt_or_lt_of_ne (Ne.symm hji) with hgt | hlt
+        · -- i < j : the read sits above the erasure point, its index dropped by one
+          have hshift := arrayIndex_clearBit_of_gt n.positionsMask i j hi hj hgt hpres
+          have hmono := arrayIndex_lt_of_lt n.positionsMask i j hi hj hpres hgt
+          rw [Array.getElem?_eraseIdx hidx_lt, if_neg (by omega), ← hshift]
+        · -- j < i : the read index is below the erasure point, unchanged
+          rw [arrayIndex_clearBit_of_le _ _ _ hi hj (UInt32.le_of_lt hlt),
+              Array.getElem?_eraseIdx hidx_lt,
+              if_pos (arrayIndex_lt_of_lt _ j i hj hi hbj hlt)]
       · rw [if_neg hbj, if_neg hbj]
 
 /-- `get?` of a `mergeLoop` result, given the step characterized at the slot it visits (`hself`,

@@ -877,6 +877,24 @@ theorem popMaxEntry?_eq_none (c : NatCollection L) :
       rw [PTree.maxEntry?]
     rw [hm]
 
+/-! ### `erase` denotation -/
+
+/-- Lookup after `erase`: the erased key reads `none`, every other key is unchanged. -/
+theorem get?_erase (c : NatCollection L) (k j : Nat) :
+    (c.erase k).get? j = if j = k then none else c.get? j :=
+  PTree.get?_erase k c.tree c.wf j
+
+/-- Membership after `erase`: the erased key is gone, every other key is untouched. -/
+theorem contains_erase (c : NatCollection L) (k j : Nat) :
+    (c.erase k).contains j = (c.contains j && !(j == k)) := by
+  rw [contains_eq, contains_eq, get?_erase]
+  by_cases hjk : j = k
+  · subst hjk
+    rw [if_pos rfl]
+    simp
+  · rw [if_neg hjk, beq_eq_false_iff_ne.mpr hjk]
+    simp
+
 end NatCollection
 
 end NatCol

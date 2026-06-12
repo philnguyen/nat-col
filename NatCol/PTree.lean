@@ -9628,5 +9628,159 @@ theorem le_entryLT? : (t : PTree L) → WF t → ∀ (k j' : Nat) (v : V) (j : N
 termination_by t => sizeOf t
 decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
 
+/-! ### `erase` denotation
+
+`get?` after `erase`: the erased key reads `none`, every other key is unchanged. Member recursion
+down the one routed path. The `bin` case reuses `erase_WF_keys`' splice bookkeeping (`hset` for
+how the `kids.set` reads, the keys-provenance of the recursive result for transferring `AlignedAt`
+across the splice) to discharge `get?_finalize`'s routing hypothesis. -/
+
+private theorem get?_eraseU (k : Nat) : (t : PTree L) → WF t → ∀ j,
+    get? j (eraseU k t) = if j = k then none else get? j t
+  | .nil => fun _ j => by
+      rw [eraseU, get?_nil]
+      by_cases hjk : j = k
+      · rw [if_pos hjk]
+      · rw [if_neg hjk]
+  | .tip pfx leaf => fun hwf j => by
+      rw [eraseU]
+      by_cases hp : (k >>> 5 == pfx) = true
+      · rw [if_pos hp]
+        replace hp : k >>> 5 = pfx := by simpa using hp
+        by_cases he : LeafOps.isEmpty (LeafOps.erase leaf (chunk k 0)) = true
+        · -- the erased leaf emptied: every slot of `leaf` other than `chunk k 0` was empty
+          rw [if_pos he, get?_nil]
+          by_cases hjk : j = k
+          · rw [if_pos hjk]
+          · rw [if_neg hjk, get?_tip]
+            by_cases hjp : (j >>> 5 == pfx) = true
+            · rw [if_pos hjp]
+              replace hjp : j >>> 5 = pfx := by simpa using hjp
+              have hcne : chunk j 0 ≠ chunk k 0 := by
+                intro hc
+                exact hjk (key_eq_iff j k |>.mpr ⟨hjp.trans hp.symm, hc⟩)
+              have hread := LeafOps.get?_erase (V := V) leaf (chunk k 0) (chunk j 0)
+                (chunk_lt _ _) (chunk_lt _ _)
+              rw [if_neg hcne] at hread
+              rw [← hread, LeafOps.eq_empty_of_isEmpty _ he, LeafOps.get?_empty]
+            · rw [if_neg hjp]
+        · -- the leaf survives: read it through the leaf law
+          rw [if_neg he, get?_tip, get?_tip]
+          by_cases hjp : (j >>> 5 == pfx) = true
+          · rw [if_pos hjp, if_pos hjp]
+            replace hjp : j >>> 5 = pfx := by simpa using hjp
+            rw [LeafOps.get?_erase (V := V) leaf (chunk k 0) (chunk j 0)
+                  (chunk_lt _ _) (chunk_lt _ _)]
+            by_cases hcc : chunk j 0 = chunk k 0
+            · rw [if_pos hcc, if_pos (key_eq_iff j k |>.mpr ⟨hjp.trans hp.symm, hcc⟩)]
+            · rw [if_neg hcc, if_neg (fun hjk => hcc (by rw [hjk]))]
+          · rw [if_neg hjp, if_neg hjp]
+            by_cases hjk : j = k
+            · rw [if_pos hjk]
+            · rw [if_neg hjk]
+      · -- prefix mismatch: erasing is a no-op, and `k` reads `none` off the tip anyway
+        rw [if_neg hp]
+        by_cases hjk : j = k
+        · subst hjk
+          rw [if_pos rfl, get?_tip, if_neg hp]
+        · rw [if_neg hjk]
+  | .bin pfx level mask kids => fun hwf j => by
+      rw [eraseU]
+      by_cases hroute : ((prefixAbove k level == pfx) && testBit mask (chunk k level)) = true
+      · rw [if_pos hroute]
+        have hwf' := hwf
+        rw [WF] at hwf'
+        obtain ⟨hl, hsz, _, hwfk, _, hal⟩ := hwf'
+        obtain ⟨_, htb⟩ := and_split hroute
+        have hb : arrayIndex mask (chunk k level) < kids.size := by
+          rw [hsz]; exact arrayIndex_lt mask _ htb
+        rw [dif_pos hb]
+        obtain ⟨_, ihkeys⟩ :=
+          erase_WF_keys k (kids[arrayIndex mask (chunk k level)]'hb)
+            (hwfk _ (Array.getElem_mem hb))
+        have hcA : childAt mask kids (chunk k level)
+            = kids[arrayIndex mask (chunk k level)]'hb := by
+          unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]
+        have hset : ∀ c, c < 32 → testBit mask c = true →
+            childAt mask (kids.set (arrayIndex mask (chunk k level))
+                (eraseU k (kids[arrayIndex mask (chunk k level)]'hb)) hb) c
+              = if c = chunk k level
+                  then eraseU k (kids[arrayIndex mask (chunk k level)]'hb)
+                  else childAt mask kids c := by
+          intro c hc htc
+          unfold childAt
+          rw [Array.getElem?_set hb]
+          by_cases hcc : c = chunk k level
+          · subst hcc
+            rw [if_pos rfl, if_pos rfl, Option.getD_some]
+          · rw [if_neg hcc,
+                if_neg (arrayIndex_inj mask (chunk k level) c (chunk_lt k level) hc htb htc
+                  (fun hh => hcc hh.symm))]
+        have hal' : ∀ c, c < 32 → testBit mask c = true →
+            AlignedAt level c pfx (childAt mask (kids.set (arrayIndex mask (chunk k level))
+                (eraseU k (kids[arrayIndex mask (chunk k level)]'hb)) hb) c) := by
+          intro c hc htc
+          rw [hset c hc htc]
+          by_cases hcc : c = chunk k level
+          · rw [if_pos hcc]
+            intro j2 hj2
+            obtain ⟨j', hj', h5⟩ := ihkeys j2 hj2
+            have hj'A : contains j' (childAt mask kids c) = true := by
+              rw [hcc, hcA]; exact hj'
+            obtain ⟨hch, hpf⟩ := hal c hc htc j' hj'A
+            exact ⟨(chunk_eq_of_hi level hl h5).trans hch,
+                   (prefixAbove_eq_of_hi level h5).trans hpf⟩
+          · rw [if_neg hcc]
+            exact hal c hc htc
+        rw [get?_finalize j pfx level mask _ hal', get?_bin]
+        by_cases htj : testBit mask (chunk j level) = true
+        · rw [if_pos htj, hset (chunk j level) (chunk_lt _ _) htj]
+          by_cases hcc : chunk j level = chunk k level
+          · rw [if_pos hcc,
+                get?_eraseU k (kids[arrayIndex mask (chunk k level)]'hb)
+                  (hwfk _ (Array.getElem_mem hb)) j]
+            by_cases hjk : j = k
+            · rw [if_pos hjk, if_pos hjk]
+            · rw [if_neg hjk, if_neg hjk, if_pos htj, hcc, hcA]
+          · have hjk : j ≠ k := fun he => hcc (by rw [he])
+            rw [if_neg hcc, if_neg hjk, if_pos htj]
+        · rw [if_neg htj]
+          have hjk : j ≠ k := by
+            intro he; rw [he] at htj; exact htj htb
+          rw [if_neg hjk, if_neg htj]
+      · -- off the routed path: erasing is a no-op, and `k` reads `none` off this branch anyway
+        rw [if_neg hroute]
+        by_cases hjk : j = k
+        · subst hjk
+          rw [if_pos rfl, get?_bin]
+          by_cases htb : testBit mask (chunk j level) = true
+          · rw [if_pos htb]
+            have hpe : ¬(prefixAbove j level = pfx) := by
+              intro hpe2
+              exact hroute (by simp [hpe2, htb])
+            have hwf' := hwf
+            rw [WF] at hwf'
+            obtain ⟨_, _, _, _, _, hal⟩ := hwf'
+            have hcontains : contains j (childAt mask kids (chunk j level)) = false := by
+              cases hc : contains j (childAt mask kids (chunk j level)) with
+              | false => rfl
+              | true =>
+                obtain ⟨_, hpf⟩ := hal (chunk j level) (chunk_lt _ _) htb j hc
+                exact absurd hpf hpe
+            rw [contains_eq_isSome] at hcontains
+            cases hg : get? j (childAt mask kids (chunk j level)) with
+            | none => rfl
+            | some v => rw [hg] at hcontains; simp at hcontains
+          · rw [if_neg htb]
+        · rw [if_neg hjk]
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- `get?` after `erase`: the erased key reads `none`, every other key is unchanged — the
+denotational equation for `erase` (with `WF_erase`, it pins `erase` exactly). -/
+theorem get?_erase (k : Nat) (t : PTree L) (hwf : WF t) (j : Nat) :
+    get? j (erase k t) = if j = k then none else get? j t :=
+  get?_eraseU k t hwf j
+
 end PTree
 end NatCol

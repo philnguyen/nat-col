@@ -812,6 +812,22 @@ theorem gt_of_predEq?_eq_none {s : NatSet} {k j : Nat} (h : s.predEq? k = none) 
     rw [hle] at h
     exact absurd h (by simp)
 
+/-- Membership after `erase`: `j` survives exactly when it was present and is not the erased
+element. -/
+theorem mem_erase {s : NatSet} {k j : Nat} : j ∈ s.erase k ↔ j ∈ s ∧ j ≠ k := by
+  show NatCollection.contains (NatCollection.erase s k) j = true ↔ _
+  rw [NatCollection.contains_erase, Bool.and_eq_true]
+  constructor
+  · intro h
+    obtain ⟨h1, h2⟩ := h
+    refine ⟨h1, ?_⟩
+    intro he
+    rw [he] at h2
+    simp at h2
+  · intro h
+    obtain ⟨h1, h2⟩ := h
+    exact ⟨h1, by simp [h2]⟩
+
 /-- `popMin?` pops the minimum: the popped element is `min?`'s answer (so `min?_mem` and
 `min?_le` apply to it). -/
 theorem popMin?_min {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMin? = some (k, s')) :
@@ -834,6 +850,13 @@ theorem popMin?_erase {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMin? = some
   injection hpair with hk hc
   subst hk; subst hc
   exact NatCollection.popMinEntry?_erase s (k', v) c' hpop
+
+/-- The membership view of `popMin?`'s rest: the popped minimum is gone, everything else
+survives. -/
+theorem popMin?_mem {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMin? = some (k, s'))
+    (j : Nat) : j ∈ s' ↔ j ∈ s ∧ j ≠ k := by
+  rw [popMin?_erase h]
+  exact mem_erase
 
 /-- `popMin?` answers `none` exactly on the empty set (totality: a non-empty set always pops). -/
 theorem popMin?_eq_none {s : NatSet} : s.popMin? = none ↔ s = ∅ := by
@@ -873,6 +896,13 @@ theorem popMax?_erase {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMax? = some
   injection hpair with hk hc
   subst hk; subst hc
   exact NatCollection.popMaxEntry?_erase s (k', v) c' hpop
+
+/-- The membership view of `popMax?`'s rest: the popped maximum is gone, everything else
+survives. -/
+theorem popMax?_mem {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMax? = some (k, s'))
+    (j : Nat) : j ∈ s' ↔ j ∈ s ∧ j ≠ k := by
+  rw [popMax?_erase h]
+  exact mem_erase
 
 /-- `popMax?` answers `none` exactly on the empty set. -/
 theorem popMax?_eq_none {s : NatSet} : s.popMax? = none ↔ s = ∅ := by

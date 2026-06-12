@@ -59,6 +59,7 @@ instance {α : Type u} : LeafOps (Node α) α where
     rw [Node.get?_join (fun x y => some (c x y)) a b i hi]
     cases Node.get? a i <;> cases Node.get? b i <;> rfl
   get?_insert l i j v hi hj := Node.get?_insert l i v j hi hj
+  get?_erase l i j hi hj := Node.get?_erase l i j hi hj
   get?_ext a b h := Node.ext h
   get?_restricts rel _ a b := Node.restricts_iff rel a b
   someSlot_lt n h := lowestSetIdx_lt n.positionsMask (beq_eq_false_iff_ne.mp h)
@@ -999,6 +1000,27 @@ theorem popMaxEntry?_erase {m : NatMap α} {e : Nat × α} {m' : NatMap α}
 /-- `popMaxEntry?` answers `none` exactly on the empty map. -/
 theorem popMaxEntry?_eq_none {m : NatMap α} : m.popMaxEntry? = none ↔ m = NatMap.empty :=
   NatCollection.popMaxEntry?_eq_none m
+
+/-- Lookup after `erase`: the erased key reads `none`, every other key is unchanged. -/
+theorem get?_erase (m : NatMap α) (k j : Nat) :
+    (m.erase k).get? j = if j = k then none else m.get? j :=
+  NatCollection.get?_erase m k j
+
+/-- Membership after `erase`: `j` survives exactly when it was present and is not the erased
+key. -/
+theorem mem_erase {m : NatMap α} {k j : Nat} : j ∈ m.erase k ↔ j ∈ m ∧ j ≠ k := by
+  show NatCollection.contains (NatCollection.erase m k) j = true ↔ _
+  rw [NatCollection.contains_erase, Bool.and_eq_true]
+  constructor
+  · intro h
+    obtain ⟨h1, h2⟩ := h
+    refine ⟨h1, ?_⟩
+    intro he
+    rw [he] at h2
+    simp at h2
+  · intro h
+    obtain ⟨h1, h2⟩ := h
+    exact ⟨h1, by simp [h2]⟩
 
 end NatMap
 

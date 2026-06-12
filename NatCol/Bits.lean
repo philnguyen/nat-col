@@ -334,6 +334,30 @@ theorem arrayIndex_setBit_of_gt (m i j : UInt32) (hi : i < 32) (hj : j < 32)
     arrayIndex (setBit m i) j = arrayIndex m j + 1 :=
   popCount_eq_succ_of_aux (by unfold popCountAux setBit lowerMask testBit at *; bv_decide)
 
+/-! ### Compact-index movement under `clearBit`
+
+The erase mirrors of the `setBit` family: these feed `Node.get?_erase`, pinning down how the
+compact index of each slot moves under the `eraseIdx` that `erase` performs. -/
+
+/-- `clearBit m i` clears exactly slot `i` of `m` (for in-range slots). -/
+theorem testBit_clearBit (m i j : UInt32) (hi : i < 32) (hj : j < 32) :
+    testBit (clearBit m i) j = (testBit m j && !(i == j)) := by
+  unfold testBit clearBit; bv_decide
+
+/-- Clearing bit `i` does not move the compact index of any slot `j ≤ i` (no bit *below* `j`
+changes). -/
+theorem arrayIndex_clearBit_of_le (m i j : UInt32) (hi : i < 32) (hj : j < 32) (hji : j ≤ i) :
+    arrayIndex (clearBit m i) j = arrayIndex m j := by
+  have key : (clearBit m i) &&& lowerMask j = m &&& lowerMask j := by
+    unfold clearBit lowerMask; bv_decide
+  unfold arrayIndex; rw [key]
+
+/-- Clearing a previously-set bit `i` lowers the compact index of every slot `j > i` by one. -/
+theorem arrayIndex_clearBit_of_gt (m i j : UInt32) (hi : i < 32) (hj : j < 32)
+    (hij : i < j) (hpres : testBit m i = true) :
+    arrayIndex m j = arrayIndex (clearBit m i) j + 1 :=
+  popCount_eq_succ_of_aux (by unfold popCountAux clearBit lowerMask testBit at *; bv_decide)
+
 /-- The compact index is strictly monotone on present slots. -/
 theorem arrayIndex_lt_of_lt (m a b : UInt32) (ha : a < 32) (hb : b < 32)
     (h1 : testBit m a = true) (h2 : a < b) : arrayIndex m a < arrayIndex m b := by
