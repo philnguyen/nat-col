@@ -449,6 +449,90 @@ end
 structural Patricia walk. -/
 @[inline] def subset (rel : V → V → Bool) (a b : PTree L) : Bool := subsetU rel a b
 
+-- Disjointness — the intersection's routing without the intersection: the walk answers `true` the
+-- moment two shapes cannot share a key (prefix mismatch, off mask), compares aligned leaves with
+-- one occupancy-mask `AND` (`LeafOps.disjoint`), and short-circuits the whole remaining scan at
+-- the first shared key. Never allocates, unlike `isEmpty (meet …)`, which builds the intersection
+-- only to discard it.
+set_option linter.unusedVariables false in
+mutual
+/-- Disjointness driver — `meetU`'s case analysis returning `Bool`: `nil` is disjoint from
+everything, aligned `tip`s compare leaf masks, a `tip` or off-level `bin` descends into the one
+routed child (absent ⇒ vacuously disjoint), equal-level `bin`s scan only the shared mask
+(`disjointKids`). -/
+private def disjointU : PTree L → PTree L → Bool
+  | .nil, _ => true
+  | _, .nil => true
+  | .tip p1 b1, .tip p2 b2 => p1 != p2 || LeafOps.disjoint b1 b2
+  | .tip p1 b1, .bin bp bl bm bk =>
+    if prefixAbove (someKey (.tip p1 b1)) bl == bp
+        && testBit bm (chunk (someKey (.tip p1 b1)) bl) then
+      if h : arrayIndex bm (chunk (someKey (.tip p1 b1)) bl) < bk.size then
+        disjointU (.tip p1 b1) (bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h)
+      else true
+    else true
+  | .bin bp bl bm bk, .tip p2 b2 =>
+    if prefixAbove (someKey (.tip p2 b2)) bl == bp
+        && testBit bm (chunk (someKey (.tip p2 b2)) bl) then
+      if h : arrayIndex bm (chunk (someKey (.tip p2 b2)) bl) < bk.size then
+        disjointU (bk[arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)]'h) (.tip p2 b2)
+      else true
+    else true
+  | .bin p1 l1 m1 k1, .bin p2 l2 m2 k2 =>
+    if l1 == l2 then
+      if prefixAbove (someKey (.bin p1 l1 m1 k1)) l1
+          == prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 then
+        disjointKids m1 k1 m2 k2 (m1 &&& m2)
+      else true
+    else if l2 < l1 then
+      if prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 == p1
+          && testBit m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) then
+        if h : arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) < k1.size then
+          disjointU (k1[arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)]'h) (.bin p2 l2 m2 k2)
+        else true
+      else true
+    else
+      if prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 == p2
+          && testBit m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) then
+        if h : arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) < k2.size then
+          disjointU (.bin p1 l1 m1 k1) (k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h)
+        else true
+      else true
+termination_by a b => (sizeOf a + sizeOf b, 0)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h); omega)
+
+/-- Confirm pairwise disjointness at every shared slot of two aligned bins, bit-scanning the
+shared mask `rem` (= `m1 &&& m2`) lowest-first; `&&`'s lazy right argument skips the remaining
+subtree walks the moment a shared key is found. An empty shared mask is vacuously disjoint. -/
+private def disjointKids (m1 : UInt32) (k1 : Array (PTree L)) (m2 : UInt32)
+    (k2 : Array (PTree L)) (rem : UInt32) : Bool :=
+  if hrem : rem == 0 then true
+  else
+    (if h1 : arrayIndex m1 (lowestSetIdx rem) < k1.size then
+      if h2 : arrayIndex m2 (lowestSetIdx rem) < k2.size then
+        disjointU (k1[arrayIndex m1 (lowestSetIdx rem)]'h1) (k2[arrayIndex m2 (lowestSetIdx rem)]'h2)
+      else true
+    else true)
+      && disjointKids m1 k1 m2 k2 (clearLowest rem)
+termination_by (sizeOf k1 + sizeOf k2 + 1, rem.toNat)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (have := Array.sizeOf_lt_of_mem (Array.getElem_mem h1)
+       have := Array.sizeOf_lt_of_mem (Array.getElem_mem h2); omega)
+    | (have : (clearLowest rem).toNat < rem.toNat :=
+         toNat_clearLowest_lt rem (by simp_all); omega)
+    | omega
+end
+
+/-- Whether `a` and `b` share no key: the structural disjointness walk (allocation-free,
+short-circuiting at the first shared key). -/
+@[inline] def isDisjoint (a b : PTree L) : Bool := disjointU a b
+
 -- Intersection — like union, three mutually-recursive pieces over a shared lexicographic measure,
 -- but intersection only ever shrinks: it touches just the shared mask `m1 &&& m2` and can leave a
 -- branch with fewer than two surviving children, so the equal-level `bin`/`bin` case re-compresses
@@ -834,6 +918,14 @@ private def subsetCorpus : List (List Nat) :=
 #guard subsetSet (ofSet (List.range 500)) (ofSet seqK)
 #guard !(subsetSet (ofSet seqK) (ofSet (List.range 500)))
 #guard !(subsetSet (ofSet sparseK) (ofSet (List.range 50)))
+
+-- disjointness agrees with the reference (no shared key), across the whole corpus product
+#guard subsetCorpus.all fun a => subsetCorpus.all fun b =>
+  isDisjoint (ofSet a) (ofSet b) == !(a.any (b.contains ·))
+#guard isDisjoint (ofSet evenK) (ofSet oddK)            -- interleaved: every leaf pair compared
+#guard !(isDisjoint (ofSet [1, 5000]) (ofSet [5000]))   -- deep shared key
+#guard isDisjoint (ofSet []) (ofSet seqK)
+#guard isDisjoint (ofSet seqK) (ofSet [])
 
 -- intersection sizes agree with the reference (distinct keys of `a` that also lie in `b`)
 #guard subsetCorpus.all fun a => subsetCorpus.all fun b =>

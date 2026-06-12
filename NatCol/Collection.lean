@@ -78,6 +78,12 @@ coinciding key. -/
 @[specialize] def restricts (rel : V → V → Bool) (a b : NatCollection L) : Bool :=
   PTree.subset rel a.tree b.tree
 
+/-- Whether `a` and `b` share no key — the intersection's structural walk without the
+intersection: prefix-disjoint subtrees answer in O(1), aligned leaves compare occupancy masks
+with one `AND`, and the first shared key short-circuits the rest. Never allocates. -/
+@[specialize] def isDisjoint (a b : NatCollection L) : Bool :=
+  PTree.isDisjoint a.tree b.tree
+
 /-- All `(key, value)` pairs, ascending by key. -/
 @[specialize] def toList (c : NatCollection L) : List (Nat × V) := (PTree.toArray c.tree).toList
 
@@ -122,6 +128,12 @@ in place, emptied leaves are pruned, and thinned branches re-compressed (`PTree.
 result is canonical and equals the collection built directly from the survivors. -/
 @[specialize] def filter (p : Nat → V → Bool) (c : NatCollection L) : NatCollection L :=
   ⟨PTree.filter p c.tree, PTree.WF_filter p c.tree c.wf⟩
+
+/-- Split by `p`: the first component keeps the `(key, value)` pairs satisfying `p`, the second
+the rest. Two structural `filter` passes, so both parts are canonical. -/
+@[specialize] def partition (p : Nat → V → Bool) (c : NatCollection L) :
+    NatCollection L × NatCollection L :=
+  (c.filter p, c.filter (fun k v => !(p k v)))
 
 /-- Erase key `k` — descends just the routed path and re-compresses the touched branch
 (`PTree.WF_erase`), so the result is canonical; erasing an absent key is a no-op. -/

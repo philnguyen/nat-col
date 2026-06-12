@@ -31,6 +31,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   join c a b := Node.join (fun x y => some (c x y)) a b
   meet c a b := Node.meet (fun x y => some (c x y)) a b
   restricts := Node.restricts
+  disjoint a b := (a.positionsMask &&& b.positionsMask) == 0
   toArray n := n.fold (fun acc i a => acc.push (i, a)) #[]
   filter p n := Node.filterMap (fun i a => if p i a then some a else none) n
   someSlot n := lowestSetIdx n.positionsMask
@@ -127,6 +128,9 @@ def join : (α → α → α) → NatMap α → NatMap α → NatMap α := NatCo
 def meet : (α → α → α) → NatMap α → NatMap α → NatMap α := NatCollection.meet
 /-- `m₁` restricts `m₂`: `m₁`'s domain ⊆ `m₂`'s, and `rel` holds on values at coinciding keys. -/
 def restricts : (α → α → Bool) → NatMap α → NatMap α → Bool := NatCollection.restricts
+/-- Whether `m₁` and `m₂` share no key (domain disjointness — values are irrelevant).
+Short-circuits at the first shared key and never allocates. -/
+def isDisjoint : NatMap α → NatMap α → Bool := NatCollection.isDisjoint
 
 /-- All `(key, value)` pairs, ascending by key. -/
 def toList : NatMap α → List (Nat × α) := NatCollection.toList
@@ -178,6 +182,11 @@ def any : (Nat → α → Bool) → NatMap α → Bool := NatCollection.any
 /-- Keep only the entries `(key, value)` satisfying `p`. The result is canonical, so it equals the
 map built directly from the surviving entries (and its height shrinks when deep keys are removed). -/
 def filter : (Nat → α → Bool) → NatMap α → NatMap α := NatCollection.filter
+
+/-- Split `m` by `p`: the first component keeps the entries satisfying `p`, the second the rest.
+Two structural `filter` passes, so both parts are canonical. -/
+def partition (p : Nat → α → Bool) (m : NatMap α) : NatMap α × NatMap α :=
+  NatCollection.partition p m
 
 /-- Monadic `all` over entries (predicate on key and value), threading effects in ascending key
 order and short-circuiting at the first failure. The monadic companion of `all`. -/
@@ -261,6 +270,24 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
 #guard (m1.erase 2).get? 2 = none
 #guard (m1.erase 2).size = 2
 #guard (NatMap.empty.insert 42 1 |>.erase 42) = (NatMap.empty : NatMap Nat)
+
+-- isDisjoint: domain disjointness (values are irrelevant)
+#guard (NatMap.ofList [(1, 10)]).isDisjoint (NatMap.ofList [(2, 20)])
+#guard !((NatMap.ofList [(1, 10)]).isDisjoint (NatMap.ofList [(1, 99)]))  -- same key, ≠ values
+#guard (NatMap.empty : NatMap Nat).isDisjoint (NatMap.ofList [(1, 10)])
+#guard !((NatMap.ofList [(1, 1), (5000, 2)]).isDisjoint (NatMap.ofList [(5000, 9)]))
+
+-- partition: split by predicate; parts are canonical, disjoint, and join back to the original
+#guard
+  let parts := (NatMap.ofList [(1, 1), (2, 2), (3, 3), (5000, 4)]).partition (fun k _ => k % 2 == 0)
+  parts.1 == NatMap.ofList [(2, 2), (5000, 4)] && parts.2 == NatMap.ofList [(1, 1), (3, 3)]
+#guard
+  let m := NatMap.ofList [(1, 1), (2, 2), (3, 3), (5000, 4)]
+  let parts := m.partition (fun _ v => v % 2 == 0)
+  parts.1.join (fun x _ => x) parts.2 == m && parts.1.isDisjoint parts.2
+#guard
+  let parts := (NatMap.empty : NatMap Nat).partition (fun _ _ => true)
+  parts.1.isEmpty && parts.2.isEmpty
 
 -- ordered queries: min/max, successor/predecessor (values ride along), pop
 #guard (NatMap.ofList [(2, 20), (9, 90)]).minEntry? = some (2, 20)

@@ -98,6 +98,9 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   join      : (V → V → V) → L → L → L
   meet      : (V → V → V) → L → L → L
   restricts : (V → V → Bool) → L → L → Bool
+  /-- Whether no slot is present on both leaves (one mask `AND`, no allocation). The leaf base
+  case of `PTree.isDisjoint`. -/
+  disjoint  : L → L → Bool
   /-- Present `(slot, value)` pairs in ascending slot order. -/
   toArray   : L → Array (UInt32 × V)
   /-- Keep only the slots whose `(slot, value)` satisfies `p`. The leaf base case of
@@ -199,6 +202,7 @@ instance : LeafOps UInt32 Unit where
   join _ a b := a ||| b
   meet _ a b := a &&& b
   restricts _ a b := (a &&& b) == a
+  disjoint a b := (a &&& b) == 0
   toArray u := Nat.fold 32 (fun i _ acc =>
     let iu := UInt32.ofNat i
     if testBit u iu then acc.push (iu, ()) else acc) #[]

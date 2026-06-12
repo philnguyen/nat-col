@@ -69,6 +69,10 @@ are removed). -/
 def diff (s t : NatSet) : NatSet := NatCollection.filter (fun k _ => !(t.contains k)) s
 /-- Subset test. -/
 def subset (s t : NatSet) : Bool := NatCollection.restricts (fun _ _ => true) s t
+/-- Whether `s` and `t` share no element — the intersection's structural walk without building
+the intersection: prefix-disjoint subtrees answer in O(1), aligned leaves compare with one `AND`,
+and the first shared element short-circuits the rest. -/
+def isDisjoint (s t : NatSet) : Bool := NatCollection.isDisjoint s t
 
 instance : Union NatSet := ⟨union⟩
 instance : Inter NatSet := ⟨inter⟩
@@ -125,7 +129,7 @@ def filter (p : Nat → Bool) (s : NatSet) : NatSet := NatCollection.filter (fun
 /-- Split `s` by `p`: the first component keeps the elements satisfying `p`, the second the rest.
 Two structural `filter` passes, so both parts are canonical. -/
 def partition (p : Nat → Bool) (s : NatSet) : NatSet × NatSet :=
-  (s.filter p, s.filter (fun k => !(p k)))
+  NatCollection.partition (fun k _ => p k) s
 
 /-- Monadic `all`: whether every element satisfies the monadic predicate `p`, threading effects in
 ascending order and short-circuiting at the first failure. The monadic companion of `all`. -/
@@ -173,6 +177,17 @@ section Tests
 #guard (NatSet.empty.insert 42 |>.erase 42).isEmpty
 #guard (NatSet.empty.insert 42 |>.erase 99) = NatSet.empty.insert 42
 #guard (NatSet.empty.insert 5 |>.insert 1000 |>.erase 1000) = NatSet.empty.insert 5
+
+-- isDisjoint: no shared element; agrees with the (allocating) `∩`-then-isEmpty route
+#guard (NatSet.ofList [1, 2]).isDisjoint (NatSet.ofList [3, 4])
+#guard (NatSet.ofList [1, 3, 5]).isDisjoint (NatSet.ofList [2, 4, 6])    -- interleaved, shared leaf
+#guard !((NatSet.ofList [1, 5000]).isDisjoint (NatSet.ofList [5000]))    -- deep shared element
+#guard (∅ : NatSet).isDisjoint (∅ : NatSet)
+#guard (∅ : NatSet).isDisjoint (NatSet.ofList [1])
+#guard
+  let a := NatSet.ofList [1, 32, 1000, 5000]
+  let b := NatSet.ofList [2, 33, 1001]
+  a.isDisjoint b == (a ∩ b).isEmpty
 
 -- ordered queries: min/max, successor/predecessor (strict and inclusive), pop
 #guard (∅ : NatSet).min? = none
