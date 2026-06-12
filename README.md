@@ -139,7 +139,16 @@ Proven generically over `NatCollection` and lifted to `NatSet`/`NatMap` (the `Na
   **lower/upper bound** on every present key.
 - `succ?`/`pred?` (`entryGT?`/`entryLT?` on maps) return the **exact successor/predecessor**:
   a real member strictly beyond the query key, the **nearest** such, and a `none` answer is
-  **complete** (nothing lies beyond the query key).
+  **complete** (nothing lies beyond the query key); `succEq?`/`predEq?` (`entryGE?`/`entryLE?`)
+  get the same four-theorem spec with the inclusive bound.
+- `popMin?`/`popMax?` (`popMinEntry?`/`popMaxEntry?` on maps) pop exactly the **min/max**, the
+  rest is exactly the **erasure** of the popped key, and `none` answers exactly on the
+  **empty** collection.
+- the **`erase` equation**: `(s.erase k).get? j = if j = k then none else s.get? j`
+  (membership form `j ∈ s.erase k ↔ j ∈ s ∧ j ≠ k`).
+- the **`split`/`range` equations**: a key reads through `split k`'s parts exactly when it is
+  strictly below / at-or-above the split key, and through `range lo hi` exactly when it lies in
+  the inclusive window (`mem_range`, `get?_range`).
 - `NatSet`/`NatMap` are `LawfulBEq`; `NatMap` is a `LawfulFunctor`.
 
 Each law is backed by `#guard` example-tests on concrete (including multi-level, cross-prefix)
