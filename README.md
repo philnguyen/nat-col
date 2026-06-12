@@ -149,6 +149,9 @@ Proven generically over `NatCollection` and lifted to `NatSet`/`NatMap` (the `Na
 - the **`split`/`range` equations**: a key reads through `split k`'s parts exactly when it is
   strictly below / at-or-above the split key, and through `range lo hi` exactly when it lies in
   the inclusive window (`mem_range`, `get?_range`).
+- the **`isDisjoint` characterization**: `true` exactly when no key is present on both sides
+  (`isDisjoint_iff`), with **symmetry** (`isDisjoint_symm`) and the membership projection
+  `not_mem_of_isDisjoint` as corollaries.
 - `NatSet`/`NatMap` are `LawfulBEq`; `NatMap` is a `LawfulFunctor`.
 
 Each law is backed by `#guard` example-tests on concrete (including multi-level, cross-prefix)

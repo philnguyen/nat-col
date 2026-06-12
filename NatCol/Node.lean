@@ -207,6 +207,10 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   What lets the ordered queries' bit-scans (`lowestSetIdx`/`highestSetIdx` over `slotsMask`)
   select real members and skip none — `PTree.minEntry?`'s denotational laws ride on it. -/
   testBit_slotsMask : ∀ (l : L) (i : UInt32), i < 32 → testBit (slotsMask l) i = contains l i
+  /-- `disjoint` is the occupancy-bitmap `AND`: two leaves are disjoint exactly when their
+  `slotsMask`s share no bit. With `testBit_slotsMask`, the single law `PTree.isDisjoint`'s
+  no-shared-key characterization bottoms out in. -/
+  disjoint_eq_slotsMask : ∀ (a b : L), disjoint a b = (slotsMask a &&& slotsMask b == 0)
 
 /-- Leaf operations for sets: a `UInt32` is a 32-element bitset; the value type is `Unit`. This is
 the set leaf instance the path-compressed `PTree` (and `NatSet`) instantiates at; it lives here in
@@ -331,6 +335,7 @@ instance : LeafOps UInt32 Unit where
   someSlot_lt u h := lowestSetIdx_lt u (beq_eq_false_iff_ne.mp h)
   contains_someSlot u h := testBit_lowestSetIdx u (beq_eq_false_iff_ne.mp h)
   testBit_slotsMask _ _ _ := rfl
+  disjoint_eq_slotsMask _ _ := rfl
 
 namespace Node
 

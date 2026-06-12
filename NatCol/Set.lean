@@ -900,6 +900,34 @@ theorem mem_erase {s : NatSet} {k j : Nat} : j ∈ s.erase k ↔ j ∈ s ∧ j �
     obtain ⟨h1, h2⟩ := h
     exact ⟨h1, by simp [h2]⟩
 
+/-- Disjointness characterization: `s.isDisjoint t` holds exactly when the two sets share no
+element. -/
+theorem isDisjoint_iff {s t : NatSet} : s.isDisjoint t = true ↔ ∀ k, k ∈ s → k ∉ t := by
+  show NatCollection.isDisjoint s t = true ↔ _
+  rw [NatCollection.isDisjoint_iff]
+  constructor
+  · intro h k hks hkt
+    have hpair := h k
+    replace hks : NatCollection.contains s k = true := hks
+    replace hkt : NatCollection.contains t k = true := hkt
+    rw [hks, hkt] at hpair
+    exact absurd hpair (by decide)
+  · intro h k
+    cases hks : NatCollection.contains s k with
+    | false => rw [Bool.false_and]
+    | true => cases hkt : NatCollection.contains t k with
+      | false => rw [Bool.and_false]
+      | true => exact absurd (show k ∈ t from hkt) (h k hks)
+
+/-- Disjointness is symmetric: if `s` is disjoint from `t`, then `t` is disjoint from `s`. -/
+theorem isDisjoint_symm {s t : NatSet} (h : s.isDisjoint t = true) : t.isDisjoint s = true :=
+  NatCollection.isDisjoint_symm h
+
+/-- No element of `s` lies in `t` when the two sets are disjoint. -/
+theorem not_mem_of_isDisjoint {s t : NatSet} {k : Nat} (h : s.isDisjoint t = true)
+    (hk : k ∈ s) : k ∉ t :=
+  isDisjoint_iff.mp h k hk
+
 /-- `popMin?` pops the minimum: the popped element is `min?`'s answer (so `min?_mem` and
 `min?_le` apply to it). -/
 theorem popMin?_min {s : NatSet} {k : Nat} {s' : NatSet} (h : s.popMin? = some (k, s')) :

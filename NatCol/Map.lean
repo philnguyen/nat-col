@@ -67,6 +67,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   someSlot_lt n h := lowestSetIdx_lt n.positionsMask (beq_eq_false_iff_ne.mp h)
   contains_someSlot n h := testBit_lowestSetIdx n.positionsMask (beq_eq_false_iff_ne.mp h)
   testBit_slotsMask _ _ _ := rfl
+  disjoint_eq_slotsMask _ _ := rfl
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)
@@ -1114,6 +1115,35 @@ theorem mem_erase {m : NatMap α} {k j : Nat} : j ∈ m.erase k ↔ j ∈ m ∧ 
   · intro h
     obtain ⟨h1, h2⟩ := h
     exact ⟨h1, by simp [h2]⟩
+
+/-- Disjointness characterization: `m.isDisjoint m'` holds exactly when the two maps share no key
+(values are irrelevant). -/
+theorem isDisjoint_iff {m m' : NatMap α} : m.isDisjoint m' = true ↔ ∀ k, k ∈ m → k ∉ m' := by
+  show NatCollection.isDisjoint m m' = true ↔ _
+  rw [NatCollection.isDisjoint_iff]
+  constructor
+  · intro h k hks hkt
+    have hpair := h k
+    replace hks : NatCollection.contains m k = true := hks
+    replace hkt : NatCollection.contains m' k = true := hkt
+    rw [hks, hkt] at hpair
+    exact absurd hpair (by decide)
+  · intro h k
+    cases hks : NatCollection.contains m k with
+    | false => rw [Bool.false_and]
+    | true => cases hkt : NatCollection.contains m' k with
+      | false => rw [Bool.and_false]
+      | true => exact absurd (show k ∈ m' from hkt) (h k hks)
+
+/-- Disjointness is symmetric: if `m` is disjoint from `m'`, then `m'` is disjoint from `m`. -/
+theorem isDisjoint_symm {m m' : NatMap α} (h : m.isDisjoint m' = true) :
+    m'.isDisjoint m = true :=
+  NatCollection.isDisjoint_symm h
+
+/-- No key of `m` lies in `m'` when the two maps are disjoint. -/
+theorem not_mem_of_isDisjoint {m m' : NatMap α} {k : Nat} (h : m.isDisjoint m' = true)
+    (hk : k ∈ m) : k ∉ m' :=
+  isDisjoint_iff.mp h k hk
 
 end NatMap
 

@@ -7736,6 +7736,371 @@ theorem subset_iff_eq (rel : V → V → Bool) (hrefl : ∀ x, rel x x = true) (
     subset rel a b = true ↔ ∀ k, optRel rel (get? k a) (get? k b) = true := by
   rw [subset]; exact subset_iff rel hrefl a b hwa hwb
 
+/-- Two `Bool`s conjoin to `false` exactly when they cannot both be `true` — the shape every
+no-shared-key obligation below reduces to. -/
+private theorem and_eq_false_of_not_both {x y : Bool} (h : x = true → y = true → False) :
+    (x && y) = false := by
+  cases x with
+  | false => rfl
+  | true => cases y with
+    | false => rfl
+    | true => exact (h rfl rfl).elim
+
+/-- Leaf-level disjointness denotation: two leaves are disjoint exactly when no in-range slot is
+present on both (`disjoint_eq_slotsMask` reads the data field as a bitmap `AND`,
+`testBit_slotsMask` turns the bits back into presence). -/
+private theorem leaf_disjoint_iff (b1 b2 : L) :
+    LeafOps.disjoint b1 b2 = true
+      ↔ ∀ i : UInt32, i < 32 → (LeafOps.contains b1 i && LeafOps.contains b2 i) = false := by
+  rw [LeafOps.disjoint_eq_slotsMask, beq_iff_eq]
+  constructor
+  · intro h0 i hi
+    rw [← LeafOps.testBit_slotsMask b1 i hi, ← LeafOps.testBit_slotsMask b2 i hi,
+        ← testBit_and, h0, testBit_zero]
+  · intro h
+    by_cases hz : LeafOps.slotsMask b1 &&& LeafOps.slotsMask b2 = 0
+    · exact hz
+    · have hi : lowestSetIdx (LeafOps.slotsMask b1 &&& LeafOps.slotsMask b2) < 32 :=
+        lowestSetIdx_lt _ hz
+      have htb := testBit_lowestSetIdx _ hz
+      rw [testBit_and, LeafOps.testBit_slotsMask b1 _ hi, LeafOps.testBit_slotsMask b2 _ hi,
+          h _ hi] at htb
+      exact absurd htb (by decide)
+
+/-- Descend bridge (second operand): when the aligned operand `a` routes to a present slot `c0` of
+a `bin`, sharing no key with that slot's child is the same as sharing no key with the whole `bin` —
+keys routing elsewhere are absent from `a` (`contains_false_of_aligned`). -/
+private theorem disjoint_descend_right (a : PTree L) (bp bl : Nat) (bm : UInt32)
+    (bk : Array (PTree L)) (c0 : UInt32) (pr : Nat) (halign : AlignedAt bl c0 pr a)
+    (htb : testBit bm c0 = true) :
+    (∀ k, (contains k a && contains k (childAt bm bk c0)) = false)
+      ↔ (∀ k, (contains k a && contains k (.bin bp bl bm bk)) = false) := by
+  constructor
+  · intro h k
+    by_cases hcj : chunk k bl = c0
+    · rw [contains_bin, hcj, htb, Bool.true_and]; exact h k
+    · rw [contains_false_of_aligned bl c0 pr a halign hcj, Bool.false_and]
+  · intro h k
+    by_cases hcj : chunk k bl = c0
+    · have hk := h k; rw [contains_bin, hcj, htb, Bool.true_and] at hk; exact hk
+    · rw [contains_false_of_aligned bl c0 pr a halign hcj, Bool.false_and]
+
+/-- Descend bridge (first operand): the mirror of `disjoint_descend_right` for descending the first
+operand's routed child against an aligned second operand. -/
+private theorem disjoint_descend_left (b : PTree L) (ap al : Nat) (am : UInt32)
+    (ak : Array (PTree L)) (c0 : UInt32) (pr : Nat) (halign : AlignedAt al c0 pr b)
+    (htb : testBit am c0 = true) :
+    (∀ k, (contains k (childAt am ak c0) && contains k b) = false)
+      ↔ (∀ k, (contains k (.bin ap al am ak) && contains k b) = false) := by
+  constructor
+  · intro h k
+    by_cases hcj : chunk k al = c0
+    · rw [contains_bin, hcj, htb, Bool.true_and]; exact h k
+    · rw [contains_false_of_aligned al c0 pr b halign hcj, Bool.and_false]
+  · intro h k
+    by_cases hcj : chunk k al = c0
+    · have hk := h k; rw [contains_bin, hcj, htb, Bool.true_and] at hk; exact hk
+    · rw [contains_false_of_aligned al c0 pr b halign hcj, Bool.and_false]
+
+set_option maxHeartbeats 400000 in
+/-- The `disjointU`/`disjointKids` walk decides key-disjointness: `true` exactly when no key is
+contained in both trees. By the combined `disjointU.induct`; `motive2` carries the per-shared-slot
+spec the equal-level `bin`/`bin` case consumes. Failed-condition cases (prefix mismatch, absent
+slot) are semantically empty overlaps via alignment; the `tip`/`tip` base case bottoms out in
+`leaf_disjoint_iff`, probing slots back to keys with `get?_tip_probe`. -/
+private theorem disjointU_iff (a b : PTree L) (hwa : WF a) (hwb : WF b) :
+    disjointU a b = true ↔ ∀ k, (contains k a && contains k b) = false := by
+  revert hwa hwb
+  induction a, b using (@disjointU.induct L V inferInstance)
+    (motive2 := fun m1 k1 m2 k2 rem =>
+      KidsWF m1 k1 → KidsWF m2 k2 →
+        (∀ c, c < 32 → testBit rem c = true → testBit m1 c = true) →
+        (∀ c, c < 32 → testBit rem c = true → testBit m2 c = true) →
+        (disjointKids m1 k1 m2 k2 rem = true ↔
+          ∀ c, c < 32 → testBit rem c = true →
+            ∀ k, (contains k (childAt m1 k1 c) && contains k (childAt m2 k2 c)) = false)) with
+  | case1 t =>
+    intro _ _
+    exact iff_of_true (by rw [disjointU]) (fun k => by rw [contains_nil, Bool.false_and])
+  | case2 s hs =>
+    intro _ _
+    refine iff_of_true ?_ (fun k => by rw [contains_nil, Bool.and_false])
+    cases s with
+    | nil => rw [disjointU]
+    | tip p b => rw [disjointU]; exact hs
+    | bin p l m kk => rw [disjointU]; exact hs
+  | case3 p1 b1 p2 b2 =>
+    intro _ _
+    rw [disjointU, Bool.or_eq_true]
+    constructor
+    · rintro (hne | hdis) k
+      · apply and_eq_false_of_not_both
+        intro h1 h2
+        rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at h1 h2
+        rw [h1.1.symm.trans h2.1] at hne
+        simp at hne
+      · apply and_eq_false_of_not_both
+        intro h1 h2
+        rw [contains_tip, Bool.and_eq_true] at h1 h2
+        have hslot := (leaf_disjoint_iff b1 b2).mp hdis (chunk k 0) (chunk_lt _ _)
+        rw [h1.2, h2.2] at hslot
+        exact absurd hslot (by decide)
+    · intro hsub
+      by_cases hp : p1 = p2
+      · subst hp
+        right
+        apply (leaf_disjoint_iff b1 b2).mpr
+        intro i hi
+        have hk := hsub (i.toNat + 32 * p1)
+        have hc1 : contains (i.toNat + 32 * p1) (.tip p1 b1) = LeafOps.contains b1 i := by
+          rw [contains_eq_isSome, get?_tip_probe p1 b1 i hi, ← LeafOps.contains_eq_isSome]
+        have hc2 : contains (i.toNat + 32 * p1) (.tip p1 b2) = LeafOps.contains b2 i := by
+          rw [contains_eq_isSome, get?_tip_probe p1 b2 i hi, ← LeafOps.contains_eq_isSome]
+        rw [hc1, hc2] at hk
+        exact hk
+      · left
+        rw [show (p1 != p2) = !(p1 == p2) from rfl, beq_eq_false_iff_ne.mpr hp]; rfl
+  | case4 p1 b1 bp bl bm bk hcond h ih =>
+    intro hwa hwb
+    have hb1 : LeafOps.isEmpty b1 = false := by rw [WF] at hwa; exact hwa
+    have hwb' := hwb; rw [WF] at hwb'
+    obtain ⟨hbl0, hsize, _, hkidswf, _, _⟩ := hwb'
+    have halign := aligned_tip p1 b1 hb1 bl hbl0
+    have hwfc := hkidswf _ (Array.getElem_mem h)
+    have hchild : bk[arrayIndex bm (chunk (someKey (.tip p1 b1)) bl)]'h
+                    = childAt bm bk (chunk (someKey (.tip p1 b1)) bl) := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h, Option.getD_some]
+    rw [disjointU, if_pos hcond, dif_pos h, ih hwa hwfc, hchild]
+    rw [Bool.and_eq_true] at hcond
+    exact disjoint_descend_right (.tip p1 b1) bp bl bm bk (chunk (someKey (.tip p1 b1)) bl)
+      (prefixAbove (someKey (.tip p1 b1)) bl) halign hcond.2
+  | case5 p1 b1 bp bl bm bk hcond hnidx =>
+    intro _ hwb
+    rw [Bool.and_eq_true] at hcond
+    rw [WF] at hwb
+    obtain ⟨_, hsize, _, _, _, _⟩ := hwb
+    exact absurd (by rw [hsize]; exact arrayIndex_lt bm _ hcond.2) hnidx
+  | case6 p1 b1 bp bl bm bk hncond =>
+    intro hwa hwb
+    have hb1 : LeafOps.isEmpty b1 = false := by rw [WF] at hwa; exact hwa
+    have hbl0 : 0 < bl := by rw [WF] at hwb; exact hwb.1
+    have halign := aligned_tip p1 b1 hb1 bl hbl0
+    refine iff_of_true (by rw [disjointU, if_neg hncond]) (fun k => ?_)
+    apply and_eq_false_of_not_both
+    intro h1 h2
+    have hck : chunk k bl = chunk (someKey (.tip p1 b1)) bl := (halign k h1).1
+    have hpk : prefixAbove k bl = prefixAbove (someKey (.tip p1 b1)) bl := (halign k h1).2
+    have hpb : prefixAbove k bl = bp := prefixAbove_eq_of_mem bp bl bm bk hwb k h2
+    rw [contains_bin, Bool.and_eq_true] at h2
+    apply hncond
+    rw [Bool.and_eq_true, beq_iff_eq]
+    exact ⟨hpk.symm.trans hpb, hck ▸ h2.1⟩
+  | case7 bp bl bm bk p2 b2 hcond h ih =>
+    intro hwa hwb
+    have hb2 : LeafOps.isEmpty b2 = false := by rw [WF] at hwb; exact hwb
+    have hwa' := hwa; rw [WF] at hwa'
+    obtain ⟨hbl0, hsize, _, hkidswf, _, _⟩ := hwa'
+    have halign := aligned_tip p2 b2 hb2 bl hbl0
+    have hwfc := hkidswf _ (Array.getElem_mem h)
+    have hchild : bk[arrayIndex bm (chunk (someKey (.tip p2 b2)) bl)]'h
+                    = childAt bm bk (chunk (someKey (.tip p2 b2)) bl) := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h, Option.getD_some]
+    rw [disjointU, if_pos hcond, dif_pos h, ih hwfc hwb, hchild]
+    rw [Bool.and_eq_true] at hcond
+    exact disjoint_descend_left (.tip p2 b2) bp bl bm bk (chunk (someKey (.tip p2 b2)) bl)
+      (prefixAbove (someKey (.tip p2 b2)) bl) halign hcond.2
+  | case8 bp bl bm bk p2 b2 hcond hnidx =>
+    intro hwa _
+    rw [Bool.and_eq_true] at hcond
+    rw [WF] at hwa
+    obtain ⟨_, hsize, _, _, _, _⟩ := hwa
+    exact absurd (by rw [hsize]; exact arrayIndex_lt bm _ hcond.2) hnidx
+  | case9 bp bl bm bk p2 b2 hncond =>
+    intro hwa hwb
+    have hb2 : LeafOps.isEmpty b2 = false := by rw [WF] at hwb; exact hwb
+    have hbl0 : 0 < bl := by rw [WF] at hwa; exact hwa.1
+    have halign := aligned_tip p2 b2 hb2 bl hbl0
+    refine iff_of_true (by rw [disjointU, if_neg hncond]) (fun k => ?_)
+    apply and_eq_false_of_not_both
+    intro h1 h2
+    have hck : chunk k bl = chunk (someKey (.tip p2 b2)) bl := (halign k h2).1
+    have hpk : prefixAbove k bl = prefixAbove (someKey (.tip p2 b2)) bl := (halign k h2).2
+    have hpb : prefixAbove k bl = bp := prefixAbove_eq_of_mem bp bl bm bk hwa k h1
+    rw [contains_bin, Bool.and_eq_true] at h1
+    apply hncond
+    rw [Bool.and_eq_true, beq_iff_eq]
+    exact ⟨hpk.symm.trans hpb, hck ▸ h1.1⟩
+  | case10 p1 l1 m1 k1 p2 l2 m2 k2 heq hpre ih2 =>
+    intro hwa hwb
+    have hl12 : l1 = l2 := eq_of_beq heq
+    subst hl12
+    have hwa' := hwa; rw [WF] at hwa'
+    obtain ⟨_, hsize1, hpc1, hkidswf1, hnonnil1, _⟩ := hwa'
+    have hwb' := hwb; rw [WF] at hwb'
+    obtain ⟨_, hsize2, hpc2, hkidswf2, hnonnil2, _⟩ := hwb'
+    have hkw1 : KidsWF m1 k1 := ⟨hsize1, hkidswf1, hnonnil1⟩
+    have hkw2 : KidsWF m2 k2 := ⟨hsize2, hkidswf2, hnonnil2⟩
+    have hands1 : ∀ c, c < 32 → testBit (m1 &&& m2) c = true → testBit m1 c = true := by
+      intro c _ htb; rw [testBit_and, Bool.and_eq_true] at htb; exact htb.1
+    have hands2 : ∀ c, c < 32 → testBit (m1 &&& m2) c = true → testBit m2 c = true := by
+      intro c _ htb; rw [testBit_and, Bool.and_eq_true] at htb; exact htb.2
+    rw [disjointU, if_pos heq, if_pos hpre, ih2 hkw1 hkw2 hands1 hands2]
+    constructor
+    · intro hkids k
+      apply and_eq_false_of_not_both
+      intro h1 h2
+      rw [contains_bin, Bool.and_eq_true] at h1 h2
+      have htb12 : testBit (m1 &&& m2) (chunk k l1) = true := by
+        rw [testBit_and, h1.1, h2.1]; rfl
+      have hpair := hkids (chunk k l1) (chunk_lt _ _) htb12 k
+      rw [h1.2, h2.2] at hpair
+      exact absurd hpair (by decide)
+    · intro hsub c hc htbc k
+      apply and_eq_false_of_not_both
+      intro h1 h2
+      have hb1 : contains k (.bin p1 l1 m1 k1) = true :=
+        mem_child_imp_mem_bin p1 l1 m1 k1 hwa c hc (hands1 c hc htbc) k h1
+      have hb2 : contains k (.bin p2 l1 m2 k2) = true :=
+        mem_child_imp_mem_bin p2 l1 m2 k2 hwb c hc (hands2 c hc htbc) k h2
+      have hpair := hsub k
+      rw [hb1, hb2] at hpair
+      exact absurd hpair (by decide)
+  | case11 p1 l1 m1 k1 p2 l2 m2 k2 heq hnpre =>
+    intro hwa hwb
+    have hl12 : l1 = l2 := eq_of_beq heq
+    subst hl12
+    refine iff_of_true (by rw [disjointU, if_pos heq, if_neg hnpre]) (fun k => ?_)
+    apply and_eq_false_of_not_both
+    intro h1 h2
+    have hwa' := hwa; rw [WF] at hwa'; obtain ⟨_, _, hpc1, _, _, _⟩ := hwa'
+    have hwb' := hwb; rw [WF] at hwb'; obtain ⟨_, _, hpc2, _, _, _⟩ := hwb'
+    have hm1 : m1 ≠ 0 := by intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc1; omega
+    have hm2 : m2 ≠ 0 := by intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc2; omega
+    apply hnpre
+    rw [beq_iff_eq, someKey_bin_prefixAbove p1 l1 m1 k1 hm1,
+        someKey_bin_prefixAbove p2 l1 m2 k2 hm2]
+    exact (prefixAbove_eq_of_mem p1 l1 m1 k1 hwa k h1).symm.trans
+      (prefixAbove_eq_of_mem p2 l1 m2 k2 hwb k h2)
+  | case12 p1 l1 m1 k1 p2 l2 m2 k2 hne hlt hcond h ih =>
+    intro hwa hwb
+    have hwa' := hwa; rw [WF] at hwa'
+    obtain ⟨_, hsize1, _, hkidswf1, _, _⟩ := hwa'
+    have halign := aligned_bin p2 l2 m2 k2 hwb l1 hlt
+    have hwfc := hkidswf1 _ (Array.getElem_mem h)
+    have hchild : k1[arrayIndex m1 (chunk (someKey (.bin p2 l2 m2 k2)) l1)]'h
+                    = childAt m1 k1 (chunk (someKey (.bin p2 l2 m2 k2)) l1) := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h, Option.getD_some]
+    rw [disjointU, if_neg hne, if_pos hlt, if_pos hcond, dif_pos h, ih hwfc hwb, hchild]
+    rw [Bool.and_eq_true] at hcond
+    exact disjoint_descend_left (.bin p2 l2 m2 k2) p1 l1 m1 k1
+      (chunk (someKey (.bin p2 l2 m2 k2)) l1) (prefixAbove (someKey (.bin p2 l2 m2 k2)) l1)
+      halign hcond.2
+  | case13 p1 l1 m1 k1 p2 l2 m2 k2 hne hlt hcond hnidx =>
+    intro hwa _
+    rw [Bool.and_eq_true] at hcond
+    rw [WF] at hwa
+    obtain ⟨_, hsize1, _, _, _, _⟩ := hwa
+    exact absurd (by rw [hsize1]; exact arrayIndex_lt m1 _ hcond.2) hnidx
+  | case14 p1 l1 m1 k1 p2 l2 m2 k2 hne hlt hncond =>
+    intro hwa hwb
+    have halign := aligned_bin p2 l2 m2 k2 hwb l1 hlt
+    refine iff_of_true (by rw [disjointU, if_neg hne, if_pos hlt, if_neg hncond]) (fun k => ?_)
+    apply and_eq_false_of_not_both
+    intro h1 h2
+    have hck : chunk k l1 = chunk (someKey (.bin p2 l2 m2 k2)) l1 := (halign k h2).1
+    have hpk : prefixAbove k l1 = prefixAbove (someKey (.bin p2 l2 m2 k2)) l1 := (halign k h2).2
+    have hpb : prefixAbove k l1 = p1 := prefixAbove_eq_of_mem p1 l1 m1 k1 hwa k h1
+    rw [contains_bin, Bool.and_eq_true] at h1
+    apply hncond
+    rw [Bool.and_eq_true, beq_iff_eq]
+    exact ⟨hpk.symm.trans hpb, hck ▸ h1.1⟩
+  | case15 p1 l1 m1 k1 p2 l2 m2 k2 hne hnlt hcond h ih =>
+    intro hwa hwb
+    have hlt : l1 < l2 := by
+      have hne' : l1 ≠ l2 := by intro he; apply hne; rw [he]; simp
+      omega
+    have hwb' := hwb; rw [WF] at hwb'
+    obtain ⟨_, hsize2, _, hkidswf2, _, _⟩ := hwb'
+    have halign := aligned_bin p1 l1 m1 k1 hwa l2 hlt
+    have hwfc := hkidswf2 _ (Array.getElem_mem h)
+    have hchild : k2[arrayIndex m2 (chunk (someKey (.bin p1 l1 m1 k1)) l2)]'h
+                    = childAt m2 k2 (chunk (someKey (.bin p1 l1 m1 k1)) l2) := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h, Option.getD_some]
+    rw [disjointU, if_neg hne, if_neg hnlt, if_pos hcond, dif_pos h, ih hwa hwfc, hchild]
+    rw [Bool.and_eq_true] at hcond
+    exact disjoint_descend_right (.bin p1 l1 m1 k1) p2 l2 m2 k2
+      (chunk (someKey (.bin p1 l1 m1 k1)) l2) (prefixAbove (someKey (.bin p1 l1 m1 k1)) l2)
+      halign hcond.2
+  | case16 p1 l1 m1 k1 p2 l2 m2 k2 hne hnlt hcond hnidx =>
+    intro _ hwb
+    rw [Bool.and_eq_true] at hcond
+    rw [WF] at hwb
+    obtain ⟨_, hsize2, _, _, _, _⟩ := hwb
+    exact absurd (by rw [hsize2]; exact arrayIndex_lt m2 _ hcond.2) hnidx
+  | case17 p1 l1 m1 k1 p2 l2 m2 k2 hne hnlt hncond =>
+    intro hwa hwb
+    have hlt : l1 < l2 := by
+      have hne' : l1 ≠ l2 := by intro he; apply hne; rw [he]; simp
+      omega
+    have halign := aligned_bin p1 l1 m1 k1 hwa l2 hlt
+    refine iff_of_true (by rw [disjointU, if_neg hne, if_neg hnlt, if_neg hncond]) (fun k => ?_)
+    apply and_eq_false_of_not_both
+    intro h1 h2
+    have hck : chunk k l2 = chunk (someKey (.bin p1 l1 m1 k1)) l2 := (halign k h1).1
+    have hpk : prefixAbove k l2 = prefixAbove (someKey (.bin p1 l1 m1 k1)) l2 := (halign k h1).2
+    have hpb : prefixAbove k l2 = p2 := prefixAbove_eq_of_mem p2 l2 m2 k2 hwb k h2
+    rw [contains_bin, Bool.and_eq_true] at h2
+    apply hncond
+    rw [Bool.and_eq_true, beq_iff_eq]
+    exact ⟨hpk.symm.trans hpb, hck ▸ h2.1⟩
+  | case18 m1 k1 m2 k2 rem hrem =>
+    rename_i hkw1 hkw2 hr1 hr2
+    have hrem0 : rem = 0 := eq_of_beq hrem
+    rw [disjointKids, dif_pos hrem]
+    refine iff_of_true rfl (fun c hc htb k => ?_)
+    rw [hrem0, testBit_zero] at htb
+    exact absurd htb (by decide)
+  | case19 m1 k1 m2 k2 rem hrem ihchild ihrec =>
+    rename_i hkw1 hkw2 hr1 hr2
+    have hrem0 : rem ≠ 0 := by intro h; rw [h] at hrem; exact hrem (by decide)
+    have hc0lt : lowestSetIdx rem < 32 := lowestSetIdx_lt rem hrem0
+    have hc0rem : testBit rem (lowestSetIdx rem) = true := testBit_lowestSetIdx rem hrem0
+    have htbm1 : testBit m1 (lowestSetIdx rem) = true := hr1 _ hc0lt hc0rem
+    have htbm2 : testBit m2 (lowestSetIdx rem) = true := hr2 _ hc0lt hc0rem
+    have h1 : arrayIndex m1 (lowestSetIdx rem) < k1.size := by
+      rw [hkw1.1]; exact arrayIndex_lt m1 _ htbm1
+    have h2 : arrayIndex m2 (lowestSetIdx rem) < k2.size := by
+      rw [hkw2.1]; exact arrayIndex_lt m2 _ htbm2
+    have hch1 : k1[arrayIndex m1 (lowestSetIdx rem)]'h1 = childAt m1 k1 (lowestSetIdx rem) := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h1, Option.getD_some]
+    have hch2 : k2[arrayIndex m2 (lowestSetIdx rem)]'h2 = childAt m2 k2 (lowestSetIdx rem) := by
+      unfold childAt; rw [Array.getElem?_eq_getElem h2, Option.getD_some]
+    have hwf1 := hkw1.2.1 _ (childAt_mem m1 k1 _ hkw1.1 htbm1)
+    have hwf2 := hkw2.2.1 _ (childAt_mem m2 k2 _ hkw2.1 htbm2)
+    have hce : disjointU (childAt m1 k1 (lowestSetIdx rem)) (childAt m2 k2 (lowestSetIdx rem)) = true
+        ↔ ∀ k, (contains k (childAt m1 k1 (lowestSetIdx rem))
+                && contains k (childAt m2 k2 (lowestSetIdx rem))) = false := by
+      have hih := ihchild h1 h2; rw [hch1, hch2] at hih; exact hih hwf1 hwf2
+    have hre := ihrec hkw1 hkw2
+      (fun c hc h => hr1 c hc (testBit_of_clearLowest rem c h))
+      (fun c hc h => hr2 c hc (testBit_of_clearLowest rem c h))
+    rw [disjointKids, dif_neg hrem, dif_pos h1, dif_pos h2, hch1, hch2, Bool.and_eq_true, hce, hre]
+    constructor
+    · rintro ⟨hP0, hPrest⟩ c hc htbc k
+      by_cases hcc0 : c = lowestSetIdx rem
+      · rw [hcc0]; exact hP0 k
+      · rw [← testBit_clearLowest_of_ne rem c hc hcc0] at htbc
+        exact hPrest c hc htbc k
+    · intro hall
+      exact ⟨fun k => hall (lowestSetIdx rem) hc0lt hc0rem k,
+             fun c hc htbcl k => hall c hc (testBit_of_clearLowest rem c htbcl) k⟩
+
+/-- **Disjointness characterization**: the structural walk answers whether the two trees share a
+key — `true` exactly when no key is contained in both. -/
+theorem isDisjoint_iff (a b : PTree L) (hwa : WF a) (hwb : WF b) :
+    isDisjoint a b = true ↔ ∀ k, (contains k a && contains k b) = false := by
+  rw [isDisjoint]; exact disjointU_iff a b hwa hwb
+
 /-! ### Lattice and order laws (generic `PTree L`)
 
 The value-level algebra (`optVjoin`/`optVmeet`/`optRel` on `Option V`) lifts to the tree level

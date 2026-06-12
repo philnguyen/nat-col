@@ -920,6 +920,26 @@ theorem get?_range (c : NatCollection L) (lo hi j : Nat) :
     · rw [if_neg h2, if_neg (fun h => h2 h.1)]
   · rw [if_neg h1, if_neg (fun h => h1 (by omega))]
 
+/-! ### Disjointness denotation -/
+
+/-- Disjointness characterization: `isDisjoint` answers `true` exactly when no key is present in
+both collections. -/
+theorem isDisjoint_iff {a b : NatCollection L} :
+    a.isDisjoint b = true ↔ ∀ k, (a.contains k && b.contains k) = false :=
+  PTree.isDisjoint_iff a.tree b.tree a.wf b.wf
+
+/-- Disjointness is symmetric: sharing no key does not depend on the operand order. -/
+theorem isDisjoint_symm {a b : NatCollection L} (h : a.isDisjoint b = true) :
+    b.isDisjoint a = true :=
+  isDisjoint_iff.mpr fun k => by rw [Bool.and_comm]; exact isDisjoint_iff.mp h k
+
+/-- A key present in `a` is absent from `b` when the two collections are disjoint. -/
+theorem contains_eq_false_of_isDisjoint {a b : NatCollection L} {k : Nat}
+    (h : a.isDisjoint b = true) (hk : a.contains k = true) : b.contains k = false := by
+  have hpair := isDisjoint_iff.mp h k
+  rw [hk, Bool.true_and] at hpair
+  exact hpair
+
 end NatCollection
 
 end NatCol
