@@ -10246,6 +10246,114 @@ theorem get?_erase (k : Nat) (t : PTree L) (hwf : WF t) (j : Nat) :
     get? j (erase k t) = if j = k then none else get? j t :=
   get?_eraseU k t hwf j
 
+/-! ### `filter` denotation
+
+`get?` after `filter`: a key reads through exactly when present and accepted by the predicate.
+Member recursion over the children (the `filterU` rebuild touches every present child, unlike
+erase's one routed path); the leaf case reads through `LeafOps.get?_filter` after recomposing the
+key the leaf predicate rebuilds from the tip prefix and bottom chunk (`shiftLeft_lor_chunk0`),
+and the rebuilt `bin` reads via `get?_finalize` with `filter_WF_keys`' keys-provenance
+transferring `AlignedAt` across the rebuilt children (the verbatim `filterKids` bookkeeping of
+`filter_WF_keys`). -/
+
+/-- A key is recomposed losslessly from its tip prefix (`>>> 5`) and bottom chunk — the key
+`filterU`'s leaf predicate rebuilds (`(pfx <<< 5) ||| s.toNat` at slot `s = chunk j 0`). -/
+private theorem shiftLeft_lor_chunk0 {j pfx : Nat} (hp : j >>> 5 = pfx) :
+    (pfx <<< 5) ||| (chunk j 0).toNat = j := by
+  refine (key_eq_iff _ j).mpr ⟨?_, chunk_shiftLeft_lor_zero pfx (chunk j 0) (chunk_lt j 0)⟩
+  rw [← hp]
+  apply shiftLeft_lor_shiftRight
+  exact UInt32.lt_iff_toNat_lt.mp (chunk_lt j 0)
+
+private theorem get?_filterU (p : Nat → V → Bool) : (t : PTree L) → WF t → ∀ j,
+    get? j (filterU p t)
+      = match get? j t with
+        | some v => if p j v then some v else none
+        | none => none
+  | .nil => fun _ j => by
+      rw [filterU, get?_nil]
+  | .tip pfx leaf => fun hwf j => by
+      rw [filterU]
+      by_cases he : LeafOps.isEmpty
+          (LeafOps.filter (fun s v => p ((pfx <<< 5) ||| s.toNat) v) leaf) = true
+      · -- the filter emptied the leaf: every present slot's pair was rejected
+        rw [if_pos he, get?_nil, get?_tip]
+        by_cases hjp : (j >>> 5 == pfx) = true
+        · rw [if_pos hjp]
+          replace hjp : j >>> 5 = pfx := by simpa using hjp
+          have hread := LeafOps.get?_filter (V := V)
+            (fun s v => p ((pfx <<< 5) ||| s.toNat) v) leaf (chunk j 0) (chunk_lt _ _)
+          rw [LeafOps.eq_empty_of_isEmpty _ he, LeafOps.get?_empty] at hread
+          cases hg : LeafOps.get? (V := V) leaf (chunk j 0) with
+          | none => rfl
+          | some v =>
+            rw [hg] at hread
+            simp only [shiftLeft_lor_chunk0 hjp] at hread
+            exact hread
+        · rw [if_neg hjp]
+      · -- the leaf survives: read it through the leaf law
+        rw [if_neg he, get?_tip, get?_tip]
+        by_cases hjp : (j >>> 5 == pfx) = true
+        · rw [if_pos hjp, if_pos hjp,
+              LeafOps.get?_filter (V := V)
+                (fun s v => p ((pfx <<< 5) ||| s.toNat) v) leaf (chunk j 0) (chunk_lt _ _)]
+          replace hjp : j >>> 5 = pfx := by simpa using hjp
+          cases hg : LeafOps.get? (V := V) leaf (chunk j 0) with
+          | none => rfl
+          | some v => simp only [shiftLeft_lor_chunk0 hjp]
+        · rw [if_neg hjp, if_neg hjp]
+  | .bin pfx level mask kids => fun hwf j => by
+      rw [filterU, Array.emptyWithCapacity_eq]
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, _, hwfk, _, hal⟩ := hwf'
+      have hkeys : ∀ c, c < 32 → testBit mask c = true →
+          ∀ j2, contains j2 (filterU p (childAt mask kids c)) = true →
+              ∃ j', contains j' (childAt mask kids c) = true ∧ j2 >>> 5 = j' >>> 5 := by
+        intro c hc htc
+        have hbc : arrayIndex mask c < kids.size := by
+          rw [hsz]; exact arrayIndex_lt mask c htc
+        have hcA : childAt mask kids c = kids[arrayIndex mask c]'hbc := by
+          unfold childAt; rw [Array.getElem?_eq_getElem hbc, Option.getD_some]
+        rw [hcA]
+        exact (filter_WF_keys p (kids[arrayIndex mask c]'hbc)
+          (hwfk _ (Array.getElem_mem hbc))).2
+      have hchA : ∀ c, c < 32 → testBit mask c = true →
+          childAt mask (filterKids p mask kids mask #[]) c = filterU p (childAt mask kids c) := by
+        intro c hc htc
+        rw [childAt_filterKids p mask kids c hc htc, filterChild_eq]
+      have hal' : ∀ c, c < 32 → testBit mask c = true →
+          AlignedAt level c pfx (childAt mask (filterKids p mask kids mask #[]) c) := by
+        intro c hc htc
+        rw [hchA c hc htc]
+        intro j2 hj2
+        obtain ⟨j', hj', h5⟩ := hkeys c hc htc j2 hj2
+        obtain ⟨hch, hpf⟩ := hal c hc htc j' hj'
+        exact ⟨(chunk_eq_of_hi level hl h5).trans hch, (prefixAbove_eq_of_hi level h5).trans hpf⟩
+      rw [get?_finalize j pfx level mask _ hal', get?_bin]
+      by_cases htj : testBit mask (chunk j level) = true
+      · rw [if_pos htj, if_pos htj, hchA (chunk j level) (chunk_lt _ _) htj]
+        have hbc : arrayIndex mask (chunk j level) < kids.size := by
+          rw [hsz]; exact arrayIndex_lt mask _ htj
+        have hcA : childAt mask kids (chunk j level)
+            = kids[arrayIndex mask (chunk j level)]'hbc := by
+          unfold childAt; rw [Array.getElem?_eq_getElem hbc, Option.getD_some]
+        rw [hcA, get?_filterU p (kids[arrayIndex mask (chunk j level)]'hbc)
+              (hwfk _ (Array.getElem_mem hbc)) j]
+      · rw [if_neg htj, if_neg htj]
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hbc); omega
+
+/-- `get?` after `filter`: a key reads through exactly when present and accepted by the
+predicate — the denotational equation for `filter` (with `WF_filter`, it pins `filter`
+exactly). -/
+theorem get?_filter (p : Nat → V → Bool) (t : PTree L) (hwf : WF t) (j : Nat) :
+    get? j (filter p t)
+      = match get? j t with
+        | some v => if p j v then some v else none
+        | none => none :=
+  get?_filterU p t hwf j
+
 /-! ### Range-restriction denotation
 
 `get?` after `filterLt`/`filterGE`: a key reads through exactly when it is on the kept side of

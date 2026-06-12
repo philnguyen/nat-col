@@ -1038,6 +1038,14 @@ theorem get?_erase (m : NatMap α) (k j : Nat) :
     (m.erase k).get? j = if j = k then none else m.get? j :=
   NatCollection.get?_erase m k j
 
+/-- Lookup after `filter`: a key reads through exactly when its entry is accepted by `p`. -/
+theorem get?_filter (p : Nat → α → Bool) (m : NatMap α) (j : Nat) :
+    (m.filter p).get? j
+      = match m.get? j with
+        | some v => if p j v then some v else none
+        | none => none :=
+  NatCollection.get?_filter p m j
+
 /-- Lookup in `split`'s left part: exactly the entries with key strictly below the split key. -/
 theorem get?_split_left (m : NatMap α) (k j : Nat) :
     (m.split k).1.get? j = if j < k then m.get? j else none :=
@@ -1086,6 +1094,13 @@ key. -/
 theorem mem_erase {m : NatMap α} {k j : Nat} : j ∈ m.erase k ↔ j ∈ m ∧ j ≠ k := by
   show NatCollection.contains (NatCollection.erase m k) j = true ↔ _
   exact NatCollection.contains_erase_iff
+
+/-- Membership after `filter`: `j` survives exactly when it held a value the predicate
+accepts. -/
+theorem mem_filter {m : NatMap α} {p : Nat → α → Bool} {j : Nat} :
+    j ∈ m.filter p ↔ ∃ v, m.get? j = some v ∧ p j v = true := by
+  show NatCollection.contains (NatCollection.filter p m) j = true ↔ _
+  exact NatCollection.contains_filter_iff
 
 /-- Disjointness characterization: `m.isDisjoint m'` holds exactly when the two maps share no key
 (values are irrelevant). -/

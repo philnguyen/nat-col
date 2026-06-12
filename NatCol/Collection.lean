@@ -1084,6 +1084,25 @@ theorem contains_erase_iff {c : NatCollection L} {k j : Nat} :
     (c.erase k).contains j = true ↔ c.contains j = true ∧ j ≠ k := by
   rw [contains_erase, Bool.and_eq_true, Bool.not_eq_true', beq_eq_false_iff_ne]
 
+/-! ### `filter` denotation -/
+
+/-- Lookup after `filter`: a key reads through exactly when present and accepted by `p`. -/
+theorem get?_filter (p : Nat → V → Bool) (c : NatCollection L) (j : Nat) :
+    (c.filter p).get? j
+      = match c.get? j with
+        | some v => if p j v then some v else none
+        | none => none :=
+  PTree.get?_filter p c.tree c.wf j
+
+/-- Membership after `filter`, in `Prop` form: `j` survives exactly when it held a value the
+predicate accepts. -/
+theorem contains_filter_iff {p : Nat → V → Bool} {c : NatCollection L} {j : Nat} :
+    (c.filter p).contains j = true ↔ ∃ v, c.get? j = some v ∧ p j v = true := by
+  rw [contains_eq, get?_filter]
+  cases hg : c.get? j with
+  | none => simp
+  | some v => by_cases hp : p j v = true <;> simp [hp]
+
 /-! ### Range-restriction denotation -/
 
 /-- Lookup after `filterLt`: a key reads through exactly when it is strictly below the bound. -/

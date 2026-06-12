@@ -842,6 +842,23 @@ theorem mem_erase {s : NatSet} {k j : Nat} : j ∈ s.erase k ↔ j ∈ s ∧ j �
   show NatCollection.contains (NatCollection.erase s k) j = true ↔ _
   exact NatCollection.contains_erase_iff
 
+/-- Membership after `filter`: `j` survives exactly when it was present and satisfies `p`. -/
+theorem mem_filter {s : NatSet} {p : Nat → Bool} {j : Nat} :
+    j ∈ s.filter p ↔ j ∈ s ∧ p j = true := by
+  show NatCollection.contains (NatCollection.filter (fun k _ => p k) s) j = true ↔ _
+  rw [NatCollection.contains_filter_iff]
+  constructor
+  · intro ⟨v, hv, hp⟩
+    exact ⟨by show NatCollection.contains s j = true
+              rw [NatCollection.contains_eq, hv]; rfl,
+           hp⟩
+  · intro ⟨hj, hp⟩
+    replace hj : NatCollection.contains s j = true := hj
+    rw [NatCollection.contains_eq] at hj
+    cases hg : NatCollection.get? s j with
+    | none => rw [hg] at hj; exact absurd hj (by decide)
+    | some u => exact ⟨u, rfl, hp⟩
+
 /-- Disjointness characterization: `s.isDisjoint t` holds exactly when the two sets share no
 element. -/
 theorem isDisjoint_iff {s t : NatSet} : s.isDisjoint t = true ↔ ∀ k, k ∈ s → k ∉ t := by
