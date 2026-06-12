@@ -8301,18 +8301,27 @@ bit-scans over the leaf occupancy bitmap (`LeafOps.slotsMask`) and the branch ma
 ride on the bitmap-accuracy law (`LeafOps.testBit_slotsMask`) plus big-endian ordering: keys that
 agree on the prefix above a level are ordered by their chunks at that level. -/
 
+/-- A chunk's numeric value is the corresponding 5-bit field of the key. -/
+private theorem chunk_toNat (n l : Nat) : (chunk n l).toNat = (n >>> (5 * l)) % 32 := by
+  unfold chunk
+  rw [show (31 : Nat) = 2 ^ 5 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+  exact UInt32.toNat_ofNat_of_lt' (Nat.lt_trans (Nat.mod_lt _ (by decide)) (by decide))
+
+/-- A strict high-bits order is a strict key order (right shift is monotone). -/
+private theorem lt_of_shiftRight_lt {k j n : Nat} (h : k >>> n < j >>> n) : k < j := by
+  refine Nat.not_le.mp fun hge => ?_
+  have hle : j >>> n ≤ k >>> n := by
+    rw [Nat.shiftRight_eq_div_pow j n, Nat.shiftRight_eq_div_pow k n]
+    exact Nat.div_le_div_right hge
+  omega
+
 /-- Big-endian ordering: keys agreeing on the prefix above `l` are ordered by their level-`l`
 chunks. The ordering core of the `minEntry?`/`maxEntry?` bound proofs. -/
 private theorem lt_of_chunk_lt {k j : Nat} (l : Nat)
     (hp : prefixAbove k l = prefixAbove j l) (hc : chunk k l < chunk j l) : k < j := by
-  have hmod : ∀ n : Nat, (chunk n l).toNat = (n >>> (5 * l)) % 32 := by
-    intro n
-    unfold chunk
-    rw [show (31 : Nat) = 2 ^ 5 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
-    exact UInt32.toNat_ofNat_of_lt' (Nat.lt_trans (Nat.mod_lt _ (by decide)) (by decide))
   have hc' : (k >>> (5 * l)) % 32 < (j >>> (5 * l)) % 32 := by
     have h := UInt32.lt_iff_toNat_lt.mp hc
-    rwa [hmod k, hmod j] at h
+    rwa [chunk_toNat k l, chunk_toNat j l] at h
   have hp' : (k >>> (5 * l)) / 32 = (j >>> (5 * l)) / 32 := by
     have h : (k >>> (5 * l)) >>> 5 = (j >>> (5 * l)) >>> 5 := by
       rw [← Nat.shiftRight_add, ← Nat.shiftRight_add, show 5 * l + 5 = 5 * (l + 1) from by omega]
@@ -8320,12 +8329,24 @@ private theorem lt_of_chunk_lt {k j : Nat} (l : Nat)
     rw [Nat.shiftRight_eq_div_pow (k >>> (5 * l)) 5, Nat.shiftRight_eq_div_pow (j >>> (5 * l)) 5,
         show (2 : Nat) ^ 5 = 32 from rfl] at h
     exact h
-  have hlt : k >>> (5 * l) < j >>> (5 * l) := by omega
-  refine Nat.not_le.mp fun hge => ?_
-  have hle : j >>> (5 * l) ≤ k >>> (5 * l) := by
-    rw [Nat.shiftRight_eq_div_pow j (5 * l), Nat.shiftRight_eq_div_pow k (5 * l)]
-    exact Nat.div_le_div_right hge
+  exact lt_of_shiftRight_lt (n := 5 * l) (by omega)
+
+/-- The converse at the bottom level: ordered keys sharing their high bits order their bottom
+chunks. -/
+private theorem chunk0_lt_of_lt {k j : Nat} (h5 : k >>> 5 = j >>> 5) (hkj : k < j) :
+    chunk k 0 < chunk j 0 := by
+  apply UInt32.lt_iff_toNat_lt.mpr
+  rw [chunk_toNat k 0, chunk_toNat j 0, Nat.mul_zero, Nat.shiftRight_zero, Nat.shiftRight_zero]
+  rw [shiftRight5_eq, shiftRight5_eq] at h5
   omega
+
+/-- The non-strict converse at any level: ordered keys with equal prefixes above `l` have
+non-decreasing level-`l` chunks (the lower levels may still differ either way). -/
+private theorem chunk_le_of_le {k j : Nat} (l : Nat)
+    (hp : prefixAbove k l = prefixAbove j l) (hkj : k ≤ j) : chunk k l ≤ chunk j l := by
+  rcases Nat.lt_or_ge (chunk j l).toNat (chunk k l).toNat with hlt | hge
+  · exact absurd (lt_of_chunk_lt l hp.symm (UInt32.lt_iff_toNat_lt.mpr hlt)) (by omega)
+  · exact UInt32.le_iff_toNat_le.mpr hge
 
 /-- The key a `tip` ordered query reconstructs (`(pfx <<< 5) ||| s.toNat`, slot `s < 32`) has
 bottom chunk exactly `s` — the low-bits companion of `shiftLeft_lor_shiftRight`. -/
@@ -8590,6 +8611,1020 @@ theorem le_maxEntry? : (t : PTree L) → WF t → ∀ (k : Nat) (v : V) (j : Nat
         · exact hlt
         · exact absurd (UInt32.le_iff_toNat_le.mp hle)
             (by have := UInt32.lt_iff_toNat_lt.mp hgt; omega)
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-! ### Ordered queries: `entryGT?`/`entryLT?` denotations
+
+The full successor spec: a `some (j, v)` answer is a real entry (`get?` reads it back), its key is
+strictly beyond the query key, and it is the *nearest* such key; a `none` answer means nothing lies
+beyond the query key. The fallback walks (`minEntryAbove`/`maxEntryBelow`) get their own spec
+lemmas, which the main inductions consume at each `bin`. -/
+
+/-- A non-empty well-formed trie has a least entry (`minEntry?` is total off `nil`). -/
+theorem isSome_minEntry? : (t : PTree L) → WF t → t ≠ .nil → (minEntry? t).isSome = true
+  | .nil => fun _ hne => absurd rfl hne
+  | .tip pfx leaf => fun hwf _ => by
+      rw [WF] at hwf
+      have hm : LeafOps.slotsMask leaf ≠ 0 := slotsMask_ne_zero leaf hwf
+      have htb : testBit (LeafOps.slotsMask leaf) (lowestSetIdx (LeafOps.slotsMask leaf)) = true :=
+        testBit_lowestSetIdx _ hm
+      rw [LeafOps.testBit_slotsMask leaf _ (lowestSetIdx_lt _ hm),
+          LeafOps.contains_eq_isSome] at htb
+      simp only [minEntry?]
+      cases hg : LeafOps.get? leaf (lowestSetIdx (LeafOps.slotsMask leaf)) with
+      | none => rw [hg] at htb; simp at htb
+      | some v => rfl
+  | .bin pfx level mask kids => fun hwf _ => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+      have hb : 0 < kids.size := by rw [hsz]; omega
+      rw [minEntry?, dif_pos hb]
+      exact isSome_minEntry? _ (hwfk _ (Array.getElem_mem hb)) (hnn _ (Array.getElem_mem hb))
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- A non-empty well-formed trie has a greatest entry (`maxEntry?` is total off `nil`). -/
+theorem isSome_maxEntry? : (t : PTree L) → WF t → t ≠ .nil → (maxEntry? t).isSome = true
+  | .nil => fun _ hne => absurd rfl hne
+  | .tip pfx leaf => fun hwf _ => by
+      rw [WF] at hwf
+      have hm : LeafOps.slotsMask leaf ≠ 0 := slotsMask_ne_zero leaf hwf
+      have htb : testBit (LeafOps.slotsMask leaf) (highestSetIdx (LeafOps.slotsMask leaf)) = true :=
+        testBit_highestSetIdx _ hm
+      rw [LeafOps.testBit_slotsMask leaf _ (highestSetIdx_lt _ hm),
+          LeafOps.contains_eq_isSome] at htb
+      simp only [maxEntry?]
+      cases hg : LeafOps.get? leaf (highestSetIdx (LeafOps.slotsMask leaf)) with
+      | none => rw [hg] at htb; simp at htb
+      | some v => rfl
+  | .bin pfx level mask kids => fun hwf _ => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+      have hb0 : 0 < kids.size := by rw [hsz]; omega
+      have hb : kids.size - 1 < kids.size := by omega
+      rw [maxEntry?, dif_pos hb]
+      exact isSome_maxEntry? _ (hwfk _ (Array.getElem_mem hb)) (hnn _ (Array.getElem_mem hb))
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- The next-sibling fallback answers correctly: a `some (j, v)` from
+`minEntryAbove mask kids c` is a real entry of the `bin`, routes strictly above slot `c`, and is
+least among the `bin`'s keys routing strictly above `c`. -/
+private theorem minEntryAbove_spec (pfx level : Nat) (mask : UInt32) (kids : Array (PTree L))
+    (hwf : WF (.bin pfx level mask kids)) (c : UInt32) (hc : c < 32) (j : Nat) (v : V)
+    (h : minEntryAbove mask kids c = some (j, v)) :
+    get? j (.bin pfx level mask kids) = some v
+    ∧ c < chunk j level
+    ∧ ∀ j2, contains j2 (.bin pfx level mask kids) = true → c < chunk j2 level → j ≤ j2 := by
+  have hwf' := hwf
+  rw [WF] at hwf'
+  obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+  simp only [minEntryAbove] at h
+  by_cases hm0 : mask &&& upperMask c = 0
+  · rw [if_pos (beq_iff_eq.mpr hm0)] at h
+    exact absurd h (by simp)
+  · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+    have hs32 : lowestSetIdx (mask &&& upperMask c) < 32 := lowestSetIdx_lt _ hm0
+    have htbm : testBit (mask &&& upperMask c) (lowestSetIdx (mask &&& upperMask c)) = true :=
+      testBit_lowestSetIdx _ hm0
+    rw [testBit_and] at htbm
+    obtain ⟨htbs, hups⟩ := and_split htbm
+    have hcs : c < lowestSetIdx (mask &&& upperMask c) :=
+      lt_of_testBit_upperMask c _ hc hs32 hups
+    have hbs : arrayIndex mask (lowestSetIdx (mask &&& upperMask c)) < kids.size := by
+      rw [hsz]; exact arrayIndex_lt mask _ htbs
+    have hcA : childAt mask kids (lowestSetIdx (mask &&& upperMask c))
+        = kids[arrayIndex mask (lowestSetIdx (mask &&& upperMask c))]'hbs := by
+      unfold childAt; rw [Array.getElem?_eq_getElem hbs, Option.getD_some]
+    have hwfc : WF (childAt mask kids (lowestSetIdx (mask &&& upperMask c))) := by
+      rw [hcA]; exact hwfk _ (Array.getElem_mem hbs)
+    have hget : get? j (childAt mask kids (lowestSetIdx (mask &&& upperMask c))) = some v :=
+      get?_of_minEntry? _ hwfc j v h
+    have hmem : contains j (childAt mask kids (lowestSetIdx (mask &&& upperMask c))) = true := by
+      rw [contains_eq_isSome, hget]; rfl
+    obtain ⟨hcj, hpj⟩ := hal (lowestSetIdx (mask &&& upperMask c)) hs32 htbs j hmem
+    refine ⟨?_, ?_, ?_⟩
+    · rw [get?_bin, hcj, if_pos htbs]
+      exact hget
+    · rw [hcj]; exact hcs
+    · intro j2 hj2 hcj2
+      rw [contains_bin, Bool.and_eq_true] at hj2
+      obtain ⟨htj2, hj2c⟩ := hj2
+      have htm2 : testBit (mask &&& upperMask c) (chunk j2 level) = true := by
+        rw [testBit_and, htj2, testBit_upperMask_lt c _ (chunk_lt j2 level) hcj2]; rfl
+      have hle2 : lowestSetIdx (mask &&& upperMask c) ≤ chunk j2 level :=
+        lowestSetIdx_le_of_testBit _ _ (chunk_lt j2 level) htm2
+      obtain ⟨_, hpj2⟩ := hal (chunk j2 level) (chunk_lt j2 level) htj2 j2 hj2c
+      by_cases heq2 : chunk j2 level = lowestSetIdx (mask &&& upperMask c)
+      · rw [heq2] at hj2c
+        exact minEntry?_le _ hwfc j v j2 h hj2c
+      · refine Nat.le_of_lt (lt_of_chunk_lt level (hpj.trans hpj2.symm) ?_)
+        rw [hcj]
+        rcases UInt32.lt_or_lt_of_ne (fun hh => heq2 hh.symm) with hlt | hgt
+        · exact hlt
+        · exact absurd (UInt32.le_iff_toNat_le.mp hle2)
+            (by have := UInt32.lt_iff_toNat_lt.mp hgt; omega)
+
+/-- A `none` fallback answer means no present slot lies strictly above `c` at all. -/
+private theorem minEntryAbove_eq_none (pfx level : Nat) (mask : UInt32) (kids : Array (PTree L))
+    (hwf : WF (.bin pfx level mask kids)) (c : UInt32)
+    (h : minEntryAbove mask kids c = none) : mask &&& upperMask c = 0 := by
+  have hwf' := hwf
+  rw [WF] at hwf'
+  obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+  simp only [minEntryAbove] at h
+  by_cases hm0 : mask &&& upperMask c = 0
+  · exact hm0
+  · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+    have htbm : testBit (mask &&& upperMask c) (lowestSetIdx (mask &&& upperMask c)) = true :=
+      testBit_lowestSetIdx _ hm0
+    rw [testBit_and] at htbm
+    obtain ⟨htbs, _⟩ := and_split htbm
+    have hbs : arrayIndex mask (lowestSetIdx (mask &&& upperMask c)) < kids.size := by
+      rw [hsz]; exact arrayIndex_lt mask _ htbs
+    have hcA : childAt mask kids (lowestSetIdx (mask &&& upperMask c))
+        = kids[arrayIndex mask (lowestSetIdx (mask &&& upperMask c))]'hbs := by
+      unfold childAt; rw [Array.getElem?_eq_getElem hbs, Option.getD_some]
+    have hsome : (minEntry? (childAt mask kids (lowestSetIdx (mask &&& upperMask c)))).isSome
+        = true := by
+      rw [hcA]
+      exact isSome_minEntry? _ (hwfk _ (Array.getElem_mem hbs)) (hnn _ (Array.getElem_mem hbs))
+    rw [h] at hsome
+    simp at hsome
+
+/-- The entry `entryGT?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_entryGT? : (t : PTree L) → WF t → ∀ (k j : Nat) (v : V),
+    entryGT? k t = some (j, v) → get? j t = some v
+  | .nil => fun _ k j v h => by
+      rw [entryGT?] at h
+      exact absurd h (by simp)
+  | .tip pfx leaf => fun hwf k j v h => by
+      simp only [entryGT?] at h
+      rcases Nat.lt_trichotomy (k >>> 5) pfx with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        exact get?_of_minEntry? _ hwf j v h
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        by_cases hm0 : LeafOps.slotsMask leaf &&& upperMask (chunk k 0) = 0
+        · rw [if_pos (beq_iff_eq.mpr hm0)] at h
+          exact absurd h (by simp)
+        · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+          obtain ⟨v', hg, hkv⟩ := Option.map_eq_some_iff.mp h
+          injection hkv with hk hv
+          subst hk hv
+          have hs : lowestSetIdx (LeafOps.slotsMask leaf &&& upperMask (chunk k 0)) < 32 :=
+            lowestSetIdx_lt _ hm0
+          rw [get?_tip,
+              if_pos (beq_iff_eq.mpr (shiftLeft_lor_shiftRight pfx _ 5
+                (UInt32.lt_iff_toNat_lt.mp hs))),
+              chunk_shiftLeft_lor_zero pfx _ hs]
+          exact hg
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+  | .bin pfx level mask kids => fun hwf k j v h => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+      simp only [entryGT?] at h
+      rcases Nat.lt_trichotomy (prefixAbove k level) pfx with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        exact get?_of_minEntry? _ hwf j v h
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        by_cases htb : testBit mask (chunk k level) = true
+        · rw [if_pos htb] at h
+          have hb : arrayIndex mask (chunk k level) < kids.size := by
+            rw [hsz]; exact arrayIndex_lt mask _ htb
+          rw [dif_pos hb] at h
+          cases ho : entryGT? k (kids[arrayIndex mask (chunk k level)]'hb) with
+          | some e =>
+            rw [ho] at h
+            replace h : some e = some (j, v) := h
+            injection h with he
+            subst he
+            have hwk : WF (kids[arrayIndex mask (chunk k level)]'hb) :=
+              hwfk _ (Array.getElem_mem hb)
+            have ih := get?_of_entryGT? _ hwk k j v ho
+            have hcA : childAt mask kids (chunk k level)
+                = kids[arrayIndex mask (chunk k level)]'hb := by
+              unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]
+            have hmem : contains j (kids[arrayIndex mask (chunk k level)]'hb) = true := by
+              rw [contains_eq_isSome, ih]; rfl
+            have halk := hal (chunk k level) (chunk_lt k level) htb
+            rw [hcA] at halk
+            obtain ⟨hcj, _⟩ := halk j hmem
+            rw [get?_bin, hcj, if_pos htb, hcA]
+            exact ih
+          | none =>
+            rw [ho] at h
+            replace h : minEntryAbove mask kids (chunk k level) = some (j, v) := h
+            exact (minEntryAbove_spec pfx level mask kids hwf (chunk k level)
+              (chunk_lt k level) j v h).1
+        · rw [if_neg htb] at h
+          exact (minEntryAbove_spec pfx level mask kids hwf (chunk k level)
+            (chunk_lt k level) j v h).1
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- `entryGT?`'s answer is strictly greater than the query key (it is a *successor*). -/
+theorem entryGT?_gt : (t : PTree L) → WF t → ∀ (k j : Nat) (v : V),
+    entryGT? k t = some (j, v) → k < j
+  | .nil => fun _ k j v h => by
+      rw [entryGT?] at h
+      exact absurd h (by simp)
+  | .tip pfx leaf => fun hwf k j v h => by
+      simp only [entryGT?] at h
+      rcases Nat.lt_trichotomy (k >>> 5) pfx with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        have hmem : contains j (.tip pfx leaf) = true := by
+          rw [contains_eq_isSome, get?_of_minEntry? _ hwf j v h]; rfl
+        have hj5 : j >>> 5 = pfx := hi_eq_of_contains_tip hmem
+        exact lt_of_shiftRight_lt (n := 5) (by omega)
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        by_cases hm0 : LeafOps.slotsMask leaf &&& upperMask (chunk k 0) = 0
+        · rw [if_pos (beq_iff_eq.mpr hm0)] at h
+          exact absurd h (by simp)
+        · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+          obtain ⟨v', hg, hkv⟩ := Option.map_eq_some_iff.mp h
+          injection hkv with hk hv
+          subst hk
+          have hs : lowestSetIdx (LeafOps.slotsMask leaf &&& upperMask (chunk k 0)) < 32 :=
+            lowestSetIdx_lt _ hm0
+          have htbm := testBit_lowestSetIdx _ hm0
+          rw [testBit_and] at htbm
+          obtain ⟨_, hups⟩ := and_split htbm
+          have hcs : chunk k 0 < lowestSetIdx (LeafOps.slotsMask leaf &&& upperMask (chunk k 0)) :=
+            lt_of_testBit_upperMask _ _ (chunk_lt k 0) hs hups
+          have hkhi : ((pfx <<< 5)
+              ||| (lowestSetIdx (LeafOps.slotsMask leaf &&& upperMask (chunk k 0))).toNat) >>> 5
+              = pfx := shiftLeft_lor_shiftRight pfx _ 5 (UInt32.lt_iff_toNat_lt.mp hs)
+          refine lt_of_chunk_lt 0 ?_ ?_
+          · show k >>> 5 = _ >>> 5
+            rw [hkhi, hpe]
+          · rw [chunk_shiftLeft_lor_zero pfx _ hs]
+            exact hcs
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+  | .bin pfx level mask kids => fun hwf k j v h => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+      simp only [entryGT?] at h
+      rcases Nat.lt_trichotomy (prefixAbove k level) pfx with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        have hmem : contains j (.bin pfx level mask kids) = true := by
+          rw [contains_eq_isSome, get?_of_minEntry? _ hwf j v h]; rfl
+        rw [contains_bin, Bool.and_eq_true] at hmem
+        obtain ⟨htj, hjc⟩ := hmem
+        obtain ⟨_, hpj⟩ := hal (chunk j level) (chunk_lt j level) htj j hjc
+        rw [← hpj] at hlt
+        exact lt_of_shiftRight_lt hlt
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        have hfall : ∀ (h' : minEntryAbove mask kids (chunk k level) = some (j, v)), k < j := by
+          intro h'
+          obtain ⟨hget, hcgt, _⟩ := minEntryAbove_spec pfx level mask kids hwf (chunk k level)
+            (chunk_lt k level) j v h'
+          have hmem : contains j (.bin pfx level mask kids) = true := by
+            rw [contains_eq_isSome, hget]; rfl
+          rw [contains_bin, Bool.and_eq_true] at hmem
+          obtain ⟨htj, hjc⟩ := hmem
+          obtain ⟨_, hpj⟩ := hal (chunk j level) (chunk_lt j level) htj j hjc
+          exact lt_of_chunk_lt level (hpe.trans hpj.symm) hcgt
+        by_cases htb : testBit mask (chunk k level) = true
+        · rw [if_pos htb] at h
+          have hb : arrayIndex mask (chunk k level) < kids.size := by
+            rw [hsz]; exact arrayIndex_lt mask _ htb
+          rw [dif_pos hb] at h
+          cases ho : entryGT? k (kids[arrayIndex mask (chunk k level)]'hb) with
+          | some e =>
+            rw [ho] at h
+            replace h : some e = some (j, v) := h
+            injection h with he
+            subst he
+            exact entryGT?_gt _ (hwfk _ (Array.getElem_mem hb)) k j v ho
+          | none =>
+            rw [ho] at h
+            replace h : minEntryAbove mask kids (chunk k level) = some (j, v) := h
+            exact hfall h
+        · rw [if_neg htb] at h
+          exact hfall h
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- A `none` from `entryGT?` is complete: nothing in the trie lies strictly above the query key. -/
+theorem le_of_entryGT?_eq_none : (t : PTree L) → WF t → ∀ (k : Nat),
+    entryGT? k t = none → ∀ (j : Nat), contains j t = true → j ≤ k
+  | .nil => fun _ k _ j hj => by
+      rw [contains_nil] at hj
+      exact absurd hj (by decide)
+  | .tip pfx leaf => fun hwf k h j hj => by
+      have hwfc := hwf
+      rw [WF] at hwfc
+      simp only [entryGT?] at h
+      rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj
+      obtain ⟨hj5, hjc⟩ := hj
+      rcases Nat.lt_trichotomy (k >>> 5) pfx with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        have hsome := isSome_minEntry? (.tip pfx leaf) hwf (by simp)
+        rw [h] at hsome
+        simp at hsome
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        by_cases hm0 : LeafOps.slotsMask leaf &&& upperMask (chunk k 0) = 0
+        · refine Nat.not_lt.mp fun hkj => ?_
+          have hcc : chunk k 0 < chunk j 0 := chunk0_lt_of_lt (by omega) hkj
+          have htj : testBit (LeafOps.slotsMask leaf) (chunk j 0) = true := by
+            rw [LeafOps.testBit_slotsMask leaf _ (chunk_lt j 0)]
+            exact hjc
+          have htm : testBit (LeafOps.slotsMask leaf &&& upperMask (chunk k 0)) (chunk j 0)
+              = true := by
+            rw [testBit_and, htj, testBit_upperMask_lt _ _ (chunk_lt j 0) hcc]; rfl
+          rw [hm0, testBit_zero] at htm
+          exact absurd htm (by decide)
+        · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+          have htbm := testBit_lowestSetIdx _ hm0
+          rw [testBit_and] at htbm
+          obtain ⟨htbs, _⟩ := and_split htbm
+          rw [LeafOps.testBit_slotsMask leaf _ (lowestSetIdx_lt _ hm0),
+              LeafOps.contains_eq_isSome] at htbs
+          cases hg : LeafOps.get? leaf
+              (lowestSetIdx (LeafOps.slotsMask leaf &&& upperMask (chunk k 0))) with
+          | none => rw [hg] at htbs; simp at htbs
+          | some v' => rw [hg] at h; exact absurd h (by simp)
+      · exact Nat.le_of_lt (lt_of_shiftRight_lt (n := 5) (by omega))
+  | .bin pfx level mask kids => fun hwf k h j hj => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+      simp only [entryGT?] at h
+      rw [contains_bin, Bool.and_eq_true] at hj
+      obtain ⟨htj, hjc⟩ := hj
+      obtain ⟨_, hpj⟩ := hal (chunk j level) (chunk_lt j level) htj j hjc
+      rcases Nat.lt_trichotomy (prefixAbove k level) pfx with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        have hsome := isSome_minEntry? (.bin pfx level mask kids) hwf (by simp)
+        rw [h] at hsome
+        simp at hsome
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        have hcA : ∀ (hb : arrayIndex mask (chunk j level) < kids.size),
+            childAt mask kids (chunk j level) = kids[arrayIndex mask (chunk j level)]'hb := by
+          intro hb
+          unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]
+        have habove : ∀ (h' : minEntryAbove mask kids (chunk k level) = none),
+            ¬ (chunk k level < chunk j level) := by
+          intro h' hcc
+          have hm0 := minEntryAbove_eq_none pfx level mask kids hwf (chunk k level) h'
+          have htm : testBit (mask &&& upperMask (chunk k level)) (chunk j level) = true := by
+            rw [testBit_and, htj, testBit_upperMask_lt _ _ (chunk_lt j level) hcc]; rfl
+          rw [hm0, testBit_zero] at htm
+          exact absurd htm (by decide)
+        by_cases htb : testBit mask (chunk k level) = true
+        · rw [if_pos htb] at h
+          have hb : arrayIndex mask (chunk k level) < kids.size := by
+            rw [hsz]; exact arrayIndex_lt mask _ htb
+          rw [dif_pos hb] at h
+          cases ho : entryGT? k (kids[arrayIndex mask (chunk k level)]'hb) with
+          | some e =>
+            rw [ho] at h
+            replace h : some e = none := h
+            exact absurd h (by simp)
+          | none =>
+            rw [ho] at h
+            replace h : minEntryAbove mask kids (chunk k level) = none := h
+            by_cases heqc : chunk j level = chunk k level
+            · rw [heqc] at hjc htj
+              have hb' : arrayIndex mask (chunk k level) < kids.size := hb
+              rw [show childAt mask kids (chunk k level)
+                    = kids[arrayIndex mask (chunk k level)]'hb from by
+                  unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]] at hjc
+              exact le_of_entryGT?_eq_none _ (hwfk _ (Array.getElem_mem hb)) k ho j hjc
+            · refine Nat.not_lt.mp fun hkj => ?_
+              have hcc : chunk k level ≤ chunk j level :=
+                chunk_le_of_le level (hpe.trans hpj.symm) (Nat.le_of_lt hkj)
+              have hccs : chunk k level < chunk j level := by
+                rcases UInt32.lt_or_lt_of_ne (fun hh => heqc hh.symm) with hlt' | hgt'
+                · exact hlt'
+                · exact absurd (UInt32.le_iff_toNat_le.mp hcc)
+                    (by have := UInt32.lt_iff_toNat_lt.mp hgt'; omega)
+              exact habove h hccs
+        · rw [if_neg htb] at h
+          by_cases heqc : chunk j level = chunk k level
+          · rw [heqc] at htj
+            exact absurd htj htb
+          · refine Nat.not_lt.mp fun hkj => ?_
+            have hcc : chunk k level ≤ chunk j level :=
+              chunk_le_of_le level (hpe.trans hpj.symm) (Nat.le_of_lt hkj)
+            have hccs : chunk k level < chunk j level := by
+              rcases UInt32.lt_or_lt_of_ne (fun hh => heqc hh.symm) with hlt' | hgt'
+              · exact hlt'
+              · exact absurd (UInt32.le_iff_toNat_le.mp hcc)
+                  (by have := UInt32.lt_iff_toNat_lt.mp hgt'; omega)
+            exact habove h hccs
+      · rw [← hpj] at hgt
+        exact Nat.le_of_lt (lt_of_shiftRight_lt hgt)
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- `entryGT?` returns the *least* key beyond the query key: any present `j > k` is at or above
+the answer. With `entryGT?_gt` and `get?_of_entryGT?`, this pins the successor exactly. -/
+theorem entryGT?_le : (t : PTree L) → WF t → ∀ (k j' : Nat) (v : V) (j : Nat),
+    entryGT? k t = some (j', v) → contains j t = true → k < j → j' ≤ j
+  | .nil => fun _ k j' v j h hj _ => by
+      rw [contains_nil] at hj
+      exact absurd hj (by decide)
+  | .tip pfx leaf => fun hwf k j' v j h hj hkj => by
+      simp only [entryGT?] at h
+      have hjmem := hj
+      rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj
+      obtain ⟨hj5, hjc⟩ := hj
+      rcases Nat.lt_trichotomy (k >>> 5) pfx with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        exact minEntry?_le _ hwf j' v j h hjmem
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        by_cases hm0 : LeafOps.slotsMask leaf &&& upperMask (chunk k 0) = 0
+        · rw [if_pos (beq_iff_eq.mpr hm0)] at h
+          exact absurd h (by simp)
+        · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+          obtain ⟨v', hg, hkv⟩ := Option.map_eq_some_iff.mp h
+          injection hkv with hk hv
+          subst hk
+          have hs : lowestSetIdx (LeafOps.slotsMask leaf &&& upperMask (chunk k 0)) < 32 :=
+            lowestSetIdx_lt _ hm0
+          have hkhi : ((pfx <<< 5)
+              ||| (lowestSetIdx (LeafOps.slotsMask leaf &&& upperMask (chunk k 0))).toNat) >>> 5
+              = pfx := shiftLeft_lor_shiftRight pfx _ 5 (UInt32.lt_iff_toNat_lt.mp hs)
+          have hkc : chunk ((pfx <<< 5)
+              ||| (lowestSetIdx (LeafOps.slotsMask leaf &&& upperMask (chunk k 0))).toNat) 0
+              = lowestSetIdx (LeafOps.slotsMask leaf &&& upperMask (chunk k 0)) :=
+            chunk_shiftLeft_lor_zero pfx _ hs
+          have hcc : chunk k 0 < chunk j 0 := chunk0_lt_of_lt (by omega) hkj
+          have htm : testBit (LeafOps.slotsMask leaf &&& upperMask (chunk k 0)) (chunk j 0)
+              = true := by
+            rw [testBit_and, testBit_upperMask_lt _ _ (chunk_lt j 0) hcc,
+                LeafOps.testBit_slotsMask leaf _ (chunk_lt j 0)]
+            rw [hjc]; rfl
+          have hle := lowestSetIdx_le_of_testBit _ _ (chunk_lt j 0) htm
+          by_cases heq : lowestSetIdx (LeafOps.slotsMask leaf &&& upperMask (chunk k 0))
+              = chunk j 0
+          · exact Nat.le_of_eq ((key_eq_iff _ j).mpr ⟨hkhi.trans hj5.symm, by rw [hkc, heq]⟩)
+          · refine Nat.le_of_lt (lt_of_chunk_lt 0 ?_ ?_)
+            · show _ >>> 5 = j >>> 5
+              rw [hkhi, hj5]
+            · rw [hkc]
+              rcases UInt32.lt_or_lt_of_ne heq with hlt' | hgt'
+              · exact hlt'
+              · exact absurd (UInt32.le_iff_toNat_le.mp hle)
+                  (by have := UInt32.lt_iff_toNat_lt.mp hgt'; omega)
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+  | .bin pfx level mask kids => fun hwf k j' v j h hj hkj => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+      simp only [entryGT?] at h
+      have hjmem := hj
+      rw [contains_bin, Bool.and_eq_true] at hj
+      obtain ⟨htj, hjc⟩ := hj
+      obtain ⟨_, hpj⟩ := hal (chunk j level) (chunk_lt j level) htj j hjc
+      rcases Nat.lt_trichotomy (prefixAbove k level) pfx with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        exact minEntry?_le _ hwf j' v j h hjmem
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        have hccle : chunk k level ≤ chunk j level :=
+          chunk_le_of_le level (hpe.trans hpj.symm) (Nat.le_of_lt hkj)
+        have hfall : ∀ (h' : minEntryAbove mask kids (chunk k level) = some (j', v)),
+            chunk k level < chunk j level → j' ≤ j := fun h' hccs =>
+          (minEntryAbove_spec pfx level mask kids hwf (chunk k level)
+            (chunk_lt k level) j' v h').2.2 j hjmem hccs
+        have hstrict : chunk j level ≠ chunk k level → chunk k level < chunk j level := by
+          intro hne
+          rcases UInt32.lt_or_lt_of_ne (fun hh => hne hh.symm) with hlt' | hgt'
+          · exact hlt'
+          · exact absurd (UInt32.le_iff_toNat_le.mp hccle)
+              (by have := UInt32.lt_iff_toNat_lt.mp hgt'; omega)
+        by_cases htb : testBit mask (chunk k level) = true
+        · rw [if_pos htb] at h
+          have hb : arrayIndex mask (chunk k level) < kids.size := by
+            rw [hsz]; exact arrayIndex_lt mask _ htb
+          rw [dif_pos hb] at h
+          have hcA : childAt mask kids (chunk k level)
+              = kids[arrayIndex mask (chunk k level)]'hb := by
+            unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]
+          cases ho : entryGT? k (kids[arrayIndex mask (chunk k level)]'hb) with
+          | some e =>
+            rw [ho] at h
+            replace h : some e = some (j', v) := h
+            injection h with he
+            subst he
+            by_cases heqc : chunk j level = chunk k level
+            · rw [heqc, hcA] at hjc
+              exact entryGT?_le _ (hwfk _ (Array.getElem_mem hb)) k j' v j ho hjc hkj
+            · have hccs := hstrict heqc
+              have hget : get? j' (kids[arrayIndex mask (chunk k level)]'hb) = some v :=
+                get?_of_entryGT? _ (hwfk _ (Array.getElem_mem hb)) k j' v ho
+              have hmem' : contains j' (kids[arrayIndex mask (chunk k level)]'hb) = true := by
+                rw [contains_eq_isSome, hget]; rfl
+              have halk := hal (chunk k level) (chunk_lt k level) htb
+              rw [hcA] at halk
+              obtain ⟨hcj', hpj'⟩ := halk j' hmem'
+              refine Nat.le_of_lt (lt_of_chunk_lt level (hpj'.trans hpj.symm) ?_)
+              rw [hcj']
+              exact hccs
+          | none =>
+            rw [ho] at h
+            replace h : minEntryAbove mask kids (chunk k level) = some (j', v) := h
+            by_cases heqc : chunk j level = chunk k level
+            · rw [heqc, hcA] at hjc
+              have hd := le_of_entryGT?_eq_none _ (hwfk _ (Array.getElem_mem hb)) k ho j hjc
+              omega
+            · exact hfall h (hstrict heqc)
+        · rw [if_neg htb] at h
+          by_cases heqc : chunk j level = chunk k level
+          · rw [heqc] at htj
+            exact absurd htj htb
+          · exact hfall h (hstrict heqc)
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- The previous-sibling fallback answers correctly: a `some (j, v)` from
+`maxEntryBelow mask kids c` is a real entry of the `bin`, routes strictly below slot `c`, and is
+greatest among the `bin`'s keys routing strictly below `c` (the `minEntryAbove_spec` mirror). -/
+private theorem maxEntryBelow_spec (pfx level : Nat) (mask : UInt32) (kids : Array (PTree L))
+    (hwf : WF (.bin pfx level mask kids)) (c : UInt32) (hc : c < 32) (j : Nat) (v : V)
+    (h : maxEntryBelow mask kids c = some (j, v)) :
+    get? j (.bin pfx level mask kids) = some v
+    ∧ chunk j level < c
+    ∧ ∀ j2, contains j2 (.bin pfx level mask kids) = true → chunk j2 level < c → j2 ≤ j := by
+  have hwf' := hwf
+  rw [WF] at hwf'
+  obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+  simp only [maxEntryBelow] at h
+  by_cases hm0 : mask &&& lowerMask c = 0
+  · rw [if_pos (beq_iff_eq.mpr hm0)] at h
+    exact absurd h (by simp)
+  · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+    have hs32 : highestSetIdx (mask &&& lowerMask c) < 32 := highestSetIdx_lt _ hm0
+    have htbm : testBit (mask &&& lowerMask c) (highestSetIdx (mask &&& lowerMask c)) = true :=
+      testBit_highestSetIdx _ hm0
+    rw [testBit_and] at htbm
+    obtain ⟨htbs, hlos⟩ := and_split htbm
+    have hcs : highestSetIdx (mask &&& lowerMask c) < c :=
+      lt_of_testBit_lowerMask c _ hc hs32 hlos
+    have hbs : arrayIndex mask (highestSetIdx (mask &&& lowerMask c)) < kids.size := by
+      rw [hsz]; exact arrayIndex_lt mask _ htbs
+    have hcA : childAt mask kids (highestSetIdx (mask &&& lowerMask c))
+        = kids[arrayIndex mask (highestSetIdx (mask &&& lowerMask c))]'hbs := by
+      unfold childAt; rw [Array.getElem?_eq_getElem hbs, Option.getD_some]
+    have hwfc : WF (childAt mask kids (highestSetIdx (mask &&& lowerMask c))) := by
+      rw [hcA]; exact hwfk _ (Array.getElem_mem hbs)
+    have hget : get? j (childAt mask kids (highestSetIdx (mask &&& lowerMask c))) = some v :=
+      get?_of_maxEntry? _ hwfc j v h
+    have hmem : contains j (childAt mask kids (highestSetIdx (mask &&& lowerMask c))) = true := by
+      rw [contains_eq_isSome, hget]; rfl
+    obtain ⟨hcj, hpj⟩ := hal (highestSetIdx (mask &&& lowerMask c)) hs32 htbs j hmem
+    refine ⟨?_, ?_, ?_⟩
+    · rw [get?_bin, hcj, if_pos htbs]
+      exact hget
+    · rw [hcj]; exact hcs
+    · intro j2 hj2 hcj2
+      rw [contains_bin, Bool.and_eq_true] at hj2
+      obtain ⟨htj2, hj2c⟩ := hj2
+      have htm2 : testBit (mask &&& lowerMask c) (chunk j2 level) = true := by
+        rw [testBit_and, htj2, testBit_lowerMask_lt c _ hc hcj2]; rfl
+      have hle2 : chunk j2 level ≤ highestSetIdx (mask &&& lowerMask c) :=
+        le_highestSetIdx_of_testBit _ _ (chunk_lt j2 level) htm2
+      obtain ⟨_, hpj2⟩ := hal (chunk j2 level) (chunk_lt j2 level) htj2 j2 hj2c
+      by_cases heq2 : chunk j2 level = highestSetIdx (mask &&& lowerMask c)
+      · rw [heq2] at hj2c
+        exact le_maxEntry? _ hwfc j v j2 h hj2c
+      · refine Nat.le_of_lt (lt_of_chunk_lt level (hpj2.trans hpj.symm) ?_)
+        rw [hcj]
+        rcases UInt32.lt_or_lt_of_ne heq2 with hlt | hgt
+        · exact hlt
+        · exact absurd (UInt32.le_iff_toNat_le.mp hle2)
+            (by have := UInt32.lt_iff_toNat_lt.mp hgt; omega)
+
+/-- A `none` fallback answer means no present slot lies strictly below `c` at all. -/
+private theorem maxEntryBelow_eq_none (pfx level : Nat) (mask : UInt32) (kids : Array (PTree L))
+    (hwf : WF (.bin pfx level mask kids)) (c : UInt32)
+    (h : maxEntryBelow mask kids c = none) : mask &&& lowerMask c = 0 := by
+  have hwf' := hwf
+  rw [WF] at hwf'
+  obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+  simp only [maxEntryBelow] at h
+  by_cases hm0 : mask &&& lowerMask c = 0
+  · exact hm0
+  · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+    have htbm : testBit (mask &&& lowerMask c) (highestSetIdx (mask &&& lowerMask c)) = true :=
+      testBit_highestSetIdx _ hm0
+    rw [testBit_and] at htbm
+    obtain ⟨htbs, _⟩ := and_split htbm
+    have hbs : arrayIndex mask (highestSetIdx (mask &&& lowerMask c)) < kids.size := by
+      rw [hsz]; exact arrayIndex_lt mask _ htbs
+    have hcA : childAt mask kids (highestSetIdx (mask &&& lowerMask c))
+        = kids[arrayIndex mask (highestSetIdx (mask &&& lowerMask c))]'hbs := by
+      unfold childAt; rw [Array.getElem?_eq_getElem hbs, Option.getD_some]
+    have hsome : (maxEntry? (childAt mask kids (highestSetIdx (mask &&& lowerMask c)))).isSome
+        = true := by
+      rw [hcA]
+      exact isSome_maxEntry? _ (hwfk _ (Array.getElem_mem hbs)) (hnn _ (Array.getElem_mem hbs))
+    rw [h] at hsome
+    simp at hsome
+
+/-- The entry `entryLT?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_entryLT? : (t : PTree L) → WF t → ∀ (k j : Nat) (v : V),
+    entryLT? k t = some (j, v) → get? j t = some v
+  | .nil => fun _ k j v h => by
+      rw [entryLT?] at h
+      exact absurd h (by simp)
+  | .tip pfx leaf => fun hwf k j v h => by
+      simp only [entryLT?] at h
+      rcases Nat.lt_trichotomy pfx (k >>> 5) with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        exact get?_of_maxEntry? _ hwf j v h
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        by_cases hm0 : LeafOps.slotsMask leaf &&& lowerMask (chunk k 0) = 0
+        · rw [if_pos (beq_iff_eq.mpr hm0)] at h
+          exact absurd h (by simp)
+        · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+          obtain ⟨v', hg, hkv⟩ := Option.map_eq_some_iff.mp h
+          injection hkv with hk hv
+          subst hk hv
+          have hs : highestSetIdx (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0)) < 32 :=
+            highestSetIdx_lt _ hm0
+          rw [get?_tip,
+              if_pos (beq_iff_eq.mpr (shiftLeft_lor_shiftRight pfx _ 5
+                (UInt32.lt_iff_toNat_lt.mp hs))),
+              chunk_shiftLeft_lor_zero pfx _ hs]
+          exact hg
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+  | .bin pfx level mask kids => fun hwf k j v h => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+      simp only [entryLT?] at h
+      rcases Nat.lt_trichotomy pfx (prefixAbove k level) with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        exact get?_of_maxEntry? _ hwf j v h
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        by_cases htb : testBit mask (chunk k level) = true
+        · rw [if_pos htb] at h
+          have hb : arrayIndex mask (chunk k level) < kids.size := by
+            rw [hsz]; exact arrayIndex_lt mask _ htb
+          rw [dif_pos hb] at h
+          cases ho : entryLT? k (kids[arrayIndex mask (chunk k level)]'hb) with
+          | some e =>
+            rw [ho] at h
+            replace h : some e = some (j, v) := h
+            injection h with he
+            subst he
+            have hwk : WF (kids[arrayIndex mask (chunk k level)]'hb) :=
+              hwfk _ (Array.getElem_mem hb)
+            have ih := get?_of_entryLT? _ hwk k j v ho
+            have hcA : childAt mask kids (chunk k level)
+                = kids[arrayIndex mask (chunk k level)]'hb := by
+              unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]
+            have hmem : contains j (kids[arrayIndex mask (chunk k level)]'hb) = true := by
+              rw [contains_eq_isSome, ih]; rfl
+            have halk := hal (chunk k level) (chunk_lt k level) htb
+            rw [hcA] at halk
+            obtain ⟨hcj, _⟩ := halk j hmem
+            rw [get?_bin, hcj, if_pos htb, hcA]
+            exact ih
+          | none =>
+            rw [ho] at h
+            replace h : maxEntryBelow mask kids (chunk k level) = some (j, v) := h
+            exact (maxEntryBelow_spec pfx level mask kids hwf (chunk k level)
+              (chunk_lt k level) j v h).1
+        · rw [if_neg htb] at h
+          exact (maxEntryBelow_spec pfx level mask kids hwf (chunk k level)
+            (chunk_lt k level) j v h).1
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- `entryLT?`'s answer is strictly less than the query key (it is a *predecessor*). -/
+theorem entryLT?_lt : (t : PTree L) → WF t → ∀ (k j : Nat) (v : V),
+    entryLT? k t = some (j, v) → j < k
+  | .nil => fun _ k j v h => by
+      rw [entryLT?] at h
+      exact absurd h (by simp)
+  | .tip pfx leaf => fun hwf k j v h => by
+      simp only [entryLT?] at h
+      rcases Nat.lt_trichotomy pfx (k >>> 5) with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        have hmem : contains j (.tip pfx leaf) = true := by
+          rw [contains_eq_isSome, get?_of_maxEntry? _ hwf j v h]; rfl
+        have hj5 : j >>> 5 = pfx := hi_eq_of_contains_tip hmem
+        exact lt_of_shiftRight_lt (n := 5) (by omega)
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        by_cases hm0 : LeafOps.slotsMask leaf &&& lowerMask (chunk k 0) = 0
+        · rw [if_pos (beq_iff_eq.mpr hm0)] at h
+          exact absurd h (by simp)
+        · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+          obtain ⟨v', hg, hkv⟩ := Option.map_eq_some_iff.mp h
+          injection hkv with hk hv
+          subst hk
+          have hs : highestSetIdx (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0)) < 32 :=
+            highestSetIdx_lt _ hm0
+          have htbm := testBit_highestSetIdx _ hm0
+          rw [testBit_and] at htbm
+          obtain ⟨_, hlos⟩ := and_split htbm
+          have hcs : highestSetIdx (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0))
+              < chunk k 0 := lt_of_testBit_lowerMask _ _ (chunk_lt k 0) hs hlos
+          have hkhi : ((pfx <<< 5)
+              ||| (highestSetIdx (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0))).toNat) >>> 5
+              = pfx := shiftLeft_lor_shiftRight pfx _ 5 (UInt32.lt_iff_toNat_lt.mp hs)
+          refine lt_of_chunk_lt 0 ?_ ?_
+          · show _ >>> 5 = k >>> 5
+            rw [hkhi, hpe]
+          · rw [chunk_shiftLeft_lor_zero pfx _ hs]
+            exact hcs
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+  | .bin pfx level mask kids => fun hwf k j v h => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+      simp only [entryLT?] at h
+      rcases Nat.lt_trichotomy pfx (prefixAbove k level) with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        have hmem : contains j (.bin pfx level mask kids) = true := by
+          rw [contains_eq_isSome, get?_of_maxEntry? _ hwf j v h]; rfl
+        rw [contains_bin, Bool.and_eq_true] at hmem
+        obtain ⟨htj, hjc⟩ := hmem
+        obtain ⟨_, hpj⟩ := hal (chunk j level) (chunk_lt j level) htj j hjc
+        rw [← hpj] at hlt
+        exact lt_of_shiftRight_lt hlt
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        have hfall : ∀ (h' : maxEntryBelow mask kids (chunk k level) = some (j, v)), j < k := by
+          intro h'
+          obtain ⟨hget, hclt, _⟩ := maxEntryBelow_spec pfx level mask kids hwf (chunk k level)
+            (chunk_lt k level) j v h'
+          have hmem : contains j (.bin pfx level mask kids) = true := by
+            rw [contains_eq_isSome, hget]; rfl
+          rw [contains_bin, Bool.and_eq_true] at hmem
+          obtain ⟨htj, hjc⟩ := hmem
+          obtain ⟨_, hpj⟩ := hal (chunk j level) (chunk_lt j level) htj j hjc
+          exact lt_of_chunk_lt level (hpj.trans hpe) hclt
+        by_cases htb : testBit mask (chunk k level) = true
+        · rw [if_pos htb] at h
+          have hb : arrayIndex mask (chunk k level) < kids.size := by
+            rw [hsz]; exact arrayIndex_lt mask _ htb
+          rw [dif_pos hb] at h
+          cases ho : entryLT? k (kids[arrayIndex mask (chunk k level)]'hb) with
+          | some e =>
+            rw [ho] at h
+            replace h : some e = some (j, v) := h
+            injection h with he
+            subst he
+            exact entryLT?_lt _ (hwfk _ (Array.getElem_mem hb)) k j v ho
+          | none =>
+            rw [ho] at h
+            replace h : maxEntryBelow mask kids (chunk k level) = some (j, v) := h
+            exact hfall h
+        · rw [if_neg htb] at h
+          exact hfall h
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- A `none` from `entryLT?` is complete: nothing in the trie lies strictly below the query key. -/
+theorem ge_of_entryLT?_eq_none : (t : PTree L) → WF t → ∀ (k : Nat),
+    entryLT? k t = none → ∀ (j : Nat), contains j t = true → k ≤ j
+  | .nil => fun _ k _ j hj => by
+      rw [contains_nil] at hj
+      exact absurd hj (by decide)
+  | .tip pfx leaf => fun hwf k h j hj => by
+      simp only [entryLT?] at h
+      rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj
+      obtain ⟨hj5, hjc⟩ := hj
+      rcases Nat.lt_trichotomy pfx (k >>> 5) with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        have hsome := isSome_maxEntry? (.tip pfx leaf) hwf (by simp)
+        rw [h] at hsome
+        simp at hsome
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        by_cases hm0 : LeafOps.slotsMask leaf &&& lowerMask (chunk k 0) = 0
+        · refine Nat.not_lt.mp fun hjk => ?_
+          have hcc : chunk j 0 < chunk k 0 := chunk0_lt_of_lt (by omega) hjk
+          have htj : testBit (LeafOps.slotsMask leaf) (chunk j 0) = true := by
+            rw [LeafOps.testBit_slotsMask leaf _ (chunk_lt j 0)]
+            exact hjc
+          have htm : testBit (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0)) (chunk j 0)
+              = true := by
+            rw [testBit_and, htj, testBit_lowerMask_lt _ _ (chunk_lt k 0) hcc]; rfl
+          rw [hm0, testBit_zero] at htm
+          exact absurd htm (by decide)
+        · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+          have htbm := testBit_highestSetIdx _ hm0
+          rw [testBit_and] at htbm
+          obtain ⟨htbs, _⟩ := and_split htbm
+          rw [LeafOps.testBit_slotsMask leaf _ (highestSetIdx_lt _ hm0),
+              LeafOps.contains_eq_isSome] at htbs
+          cases hg : LeafOps.get? leaf
+              (highestSetIdx (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0))) with
+          | none => rw [hg] at htbs; simp at htbs
+          | some v' => rw [hg] at h; exact absurd h (by simp)
+      · exact Nat.le_of_lt (lt_of_shiftRight_lt (n := 5) (by omega))
+  | .bin pfx level mask kids => fun hwf k h j hj => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+      simp only [entryLT?] at h
+      rw [contains_bin, Bool.and_eq_true] at hj
+      obtain ⟨htj, hjc⟩ := hj
+      obtain ⟨_, hpj⟩ := hal (chunk j level) (chunk_lt j level) htj j hjc
+      rcases Nat.lt_trichotomy pfx (prefixAbove k level) with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        have hsome := isSome_maxEntry? (.bin pfx level mask kids) hwf (by simp)
+        rw [h] at hsome
+        simp at hsome
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        have hbelow : ∀ (h' : maxEntryBelow mask kids (chunk k level) = none),
+            ¬ (chunk j level < chunk k level) := by
+          intro h' hcc
+          have hm0 := maxEntryBelow_eq_none pfx level mask kids hwf (chunk k level) h'
+          have htm : testBit (mask &&& lowerMask (chunk k level)) (chunk j level) = true := by
+            rw [testBit_and, htj, testBit_lowerMask_lt _ _ (chunk_lt k level) hcc]; rfl
+          rw [hm0, testBit_zero] at htm
+          exact absurd htm (by decide)
+        by_cases htb : testBit mask (chunk k level) = true
+        · rw [if_pos htb] at h
+          have hb : arrayIndex mask (chunk k level) < kids.size := by
+            rw [hsz]; exact arrayIndex_lt mask _ htb
+          rw [dif_pos hb] at h
+          cases ho : entryLT? k (kids[arrayIndex mask (chunk k level)]'hb) with
+          | some e =>
+            rw [ho] at h
+            replace h : some e = none := h
+            exact absurd h (by simp)
+          | none =>
+            rw [ho] at h
+            replace h : maxEntryBelow mask kids (chunk k level) = none := h
+            by_cases heqc : chunk j level = chunk k level
+            · rw [heqc] at hjc htj
+              rw [show childAt mask kids (chunk k level)
+                    = kids[arrayIndex mask (chunk k level)]'hb from by
+                  unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]] at hjc
+              exact ge_of_entryLT?_eq_none _ (hwfk _ (Array.getElem_mem hb)) k ho j hjc
+            · refine Nat.not_lt.mp fun hjk => ?_
+              have hcc : chunk j level ≤ chunk k level :=
+                chunk_le_of_le level (hpj.trans hpe) (Nat.le_of_lt hjk)
+              have hccs : chunk j level < chunk k level := by
+                rcases UInt32.lt_or_lt_of_ne heqc with hlt' | hgt'
+                · exact hlt'
+                · exact absurd (UInt32.le_iff_toNat_le.mp hcc)
+                    (by have := UInt32.lt_iff_toNat_lt.mp hgt'; omega)
+              exact hbelow h hccs
+        · rw [if_neg htb] at h
+          by_cases heqc : chunk j level = chunk k level
+          · rw [heqc] at htj
+            exact absurd htj htb
+          · refine Nat.not_lt.mp fun hjk => ?_
+            have hcc : chunk j level ≤ chunk k level :=
+              chunk_le_of_le level (hpj.trans hpe) (Nat.le_of_lt hjk)
+            have hccs : chunk j level < chunk k level := by
+              rcases UInt32.lt_or_lt_of_ne heqc with hlt' | hgt'
+              · exact hlt'
+              · exact absurd (UInt32.le_iff_toNat_le.mp hcc)
+                  (by have := UInt32.lt_iff_toNat_lt.mp hgt'; omega)
+            exact hbelow h hccs
+      · rw [← hpj] at hgt
+        exact Nat.le_of_lt (lt_of_shiftRight_lt hgt)
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- `entryLT?` returns the *greatest* key below the query key: any present `j < k` is at or below
+the answer. With `entryLT?_lt` and `get?_of_entryLT?`, this pins the predecessor exactly. -/
+theorem le_entryLT? : (t : PTree L) → WF t → ∀ (k j' : Nat) (v : V) (j : Nat),
+    entryLT? k t = some (j', v) → contains j t = true → j < k → j ≤ j'
+  | .nil => fun _ k j' v j h hj _ => by
+      rw [contains_nil] at hj
+      exact absurd hj (by decide)
+  | .tip pfx leaf => fun hwf k j' v j h hj hjk => by
+      simp only [entryLT?] at h
+      have hjmem := hj
+      rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj
+      obtain ⟨hj5, hjc⟩ := hj
+      rcases Nat.lt_trichotomy pfx (k >>> 5) with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        exact le_maxEntry? _ hwf j' v j h hjmem
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        by_cases hm0 : LeafOps.slotsMask leaf &&& lowerMask (chunk k 0) = 0
+        · rw [if_pos (beq_iff_eq.mpr hm0)] at h
+          exact absurd h (by simp)
+        · rw [if_neg (fun hb => hm0 (beq_iff_eq.mp hb))] at h
+          obtain ⟨v', hg, hkv⟩ := Option.map_eq_some_iff.mp h
+          injection hkv with hk hv
+          subst hk
+          have hs : highestSetIdx (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0)) < 32 :=
+            highestSetIdx_lt _ hm0
+          have hkhi : ((pfx <<< 5)
+              ||| (highestSetIdx (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0))).toNat) >>> 5
+              = pfx := shiftLeft_lor_shiftRight pfx _ 5 (UInt32.lt_iff_toNat_lt.mp hs)
+          have hkc : chunk ((pfx <<< 5)
+              ||| (highestSetIdx (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0))).toNat) 0
+              = highestSetIdx (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0)) :=
+            chunk_shiftLeft_lor_zero pfx _ hs
+          have hcc : chunk j 0 < chunk k 0 := chunk0_lt_of_lt (by omega) hjk
+          have htm : testBit (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0)) (chunk j 0)
+              = true := by
+            rw [testBit_and, testBit_lowerMask_lt _ _ (chunk_lt k 0) hcc,
+                LeafOps.testBit_slotsMask leaf _ (chunk_lt j 0)]
+            rw [hjc]; rfl
+          have hle := le_highestSetIdx_of_testBit _ _ (chunk_lt j 0) htm
+          by_cases heq : highestSetIdx (LeafOps.slotsMask leaf &&& lowerMask (chunk k 0))
+              = chunk j 0
+          · exact Nat.le_of_eq
+              ((key_eq_iff _ j).mpr ⟨hkhi.trans hj5.symm, by rw [hkc, heq]⟩).symm
+          · refine Nat.le_of_lt (lt_of_chunk_lt 0 ?_ ?_)
+            · show j >>> 5 = _ >>> 5
+              rw [hkhi, hj5]
+            · rw [hkc]
+              rcases UInt32.lt_or_lt_of_ne heq with hlt' | hgt'
+              · exact absurd (UInt32.le_iff_toNat_le.mp hle)
+                  (by have := UInt32.lt_iff_toNat_lt.mp hlt'; omega)
+              · exact hgt'
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
+  | .bin pfx level mask kids => fun hwf k j' v j h hj hjk => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, hnn, hal⟩ := hwf'
+      simp only [entryLT?] at h
+      have hjmem := hj
+      rw [contains_bin, Bool.and_eq_true] at hj
+      obtain ⟨htj, hjc⟩ := hj
+      obtain ⟨_, hpj⟩ := hal (chunk j level) (chunk_lt j level) htj j hjc
+      rcases Nat.lt_trichotomy pfx (prefixAbove k level) with hlt | hpe | hgt
+      · rw [if_pos hlt] at h
+        exact le_maxEntry? _ hwf j' v j h hjmem
+      · rw [if_neg (by omega), if_neg (by omega)] at h
+        have hccle : chunk j level ≤ chunk k level :=
+          chunk_le_of_le level (hpj.trans hpe) (Nat.le_of_lt hjk)
+        have hfall : ∀ (h' : maxEntryBelow mask kids (chunk k level) = some (j', v)),
+            chunk j level < chunk k level → j ≤ j' := fun h' hccs =>
+          (maxEntryBelow_spec pfx level mask kids hwf (chunk k level)
+            (chunk_lt k level) j' v h').2.2 j hjmem hccs
+        have hstrict : chunk j level ≠ chunk k level → chunk j level < chunk k level := by
+          intro hne
+          rcases UInt32.lt_or_lt_of_ne hne with hlt' | hgt'
+          · exact hlt'
+          · exact absurd (UInt32.le_iff_toNat_le.mp hccle)
+              (by have := UInt32.lt_iff_toNat_lt.mp hgt'; omega)
+        by_cases htb : testBit mask (chunk k level) = true
+        · rw [if_pos htb] at h
+          have hb : arrayIndex mask (chunk k level) < kids.size := by
+            rw [hsz]; exact arrayIndex_lt mask _ htb
+          rw [dif_pos hb] at h
+          have hcA : childAt mask kids (chunk k level)
+              = kids[arrayIndex mask (chunk k level)]'hb := by
+            unfold childAt; rw [Array.getElem?_eq_getElem hb, Option.getD_some]
+          cases ho : entryLT? k (kids[arrayIndex mask (chunk k level)]'hb) with
+          | some e =>
+            rw [ho] at h
+            replace h : some e = some (j', v) := h
+            injection h with he
+            subst he
+            by_cases heqc : chunk j level = chunk k level
+            · rw [heqc, hcA] at hjc
+              exact le_entryLT? _ (hwfk _ (Array.getElem_mem hb)) k j' v j ho hjc hjk
+            · have hccs := hstrict heqc
+              have hget : get? j' (kids[arrayIndex mask (chunk k level)]'hb) = some v :=
+                get?_of_entryLT? _ (hwfk _ (Array.getElem_mem hb)) k j' v ho
+              have hmem' : contains j' (kids[arrayIndex mask (chunk k level)]'hb) = true := by
+                rw [contains_eq_isSome, hget]; rfl
+              have halk := hal (chunk k level) (chunk_lt k level) htb
+              rw [hcA] at halk
+              obtain ⟨hcj', hpj'⟩ := halk j' hmem'
+              refine Nat.le_of_lt (lt_of_chunk_lt level (hpj.trans hpj'.symm) ?_)
+              rw [hcj']
+              exact hccs
+          | none =>
+            rw [ho] at h
+            replace h : maxEntryBelow mask kids (chunk k level) = some (j', v) := h
+            by_cases heqc : chunk j level = chunk k level
+            · rw [heqc, hcA] at hjc
+              have hd := ge_of_entryLT?_eq_none _ (hwfk _ (Array.getElem_mem hb)) k ho j hjc
+              omega
+            · exact hfall h (hstrict heqc)
+        · rw [if_neg htb] at h
+          by_cases heqc : chunk j level = chunk k level
+          · rw [heqc] at htj
+            exact absurd htj htb
+          · exact hfall h (hstrict heqc)
+      · rw [if_neg (by omega), if_pos hgt] at h
+        exact absurd h (by simp)
 termination_by t => sizeOf t
 decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
 

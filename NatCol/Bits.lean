@@ -415,9 +415,24 @@ theorem lowestSetIdx_le_of_testBit (m c : UInt32) (hc : c < 32) (h : testBit m c
   · exact UInt32.le_iff_toNat_le.mpr hge
 
 /-- A slot below `i` is set in the low-mask `lowerMask i` (for in-range `i`). -/
-private theorem testBit_lowerMask_lt (i c : UInt32) (hi : i < 32) (hlt : c < i) :
+theorem testBit_lowerMask_lt (i c : UInt32) (hi : i < 32) (hlt : c < i) :
     testBit (lowerMask i) c = true := by
   unfold testBit lowerMask; bv_decide
+
+/-- The converse: an (in-range) slot set in `lowerMask i` lies strictly below `i`. -/
+theorem lt_of_testBit_lowerMask (i c : UInt32) (hi : i < 32) (hc : c < 32)
+    (h : testBit (lowerMask i) c = true) : c < i := by
+  unfold testBit lowerMask at *; bv_decide
+
+/-- A slot strictly above `i` is set in the high-mask `upperMask i` (for in-range slots). -/
+theorem testBit_upperMask_lt (i c : UInt32) (hc : c < 32) (hlt : i < c) :
+    testBit (upperMask i) c = true := by
+  unfold testBit upperMask lowerMask; bv_decide
+
+/-- The converse: an (in-range) slot set in `upperMask i` lies strictly above `i`. -/
+theorem lt_of_testBit_upperMask (i c : UInt32) (hi : i < 32) (hc : c < 32)
+    (h : testBit (upperMask i) c = true) : i < c := by
+  unfold testBit upperMask lowerMask at *; bv_decide
 
 /-- When every set bit of `m` lies strictly below slot `i`, `arrayIndex m i` counts all of `m`. -/
 theorem arrayIndex_eq_popCount_of_below (m i : UInt32) (hi : i < 32)

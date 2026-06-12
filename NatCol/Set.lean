@@ -660,6 +660,82 @@ theorem max?_mem {s : NatSet} {k : Nat} (h : s.max? = some k) : k ∈ s :=
 theorem le_max? {s : NatSet} {k j : Nat} (h : s.max? = some k) (hj : j ∈ s) : j ≤ k :=
   NatCollection.le_maxKey? s k j h hj
 
+/-- The successor is a member: a `succ? k = some j` answer is an element of the set. -/
+theorem succ?_mem {s : NatSet} {k j : Nat} (h : s.succ? k = some j) : j ∈ s := by
+  replace h : (NatCollection.entryGT? s k).map Prod.fst = some j := h
+  obtain ⟨⟨j', v⟩, hgt, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj : j' = j := hfst
+  subst hj
+  show NatCollection.contains s j' = true
+  rw [NatCollection.contains_eq, NatCollection.get?_of_entryGT? s k j' v hgt]
+  rfl
+
+/-- The successor is strictly greater: `succ? k`'s answer lies strictly above `k`. -/
+theorem succ?_gt {s : NatSet} {k j : Nat} (h : s.succ? k = some j) : k < j := by
+  replace h : (NatCollection.entryGT? s k).map Prod.fst = some j := h
+  obtain ⟨⟨j', v⟩, hgt, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj : j' = j := hfst
+  subst hj
+  exact NatCollection.entryGT?_gt s k j' v hgt
+
+/-- The successor is the *least* element above `k`: any member strictly above `k` is at or above
+`succ? k`'s answer. With `succ?_mem` and `succ?_gt`, this pins the successor exactly. -/
+theorem succ?_le {s : NatSet} {k j' j : Nat} (h : s.succ? k = some j') (hj : j ∈ s)
+    (hk : k < j) : j' ≤ j := by
+  replace h : (NatCollection.entryGT? s k).map Prod.fst = some j' := h
+  obtain ⟨⟨j'', v⟩, hgt, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj'' : j'' = j' := hfst
+  subst hj''
+  exact NatCollection.entryGT?_le s k j'' v j hgt hj hk
+
+/-- A `none` from `succ?` is complete: no element of the set lies strictly above `k`. -/
+theorem le_of_succ?_eq_none {s : NatSet} {k j : Nat} (h : s.succ? k = none) (hj : j ∈ s) :
+    j ≤ k := by
+  cases hgt : NatCollection.entryGT? s k with
+  | none => exact NatCollection.le_of_entryGT?_eq_none s k hgt j hj
+  | some e =>
+    replace h : (NatCollection.entryGT? s k).map Prod.fst = none := h
+    rw [hgt] at h
+    exact absurd h (by simp)
+
+/-- The predecessor is a member: a `pred? k = some j` answer is an element of the set. -/
+theorem pred?_mem {s : NatSet} {k j : Nat} (h : s.pred? k = some j) : j ∈ s := by
+  replace h : (NatCollection.entryLT? s k).map Prod.fst = some j := h
+  obtain ⟨⟨j', v⟩, hlt, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj : j' = j := hfst
+  subst hj
+  show NatCollection.contains s j' = true
+  rw [NatCollection.contains_eq, NatCollection.get?_of_entryLT? s k j' v hlt]
+  rfl
+
+/-- The predecessor is strictly less: `pred? k`'s answer lies strictly below `k`. -/
+theorem pred?_lt {s : NatSet} {k j : Nat} (h : s.pred? k = some j) : j < k := by
+  replace h : (NatCollection.entryLT? s k).map Prod.fst = some j := h
+  obtain ⟨⟨j', v⟩, hlt, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj : j' = j := hfst
+  subst hj
+  exact NatCollection.entryLT?_lt s k j' v hlt
+
+/-- The predecessor is the *greatest* element below `k`: any member strictly below `k` is at or
+below `pred? k`'s answer. With `pred?_mem` and `pred?_lt`, this pins the predecessor exactly. -/
+theorem le_pred? {s : NatSet} {k j' j : Nat} (h : s.pred? k = some j') (hj : j ∈ s)
+    (hk : j < k) : j ≤ j' := by
+  replace h : (NatCollection.entryLT? s k).map Prod.fst = some j' := h
+  obtain ⟨⟨j'', v⟩, hlt, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hj'' : j'' = j' := hfst
+  subst hj''
+  exact NatCollection.le_entryLT? s k j'' v j hlt hj hk
+
+/-- A `none` from `pred?` is complete: no element of the set lies strictly below `k`. -/
+theorem ge_of_pred?_eq_none {s : NatSet} {k j : Nat} (h : s.pred? k = none) (hj : j ∈ s) :
+    k ≤ j := by
+  cases hlt : NatCollection.entryLT? s k with
+  | none => exact NatCollection.ge_of_entryLT?_eq_none s k hlt j hj
+  | some e =>
+    replace h : (NatCollection.entryLT? s k).map Prod.fst = none := h
+    rw [hlt] at h
+    exact absurd h (by simp)
+
 end NatSet
 
 end NatCol

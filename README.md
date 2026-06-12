@@ -137,6 +137,9 @@ Proven generically over `NatCollection` and lifted to `NatSet`/`NatMap` (the `Na
 - `get?`-after-`insert`, the membership/lookup spec, inclusion–exclusion on `size`, etc.
 - `min?`/`max?` (`minEntry?`/`maxEntry?` on maps) return a **real member** whose key is a
   **lower/upper bound** on every present key.
+- `succ?`/`pred?` (`entryGT?`/`entryLT?` on maps) return the **exact successor/predecessor**:
+  a real member strictly beyond the query key, the **nearest** such, and a `none` answer is
+  **complete** (nothing lies beyond the query key).
 - `NatSet`/`NatMap` are `LawfulBEq`; `NatMap` is a `LawfulFunctor`.
 
 Each law is backed by `#guard` example-tests on concrete (including multi-level, cross-prefix)

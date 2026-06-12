@@ -560,6 +560,46 @@ theorem le_maxKey? (c : NatCollection L) (k j : Nat) (h : c.maxKey? = some k)
   subst hk
   exact le_maxEntry? c k' v j hmax hj
 
+/-- The entry `entryGT?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_entryGT? (c : NatCollection L) (k j : Nat) (v : V)
+    (h : c.entryGT? k = some (j, v)) : c.get? j = some v :=
+  PTree.get?_of_entryGT? c.tree c.wf k j v h
+
+/-- `entryGT?`'s answer is strictly greater than the query key. -/
+theorem entryGT?_gt (c : NatCollection L) (k j : Nat) (v : V)
+    (h : c.entryGT? k = some (j, v)) : k < j :=
+  PTree.entryGT?_gt c.tree c.wf k j v h
+
+/-- `entryGT?` returns the *least* key beyond the query key. -/
+theorem entryGT?_le (c : NatCollection L) (k j' : Nat) (v : V) (j : Nat)
+    (h : c.entryGT? k = some (j', v)) (hj : c.contains j = true) (hk : k < j) : j' ≤ j :=
+  PTree.entryGT?_le c.tree c.wf k j' v j h hj hk
+
+/-- A `none` from `entryGT?` is complete: no present key lies strictly above the query key. -/
+theorem le_of_entryGT?_eq_none (c : NatCollection L) (k : Nat) (h : c.entryGT? k = none)
+    (j : Nat) (hj : c.contains j = true) : j ≤ k :=
+  PTree.le_of_entryGT?_eq_none c.tree c.wf k h j hj
+
+/-- The entry `entryLT?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_entryLT? (c : NatCollection L) (k j : Nat) (v : V)
+    (h : c.entryLT? k = some (j, v)) : c.get? j = some v :=
+  PTree.get?_of_entryLT? c.tree c.wf k j v h
+
+/-- `entryLT?`'s answer is strictly less than the query key. -/
+theorem entryLT?_lt (c : NatCollection L) (k j : Nat) (v : V)
+    (h : c.entryLT? k = some (j, v)) : j < k :=
+  PTree.entryLT?_lt c.tree c.wf k j v h
+
+/-- `entryLT?` returns the *greatest* key below the query key. -/
+theorem le_entryLT? (c : NatCollection L) (k j' : Nat) (v : V) (j : Nat)
+    (h : c.entryLT? k = some (j', v)) (hj : c.contains j = true) (hk : j < k) : j ≤ j' :=
+  PTree.le_entryLT? c.tree c.wf k j' v j h hj hk
+
+/-- A `none` from `entryLT?` is complete: no present key lies strictly below the query key. -/
+theorem ge_of_entryLT?_eq_none (c : NatCollection L) (k : Nat) (h : c.entryLT? k = none)
+    (j : Nat) (hj : c.contains j = true) : k ≤ j :=
+  PTree.ge_of_entryLT?_eq_none c.tree c.wf k h j hj
+
 end NatCollection
 
 end NatCol

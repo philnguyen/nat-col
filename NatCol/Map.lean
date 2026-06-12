@@ -859,6 +859,72 @@ theorem mem_domain (m : NatMap α) (k : Nat) : k ∈ m.domain ↔ k ∈ m := by
   show m.domain.contains k = true ↔ m.contains k = true
   rw [contains_domain]
 
+/-- The entry `minEntry?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_minEntry? {m : NatMap α} {k : Nat} {v : α} (h : m.minEntry? = some (k, v)) :
+    m.get? k = some v :=
+  NatCollection.get?_of_minEntry? m k v h
+
+/-- The entry `maxEntry?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_maxEntry? {m : NatMap α} {k : Nat} {v : α} (h : m.maxEntry? = some (k, v)) :
+    m.get? k = some v :=
+  NatCollection.get?_of_maxEntry? m k v h
+
+/-- The least key is present: a `minKey? = some k` answer is a key of the map. -/
+theorem minKey?_mem {m : NatMap α} {k : Nat} (h : m.minKey? = some k) : k ∈ m :=
+  NatCollection.contains_of_minKey? m k h
+
+/-- The least key is a lower bound: no key of the map is below `minKey?`'s answer. -/
+theorem minKey?_le {m : NatMap α} {k j : Nat} (h : m.minKey? = some k) (hj : j ∈ m) : k ≤ j :=
+  NatCollection.minKey?_le m k j h hj
+
+/-- The greatest key is present: a `maxKey? = some k` answer is a key of the map. -/
+theorem maxKey?_mem {m : NatMap α} {k : Nat} (h : m.maxKey? = some k) : k ∈ m :=
+  NatCollection.contains_of_maxKey? m k h
+
+/-- The greatest key is an upper bound: no key of the map is above `maxKey?`'s answer. -/
+theorem le_maxKey? {m : NatMap α} {k j : Nat} (h : m.maxKey? = some k) (hj : j ∈ m) : j ≤ k :=
+  NatCollection.le_maxKey? m k j h hj
+
+/-- The entry `entryGT?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_entryGT? {m : NatMap α} {k j : Nat} {v : α} (h : m.entryGT? k = some (j, v)) :
+    m.get? j = some v :=
+  NatCollection.get?_of_entryGT? m k j v h
+
+/-- `entryGT?`'s key is strictly greater than the query key. -/
+theorem entryGT?_gt {m : NatMap α} {k j : Nat} {v : α} (h : m.entryGT? k = some (j, v)) :
+    k < j :=
+  NatCollection.entryGT?_gt m k j v h
+
+/-- `entryGT?` returns the *least* key beyond the query key. -/
+theorem entryGT?_le {m : NatMap α} {k j' j : Nat} {v : α} (h : m.entryGT? k = some (j', v))
+    (hj : j ∈ m) (hk : k < j) : j' ≤ j :=
+  NatCollection.entryGT?_le m k j' v j h hj hk
+
+/-- A `none` from `entryGT?` is complete: no key of the map lies strictly above the query key. -/
+theorem le_of_entryGT?_eq_none {m : NatMap α} {k j : Nat} (h : m.entryGT? k = none)
+    (hj : j ∈ m) : j ≤ k :=
+  NatCollection.le_of_entryGT?_eq_none m k h j hj
+
+/-- The entry `entryLT?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_entryLT? {m : NatMap α} {k j : Nat} {v : α} (h : m.entryLT? k = some (j, v)) :
+    m.get? j = some v :=
+  NatCollection.get?_of_entryLT? m k j v h
+
+/-- `entryLT?`'s key is strictly less than the query key. -/
+theorem entryLT?_lt {m : NatMap α} {k j : Nat} {v : α} (h : m.entryLT? k = some (j, v)) :
+    j < k :=
+  NatCollection.entryLT?_lt m k j v h
+
+/-- `entryLT?` returns the *greatest* key below the query key. -/
+theorem le_entryLT? {m : NatMap α} {k j' j : Nat} {v : α} (h : m.entryLT? k = some (j', v))
+    (hj : j ∈ m) (hk : j < k) : j ≤ j' :=
+  NatCollection.le_entryLT? m k j' v j h hj hk
+
+/-- A `none` from `entryLT?` is complete: no key of the map lies strictly below the query key. -/
+theorem ge_of_entryLT?_eq_none {m : NatMap α} {k j : Nat} (h : m.entryLT? k = none)
+    (hj : j ∈ m) : k ≤ j :=
+  NatCollection.ge_of_entryLT?_eq_none m k h j hj
+
 end NatMap
 
 /-- `NatMap` is a lawful functor: `map` satisfies the identity and composition laws (and the
