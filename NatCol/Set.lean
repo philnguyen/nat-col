@@ -815,44 +815,12 @@ theorem gt_of_predEq?_eq_none {s : NatSet} {k j : Nat} (h : s.predEq? k = none) 
 /-- Membership in `split`'s left part: exactly the members strictly below the split key. -/
 theorem mem_split_left {s : NatSet} {k j : Nat} : j ∈ (s.split k).1 ↔ j ∈ s ∧ j < k := by
   show NatCollection.contains (NatCollection.filterLt s k) j = true ↔ _
-  rw [NatCollection.contains_eq, NatCollection.get?_filterLt]
-  constructor
-  · intro h
-    by_cases hjk : j < k
-    · rw [if_pos hjk] at h
-      refine ⟨?_, hjk⟩
-      show NatCollection.contains s j = true
-      rw [NatCollection.contains_eq]
-      exact h
-    · rw [if_neg hjk] at h
-      simp at h
-  · intro h
-    obtain ⟨hm, hjk⟩ := h
-    rw [if_pos hjk]
-    replace hm : NatCollection.contains s j = true := hm
-    rw [NatCollection.contains_eq] at hm
-    exact hm
+  exact NatCollection.contains_filterLt_iff
 
 /-- Membership in `split`'s right part: exactly the members at or above the split key. -/
 theorem mem_split_right {s : NatSet} {k j : Nat} : j ∈ (s.split k).2 ↔ j ∈ s ∧ k ≤ j := by
   show NatCollection.contains (NatCollection.filterGE s k) j = true ↔ _
-  rw [NatCollection.contains_eq, NatCollection.get?_filterGE]
-  constructor
-  · intro h
-    by_cases hjk : k ≤ j
-    · rw [if_pos hjk] at h
-      refine ⟨?_, hjk⟩
-      show NatCollection.contains s j = true
-      rw [NatCollection.contains_eq]
-      exact h
-    · rw [if_neg hjk] at h
-      simp at h
-  · intro h
-    obtain ⟨hm, hjk⟩ := h
-    rw [if_pos hjk]
-    replace hm : NatCollection.contains s j = true := hm
-    rw [NatCollection.contains_eq] at hm
-    exact hm
+  exact NatCollection.contains_filterGE_iff
 
 /-- Every member of `split`'s left part lies strictly below the split key. -/
 theorem lt_of_mem_split_left {s : NatSet} {k j : Nat} (h : j ∈ (s.split k).1) : j < k :=
@@ -866,58 +834,19 @@ theorem le_of_mem_split_right {s : NatSet} {k j : Nat} (h : j ∈ (s.split k).2)
 theorem mem_range {s : NatSet} {lo hi j : Nat} :
     j ∈ s.range lo hi ↔ j ∈ s ∧ lo ≤ j ∧ j ≤ hi := by
   show NatCollection.contains (NatCollection.range s lo hi) j = true ↔ _
-  rw [NatCollection.contains_eq, NatCollection.get?_range]
-  constructor
-  · intro h
-    by_cases hin : lo ≤ j ∧ j ≤ hi
-    · rw [if_pos hin] at h
-      refine ⟨?_, hin.1, hin.2⟩
-      show NatCollection.contains s j = true
-      rw [NatCollection.contains_eq]
-      exact h
-    · rw [if_neg hin] at h
-      simp at h
-  · intro h
-    obtain ⟨hm, h1, h2⟩ := h
-    rw [if_pos ⟨h1, h2⟩]
-    replace hm : NatCollection.contains s j = true := hm
-    rw [NatCollection.contains_eq] at hm
-    exact hm
+  exact NatCollection.contains_range_iff
 
 /-- Membership after `erase`: `j` survives exactly when it was present and is not the erased
 element. -/
 theorem mem_erase {s : NatSet} {k j : Nat} : j ∈ s.erase k ↔ j ∈ s ∧ j ≠ k := by
   show NatCollection.contains (NatCollection.erase s k) j = true ↔ _
-  rw [NatCollection.contains_erase, Bool.and_eq_true]
-  constructor
-  · intro h
-    obtain ⟨h1, h2⟩ := h
-    refine ⟨h1, ?_⟩
-    intro he
-    rw [he] at h2
-    simp at h2
-  · intro h
-    obtain ⟨h1, h2⟩ := h
-    exact ⟨h1, by simp [h2]⟩
+  exact NatCollection.contains_erase_iff
 
 /-- Disjointness characterization: `s.isDisjoint t` holds exactly when the two sets share no
 element. -/
 theorem isDisjoint_iff {s t : NatSet} : s.isDisjoint t = true ↔ ∀ k, k ∈ s → k ∉ t := by
   show NatCollection.isDisjoint s t = true ↔ _
-  rw [NatCollection.isDisjoint_iff]
-  constructor
-  · intro h k hks hkt
-    have hpair := h k
-    replace hks : NatCollection.contains s k = true := hks
-    replace hkt : NatCollection.contains t k = true := hkt
-    rw [hks, hkt] at hpair
-    exact absurd hpair (by decide)
-  · intro h k
-    cases hks : NatCollection.contains s k with
-    | false => rw [Bool.false_and]
-    | true => cases hkt : NatCollection.contains t k with
-      | false => rw [Bool.and_false]
-      | true => exact absurd (show k ∈ t from hkt) (h k hks)
+  exact NatCollection.isDisjoint_iff_forall_not
 
 /-- Disjointness is symmetric: if `s` is disjoint from `t`, then `t` is disjoint from `s`. -/
 theorem isDisjoint_symm {s t : NatSet} (h : s.isDisjoint t = true) : t.isDisjoint s = true :=
@@ -939,20 +868,7 @@ theorem diff_self (s : NatSet) : s \ s = ∅ :=
 /-- Membership in a difference: `j ∈ s \ t` exactly when `j ∈ s` and `j ∉ t`. -/
 theorem mem_diff {s t : NatSet} {j : Nat} : j ∈ s \ t ↔ j ∈ s ∧ j ∉ t := by
   show NatCollection.contains (NatCollection.diff s t) j = true ↔ _
-  rw [NatCollection.contains_diff, Bool.and_eq_true]
-  constructor
-  · intro h
-    obtain ⟨h1, h2⟩ := h
-    refine ⟨h1, fun hmem => ?_⟩
-    replace hmem : NatCollection.contains t j = true := hmem
-    rw [hmem] at h2
-    exact absurd h2 (by decide)
-  · intro h
-    obtain ⟨h1, h2⟩ := h
-    refine ⟨h1, ?_⟩
-    cases hc : NatCollection.contains t j with
-    | false => rfl
-    | true => exact absurd (show j ∈ t from hc) h2
+  exact NatCollection.contains_diff_iff
 
 /-- **Difference detects the subset order**: `s \ t` is empty exactly when `s ⊆ t` — the
 strengthening of `diff_self` (the `s ⊆ s` instance) to the full order. -/
@@ -1012,39 +928,7 @@ of the two sets. -/
 theorem mem_symmDiff {s t : NatSet} {j : Nat} :
     j ∈ s.symmDiff t ↔ (j ∈ s ∧ j ∉ t) ∨ (j ∉ s ∧ j ∈ t) := by
   show NatCollection.contains (NatCollection.symmDiff s t) j = true ↔ _
-  rw [NatCollection.contains_symmDiff]
-  constructor
-  · intro h
-    cases hs : NatCollection.contains s j with
-    | true =>
-      refine Or.inl ⟨hs, fun hmem => ?_⟩
-      replace hmem : NatCollection.contains t j = true := hmem
-      rw [hs, hmem] at h
-      exact absurd h (by decide)
-    | false =>
-      cases ht : NatCollection.contains t j with
-      | true =>
-        refine Or.inr ⟨fun hmem => ?_, ht⟩
-        replace hmem : NatCollection.contains s j = true := hmem
-        rw [hmem] at hs
-        exact absurd hs (by decide)
-      | false =>
-        rw [hs, ht] at h
-        exact absurd h (by decide)
-  · intro h
-    rcases h with ⟨h1, h2⟩ | ⟨h1, h2⟩
-    · replace h1 : NatCollection.contains s j = true := h1
-      have h2' : NatCollection.contains t j = false := by
-        cases hc : NatCollection.contains t j with
-        | false => rfl
-        | true => exact absurd (show j ∈ t from hc) h2
-      rw [h1, h2']; rfl
-    · replace h2 : NatCollection.contains t j = true := h2
-      have h1' : NatCollection.contains s j = false := by
-        cases hc : NatCollection.contains s j with
-        | false => rfl
-        | true => exact absurd (show j ∈ s from hc) h1
-      rw [h1', h2]; rfl
+  exact NatCollection.contains_symmDiff_iff
 
 /-- **Symmetric difference detects equality**: `s.symmDiff t` is empty exactly when `s = t` —
 the `symmDiff` companion of `diff_eq_empty_iff_subset` (`symmDiff_self` is the reflexive

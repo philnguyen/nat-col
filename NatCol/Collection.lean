@@ -329,6 +329,13 @@ theorem contains_diff (a b : NatCollection L) (k : Nat) :
     (a.diff b).contains k = (a.contains k && !b.contains k) :=
   PTree.contains_diff k a.tree b.tree a.wf b.wf
 
+/-- Membership in a `diff`, in `Prop` form: a key survives exactly when present in `a` and
+absent from `b`. -/
+theorem contains_diff_iff {a b : NatCollection L} {k : Nat} :
+    (a.diff b).contains k = true ↔ a.contains k = true ∧ ¬ b.contains k = true := by
+  rw [contains_diff]
+  cases a.contains k <;> cases b.contains k <;> simp
+
 /-- **`get?` of a `symmDiff`**: the value-level symmetric difference of the two lookups — a key
 reads through with its own side's value exactly when present in exactly one operand (shared keys
 cancel, whatever their values). -/
@@ -340,6 +347,15 @@ theorem get?_symmDiff (a b : NatCollection L) (k : Nat) :
 theorem contains_symmDiff (a b : NatCollection L) (k : Nat) :
     (a.symmDiff b).contains k = (a.contains k != b.contains k) :=
   PTree.contains_symmDiff k a.tree b.tree a.wf b.wf
+
+/-- Membership in a `symmDiff`, in `Prop` form: a key survives exactly when it is present in
+exactly one operand. -/
+theorem contains_symmDiff_iff {a b : NatCollection L} {k : Nat} :
+    (a.symmDiff b).contains k = true ↔
+      (a.contains k = true ∧ ¬ b.contains k = true)
+        ∨ (¬ a.contains k = true ∧ b.contains k = true) := by
+  rw [contains_symmDiff]
+  cases a.contains k <;> cases b.contains k <;> simp
 
 /-- **`get?` of an `insert`**: the inserted key reads the new value; every other key is read
 unchanged. -/
@@ -1062,6 +1078,12 @@ theorem contains_erase (c : NatCollection L) (k j : Nat) :
   · rw [if_neg hjk, beq_eq_false_iff_ne.mpr hjk]
     simp
 
+/-- Membership after `erase`, in `Prop` form: `j` survives exactly when it was present and is
+not the erased key. -/
+theorem contains_erase_iff {c : NatCollection L} {k j : Nat} :
+    (c.erase k).contains j = true ↔ c.contains j = true ∧ j ≠ k := by
+  rw [contains_erase, Bool.and_eq_true, Bool.not_eq_true', beq_eq_false_iff_ne]
+
 /-! ### Range-restriction denotation -/
 
 /-- Lookup after `filterLt`: a key reads through exactly when it is strictly below the bound. -/
@@ -1087,6 +1109,30 @@ theorem get?_range (c : NatCollection L) (lo hi j : Nat) :
     · rw [if_neg h2, if_neg (fun h => h2 h.1)]
   · rw [if_neg h1, if_neg (fun h => h1 (by omega))]
 
+/-- A guarded lookup equation converts to a membership `iff`: when `d` reads through to `c`
+exactly under `P`, membership in `d` is membership in `c` together with `P`. -/
+private theorem contains_iff_of_get?_ite {d c : NatCollection L} {P : Prop} [Decidable P]
+    {j : Nat} (h : d.get? j = if P then c.get? j else none) :
+    d.contains j = true ↔ c.contains j = true ∧ P := by
+  rw [contains_eq, contains_eq, h]
+  by_cases hp : P <;> simp [hp]
+
+/-- Membership after `filterLt`, in `Prop` form: exactly the keys strictly below the bound. -/
+theorem contains_filterLt_iff {c : NatCollection L} {k j : Nat} :
+    (c.filterLt k).contains j = true ↔ c.contains j = true ∧ j < k :=
+  contains_iff_of_get?_ite (get?_filterLt c k j)
+
+/-- Membership after `filterGE`, in `Prop` form: exactly the keys at or above the bound. -/
+theorem contains_filterGE_iff {c : NatCollection L} {k j : Nat} :
+    (c.filterGE k).contains j = true ↔ c.contains j = true ∧ k ≤ j :=
+  contains_iff_of_get?_ite (get?_filterGE c k j)
+
+/-- Membership in `range`, in `Prop` form: exactly the keys within the inclusive window
+`[lo, hi]`. -/
+theorem contains_range_iff {c : NatCollection L} {lo hi j : Nat} :
+    (c.range lo hi).contains j = true ↔ c.contains j = true ∧ lo ≤ j ∧ j ≤ hi :=
+  contains_iff_of_get?_ite (get?_range c lo hi j)
+
 /-! ### Disjointness denotation -/
 
 /-- Disjointness characterization: `isDisjoint` answers `true` exactly when no key is present in
@@ -1106,6 +1152,25 @@ theorem contains_eq_false_of_isDisjoint {a b : NatCollection L} {k : Nat}
   have hpair := isDisjoint_iff.mp h k
   rw [hk, Bool.true_and] at hpair
   exact hpair
+
+/-- Disjointness, in `Prop` form: `isDisjoint` answers `true` exactly when no key present in
+`a` is present in `b`. -/
+theorem isDisjoint_iff_forall_not {a b : NatCollection L} :
+    a.isDisjoint b = true ↔ ∀ k, a.contains k = true → ¬ b.contains k = true := by
+  constructor
+  · intro h k hk hb
+    rw [contains_eq_false_of_isDisjoint h hk] at hb
+    exact absurd hb (by decide)
+  · intro h
+    rw [isDisjoint_iff]
+    intro k
+    cases hka : a.contains k with
+    | false => rw [Bool.false_and]
+    | true =>
+      rw [Bool.true_and]
+      cases hkb : b.contains k with
+      | false => rfl
+      | true => exact absurd hkb (h k hka)
 
 end NatCollection
 
