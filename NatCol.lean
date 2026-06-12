@@ -8,3 +8,4 @@ import NatCol.Set
 import NatCol.Map
 import NatCol.Countable
 import NatCol.IndexedSet
+import NatCol.IndexedMap

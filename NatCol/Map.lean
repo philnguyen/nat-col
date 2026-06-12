@@ -760,6 +760,68 @@ theorem insert_of_get? {m : NatMap α} {k : Nat} {v : α} (h : m.get? k = some v
   · rw [if_pos hj, hj]; exact h.symm
   · rw [if_neg hj]
 
+/-- Membership after `insert`: `j` is present exactly when it was already present or is the
+inserted key. -/
+theorem mem_insert {m : NatMap α} {k j : Nat} {v : α} : j ∈ m.insert k v ↔ j ∈ m ∨ j = k := by
+  show NatCollection.contains (NatCollection.insert m k v) j = true
+      ↔ NatCollection.contains m j = true ∨ j = k
+  rw [NatCollection.contains_eq, NatCollection.contains_eq, NatCollection.get?_insert]
+  by_cases hk : j = k
+  · simp [hk]
+  · simp [hk]
+
+/-- `modify` never changes the key set: it rewrites the value at `k` when present and is a no-op
+when absent. -/
+theorem mem_modify {m : NatMap α} {k j : Nat} {f : α → α} : j ∈ m.modify k f ↔ j ∈ m := by
+  show NatCollection.contains (NatCollection.modify m k f) j = true
+      ↔ NatCollection.contains m j = true
+  unfold NatCollection.modify
+  cases hg : NatCollection.get? m k with
+  | none => exact Iff.rfl
+  | some v =>
+    rw [NatCollection.contains_eq, NatCollection.contains_eq, NatCollection.get?_insert]
+    by_cases hk : j = k
+    · subst hk
+      rw [if_pos rfl, hg]
+      simp
+    · rw [if_neg hk]
+
+/-- `alter` adds no key other than the altered one: a key of the result was already a key of the
+map, or is `k` itself. -/
+theorem mem_of_mem_alter {m : NatMap α} {k j : Nat} {f : Option α → Option α}
+    (h : j ∈ m.alter k f) : j ∈ m ∨ j = k := by
+  replace h : NatCollection.contains (NatCollection.alter m k f) j = true := h
+  unfold NatCollection.alter at h
+  cases hf : f (NatCollection.get? m k) with
+  | some v =>
+    rw [hf] at h
+    replace h : j ∈ m.insert k v := h
+    exact mem_insert.mp h
+  | none =>
+    rw [hf] at h
+    replace h : NatCollection.contains (NatCollection.erase m k) j = true := h
+    exact Or.inl (NatCollection.contains_erase_iff.mp h).1
+
+/-- Membership in a `join`: a key is present exactly when present in either operand (`combine`
+only affects values). -/
+theorem mem_join (combine : α → α → α) (m₁ m₂ : NatMap α) (j : Nat) :
+    j ∈ m₁.join combine m₂ ↔ j ∈ m₁ ∨ j ∈ m₂ := by
+  show NatCollection.contains (NatCollection.join combine m₁ m₂) j = true
+      ↔ NatCollection.contains m₁ j = true ∨ NatCollection.contains m₂ j = true
+  rw [NatCollection.contains_eq, NatCollection.contains_eq, NatCollection.contains_eq,
+      NatCollection.get?_join]
+  cases h₁ : NatCollection.get? m₁ j <;> cases h₂ : NatCollection.get? m₂ j <;> simp [optVjoin]
+
+/-- Membership in a `meet`: a key is present exactly when present in both operands (`combine`
+only affects values). -/
+theorem mem_meet (combine : α → α → α) (m₁ m₂ : NatMap α) (j : Nat) :
+    j ∈ m₁.meet combine m₂ ↔ j ∈ m₁ ∧ j ∈ m₂ := by
+  show NatCollection.contains (NatCollection.meet combine m₁ m₂) j = true
+      ↔ NatCollection.contains m₁ j = true ∧ NatCollection.contains m₂ j = true
+  rw [NatCollection.contains_eq, NatCollection.contains_eq, NatCollection.contains_eq,
+      NatCollection.get?_meet]
+  cases h₁ : NatCollection.get? m₁ j <;> cases h₂ : NatCollection.get? m₂ j <;> simp [optVmeet]
+
 /-- Joining a map with itself preserves its keys — *regardless* of the value-combining function:
 a key survives on either side, so the set of keys is unchanged. (The values do change, to
 `combine v v`; see `get?_join_self`.) -/
@@ -1032,6 +1094,21 @@ theorem popMaxEntry?_erase {m : NatMap α} {e : Nat × α} {m' : NatMap α}
 /-- `popMaxEntry?` answers `none` exactly on the empty map. -/
 theorem popMaxEntry?_eq_none {m : NatMap α} : m.popMaxEntry? = none ↔ m = NatMap.empty :=
   NatCollection.popMaxEntry?_eq_none m
+
+/-- `minKey?` answers `none` exactly on the empty map (totality: a non-empty map has a least
+key). -/
+theorem minKey?_eq_none {m : NatMap α} : m.minKey? = none ↔ m = NatMap.empty := by
+  rw [← popMinEntry?_eq_none]
+  show (NatCollection.minEntry? m).map Prod.fst = none ↔ NatCollection.popMinEntry? m = none
+  unfold NatCollection.popMinEntry?
+  cases hm : NatCollection.minEntry? m <;> simp
+
+/-- `maxKey?` answers `none` exactly on the empty map. -/
+theorem maxKey?_eq_none {m : NatMap α} : m.maxKey? = none ↔ m = NatMap.empty := by
+  rw [← popMaxEntry?_eq_none]
+  show (NatCollection.maxEntry? m).map Prod.fst = none ↔ NatCollection.popMaxEntry? m = none
+  unfold NatCollection.popMaxEntry?
+  cases hm : NatCollection.maxEntry? m <;> simp
 
 /-- Lookup after `erase`: the erased key reads `none`, every other key is unchanged. -/
 theorem get?_erase (m : NatMap α) (k j : Nat) :
