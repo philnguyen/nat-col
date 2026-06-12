@@ -139,6 +139,12 @@ def diff : NatMap α → NatMap α → NatMap α := NatCollection.diff
 /-- Symmetric difference: the entries whose key is in exactly one of `m₁`, `m₂` (entries at
 shared keys are dropped, whatever their values). A structural merge walk. -/
 def symmDiff : NatMap α → NatMap α → NatMap α := NatCollection.symmDiff
+/-- Split at `k`: the entries with key `< k`, the value at `k` (if any), and the entries with
+key `> k` — structural prunes along `k`'s routed path; off-path subtrees are shared. -/
+def split (m : NatMap α) (k : Nat) : NatMap α × Option α × NatMap α :=
+  (NatCollection.filterLt m k, m.get? k, NatCollection.filterGE m (k + 1))
+/-- The entries with key in the inclusive range `[lo, hi]` — a double structural prune. -/
+def range (m : NatMap α) (lo hi : Nat) : NatMap α := NatCollection.range m lo hi
 
 /-- All `(key, value)` pairs, ascending by key. -/
 def toList : NatMap α → List (Nat × α) := NatCollection.toList
@@ -301,6 +307,15 @@ private def m1 : NatMap Nat := NatMap.empty.insert 1 10 |>.insert 2 20 |>.insert
   let m := NatMap.ofList [(1, 10), (5000, 3)]
   (m.symmDiff m).isEmpty && m.symmDiff (∅ : NatMap Nat) == m
 #guard (NatMap.ofList [(1, 10)]).symmDiff (NatMap.ofList [(1, 99)]) == (∅ : NatMap Nat)
+
+-- split: (keys < k, value at k, keys > k); range: inclusive key window
+#guard (NatMap.ofList [(1, 10), (5, 50), (9, 90)]).split 5
+  == (NatMap.ofList [(1, 10)], some 50, NatMap.ofList [(9, 90)])
+#guard (NatMap.ofList [(1, 10), (9, 90)]).split 5
+  == (NatMap.ofList [(1, 10)], none, NatMap.ofList [(9, 90)])
+#guard (NatMap.ofList [(1, 10), (32, 320), (5000, 3)]).range 2 5000
+  == NatMap.ofList [(32, 320), (5000, 3)]
+#guard ((NatMap.ofList [(1, 10), (9, 90)]).range 2 8).isEmpty
 
 -- partition: split by predicate; parts are canonical, disjoint, and join back to the original
 #guard

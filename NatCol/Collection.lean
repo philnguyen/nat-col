@@ -96,6 +96,24 @@ One-sided subtrees are carried over whole (shared). -/
 @[specialize] def symmDiff (a b : NatCollection L) : NatCollection L :=
   ⟨PTree.symmDiff a.tree b.tree, PTree.WF_symmDiff a.tree b.tree a.wf b.wf⟩
 
+/-- Keep the entries with key `< k` — a structural prune: subtrees wholly below the bound are
+kept whole (shared), wholly above are dropped in O(1); only the bound's routed path is rebuilt. -/
+@[specialize] def filterLt (c : NatCollection L) (k : Nat) : NatCollection L :=
+  ⟨PTree.filterLt k c.tree, PTree.WF_filterLt k c.tree c.wf⟩
+
+/-- Keep the entries with key `≥ k` — the mirror prune of `filterLt`. -/
+@[specialize] def filterGE (c : NatCollection L) (k : Nat) : NatCollection L :=
+  ⟨PTree.filterGE k c.tree, PTree.WF_filterGE k c.tree c.wf⟩
+
+/-- Split at `k`: `(entries with key < k, entries with key ≥ k)` — two structural prunes along
+`k`'s routed path; both parts are canonical and share every off-path subtree with the input. -/
+@[specialize] def split (c : NatCollection L) (k : Nat) : NatCollection L × NatCollection L :=
+  (c.filterLt k, c.filterGE k)
+
+/-- The entries with key in the inclusive range `[lo, hi]` — a double structural prune. -/
+@[specialize] def range (c : NatCollection L) (lo hi : Nat) : NatCollection L :=
+  (c.filterGE lo).filterLt (hi + 1)
+
 /-- All `(key, value)` pairs, ascending by key. -/
 @[specialize] def toList (c : NatCollection L) : List (Nat × V) := (PTree.toArray c.tree).toList
 

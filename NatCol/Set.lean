@@ -72,6 +72,13 @@ def diff (s t : NatSet) : NatSet := NatCollection.diff s t
 shared leaves cancel with one `XOR` and equal subtrees cancel entirely; one-sided subtrees are
 carried over whole (shared). Equals `(s \ t) ∪ (t \ s)` in one pass. -/
 def symmDiff (s t : NatSet) : NatSet := NatCollection.symmDiff s t
+/-- Split at `k`: `(elements < k, elements ≥ k)` — two structural prunes along `k`'s routed
+path; both parts are canonical and share every off-path subtree with `s`. An ordered operation a
+hash set can only do by scanning all n elements. -/
+def split (s : NatSet) (k : Nat) : NatSet × NatSet := NatCollection.split s k
+/-- The elements in the inclusive range `[lo, hi]` — a double structural prune along the two
+bounds' paths; everything strictly inside the window is shared, not copied. -/
+def range (s : NatSet) (lo hi : Nat) : NatSet := NatCollection.range s lo hi
 /-- Subset test. -/
 def subset (s t : NatSet) : Bool := NatCollection.restricts (fun _ _ => true) s t
 /-- Whether `s` and `t` share no element — the intersection's structural walk without building
@@ -217,6 +224,20 @@ section Tests
     && (a.symmDiff b).symmDiff b = a                                -- involution
 #guard (NatSet.ofList [1, 5000]).symmDiff (NatSet.ofList [5000]) = NatSet.ofList [1]
   -- deep cancel: the height collapses canonically
+
+-- split/range: structural prunes at key bounds
+#guard (NatSet.ofList [1, 5, 9, 5000]).split 6 = (NatSet.ofList [1, 5], NatSet.ofList [9, 5000])
+#guard (NatSet.ofList [1, 5, 9]).split 5 = (NatSet.ofList [1], NatSet.ofList [5, 9])
+  -- the pivot lands in the ≥ part
+#guard (∅ : NatSet).split 5 = (∅, ∅)
+#guard
+  let s := NatSet.ofList [3, 31, 32, 1000, 1000000]
+  let parts := s.split 32
+  parts.1 ∪ parts.2 = s && parts.1.isDisjoint parts.2              -- split is a partition
+#guard (NatSet.ofList [1, 5, 9, 31, 32, 5000]).range 5 32 = NatSet.ofList [5, 9, 31, 32]
+#guard (NatSet.ofList [1, 5, 9]).range 9 9 = NatSet.ofList [9]     -- degenerate window
+#guard (NatSet.ofList [1, 5, 9]).range 6 8 = (∅ : NatSet)          -- empty window
+#guard (NatSet.ofList [1, 5, 9]).range 0 100 = NatSet.ofList [1, 5, 9]
 
 -- ordered queries: min/max, successor/predecessor (strict and inclusive), pop
 #guard (∅ : NatSet).min? = none
