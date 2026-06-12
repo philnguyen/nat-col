@@ -34,6 +34,10 @@ example (s t : NatSet)   : s ∩ t ⊆ s                  := NatSet.inter_subset
   idempotence, absorption, least-upper-/greatest-lower-bound, and both distributive laws — see
   [Verified laws](#verified-laws).
 - **`NatMap` is a lawful `Functor`** via `NatMap.map`.
+- **`IndexedSet α` / `IndexedMap κ V`** — the same collections keyed by any type with a
+  `Countable` instance (an invertible encoding into `Nat`): `Char`, `Bool`, `Fin n`,
+  `UInt8`–`UInt64`, `USize` ship out of the box. Keys live only as trie positions (zero
+  per-element storage) — a win over hashing whenever `toNat` is cheaper than a hash.
 
 ## Design
 
@@ -88,6 +92,9 @@ A longer write-up — invariants, the canonical form, the mask-merge optimisatio
 | [`NatCol/Collection.lean`](NatCol/Collection.lean) | `NatCollection`: the user-facing `{ tree, wf }` wrapper, generic ops + generic laws (one-line lifts of the `PTree` seams) |
 | [`NatCol/Set.lean`](NatCol/Set.lean) | `NatSet` — `UInt32`-leaf instance, `∪`/`∩`/`⊆`/`∈` API, set laws |
 | [`NatCol/Map.lean`](NatCol/Map.lean) | `NatMap α` — `Node α`-leaf instance, key/value API, `Functor`, map laws |
+| [`NatCol/Countable.lean`](NatCol/Countable.lean) | the `Countable` typeclass (invertible `toNat`/`ofNat?` encodings) + scalar instances and the `ofBounded` builder |
+| [`NatCol/IndexedSet.lean`](NatCol/IndexedSet.lean) | `IndexedSet α` — a `NatSet` keyed by the encoding, with the decode invariant; full set API + laws |
+| [`NatCol/IndexedMap.lean`](NatCol/IndexedMap.lean) | `IndexedMap κ V` — a `NatMap V` keyed by the encoding; full map API + laws, `Functor` |
 | [`Bench.lean`](Bench.lean) | the `nat-bench` micro-benchmark executable |
 
 Within each `NatCol/*.lean` the declarations are split under two banners: **Implementation** first
@@ -123,6 +130,16 @@ exit at the first shared key.
 `filter`, the monadic variants, and all of the above return a **canonical** result — equal to the
 collection rebuilt from the survivors, so structural equality still coincides with logical
 equality.
+
+**Keyed by any `Countable` type** — `IndexedSet α` / `IndexedMap κ V` carry the entire API above
+over to any key type with a `Countable` instance (`toNat : α → Nat` with its exact partial inverse
+`ofNat? : Nat → Option α`): the key is encoded on the way in and decoded on the way out, the
+underlying trie is a bare `NatSet`/`NatMap V`, and a bundled invariant (every raw key decodes)
+keeps the totality theorems intact. Instances ship for `Nat`, `Bool`, `Char`, `Fin n`,
+`UInt8`/`UInt16`/`UInt32`/`UInt64`, `USize` — all order-preserving, so the ordered queries mean
+the natural key order — and `Countable.ofBounded` builds an instance for any bounded encoding in
+one line. Ordered theorems on the indexed collections are stated in **encoding order**
+(`Countable.toNat`).
 
 ## Verified laws
 
@@ -164,6 +181,9 @@ Proven generically over `NatCollection` and lifted to `NatSet`/`NatMap` (the `Na
   (`isDisjoint_iff`), with **symmetry** (`isDisjoint_symm`) and the membership projection
   `not_mem_of_isDisjoint` as corollaries.
 - `NatSet`/`NatMap` are `LawfulBEq`; `NatMap` is a `LawfulFunctor`.
+- the **entire law suite carries over to `IndexedSet`/`IndexedMap`** (ordered statements in
+  encoding order), plus the decode round trip `ofNat? (toNat a) = some a`, decode faithfulness,
+  and injectivity for every `Countable` instance; `IndexedMap κ` is a `LawfulFunctor` too.
 
 Each law is backed by `#guard` example-tests on concrete (including multi-level, cross-prefix)
 instances sitting next to the operations.
@@ -281,13 +301,12 @@ laws machine-checked in Lean.
 
 ## Status
 
-The path-compressed trie core, `NatSet`/`NatMap`, their lattice operations, and the laws above are
-implemented and proven (no `sorry`, no `partial` in the verified library). The core representation
-was migrated from a height-indexed GADT trie to the path-compressed `PTree` while keeping every
-theorem statement byte-identical; see [`docs/DESIGN.md`](docs/DESIGN.md) for the measured speedups.
-The derived `IndexedMap`/`IndexedSet` collections (for any type with an injection to `Nat`) sketched
-in the design doc are a planned addition, as is the `union`-throughput / memory-locality work under
-its "Future improvements".
+The path-compressed trie core, `NatSet`/`NatMap`, the derived `IndexedSet`/`IndexedMap` (keyed by
+any `Countable` type), their lattice operations, and the laws above are implemented and proven
+(no `sorry`, no `partial` in the verified library). The core representation was migrated from a
+height-indexed GADT trie to the path-compressed `PTree` while keeping every theorem statement
+byte-identical; see [`docs/DESIGN.md`](docs/DESIGN.md) for the measured speedups. The
+`union`-throughput / memory-locality work under its "Future improvements" remains open.
 
 ## License
 
