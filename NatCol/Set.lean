@@ -854,6 +854,14 @@ theorem mem_split_right {s : NatSet} {k j : Nat} : j ∈ (s.split k).2 ↔ j ∈
     rw [NatCollection.contains_eq] at hm
     exact hm
 
+/-- Every member of `split`'s left part lies strictly below the split key. -/
+theorem lt_of_mem_split_left {s : NatSet} {k j : Nat} (h : j ∈ (s.split k).1) : j < k :=
+  (mem_split_left.mp h).2
+
+/-- Every member of `split`'s right part lies at or above the split key. -/
+theorem le_of_mem_split_right {s : NatSet} {k j : Nat} (h : j ∈ (s.split k).2) : k ≤ j :=
+  (mem_split_right.mp h).2
+
 /-- Membership in `range`: exactly the members within the inclusive window `[lo, hi]`. -/
 theorem mem_range {s : NatSet} {lo hi j : Nat} :
     j ∈ s.range lo hi ↔ j ∈ s ∧ lo ≤ j ∧ j ≤ hi := by

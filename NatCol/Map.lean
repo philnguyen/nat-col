@@ -1027,6 +1027,56 @@ theorem get?_range (m : NatMap α) (lo hi j : Nat) :
     (m.range lo hi).get? j = if lo ≤ j ∧ j ≤ hi then m.get? j else none :=
   NatCollection.get?_range m lo hi j
 
+/-- Membership in `split`'s left part: exactly the keys strictly below the split key. -/
+theorem mem_split_left {m : NatMap α} {k j : Nat} : j ∈ (m.split k).1 ↔ j ∈ m ∧ j < k := by
+  show NatCollection.contains (NatCollection.filterLt m k) j = true ↔ _
+  rw [NatCollection.contains_eq, NatCollection.get?_filterLt]
+  constructor
+  · intro h
+    by_cases hjk : j < k
+    · rw [if_pos hjk] at h
+      refine ⟨?_, hjk⟩
+      show NatCollection.contains m j = true
+      rw [NatCollection.contains_eq]
+      exact h
+    · rw [if_neg hjk] at h
+      simp at h
+  · intro h
+    obtain ⟨hm, hjk⟩ := h
+    rw [if_pos hjk]
+    replace hm : NatCollection.contains m j = true := hm
+    rw [NatCollection.contains_eq] at hm
+    exact hm
+
+/-- Membership in `split`'s right part: exactly the keys strictly above the split key. -/
+theorem mem_split_right {m : NatMap α} {k j : Nat} : j ∈ (m.split k).2.2 ↔ j ∈ m ∧ k < j := by
+  show NatCollection.contains (NatCollection.filterGE m (k + 1)) j = true ↔ _
+  rw [NatCollection.contains_eq, NatCollection.get?_filterGE]
+  constructor
+  · intro h
+    by_cases hjk : k + 1 ≤ j
+    · rw [if_pos hjk] at h
+      refine ⟨?_, hjk⟩
+      show NatCollection.contains m j = true
+      rw [NatCollection.contains_eq]
+      exact h
+    · rw [if_neg hjk] at h
+      simp at h
+  · intro h
+    obtain ⟨hm, hjk⟩ := h
+    rw [if_pos (show k + 1 ≤ j from hjk)]
+    replace hm : NatCollection.contains m j = true := hm
+    rw [NatCollection.contains_eq] at hm
+    exact hm
+
+/-- Every key of `split`'s left part lies strictly below the split key. -/
+theorem lt_of_mem_split_left {m : NatMap α} {k j : Nat} (h : j ∈ (m.split k).1) : j < k :=
+  (mem_split_left.mp h).2
+
+/-- Every key of `split`'s right part lies strictly above the split key. -/
+theorem lt_of_mem_split_right {m : NatMap α} {k j : Nat} (h : j ∈ (m.split k).2.2) : k < j :=
+  (mem_split_right.mp h).2
+
 /-- Membership in `range`: exactly the keys within the inclusive window `[lo, hi]`. -/
 theorem mem_range {m : NatMap α} {lo hi j : Nat} :
     j ∈ m.range lo hi ↔ j ∈ m ∧ lo ≤ j ∧ j ≤ hi := by
