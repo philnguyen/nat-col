@@ -610,6 +610,16 @@ theorem insert_of_mem {s : NatSet} {k : Nat} (h : k ∈ s) : s.insert k = s := b
   · rw [if_pos hj, hj, hk]
   · rw [if_neg hj]
 
+/-- Membership after `insert`: `j` is present exactly when it was already present or is the
+inserted element. -/
+theorem mem_insert {s : NatSet} {k j : Nat} : j ∈ s.insert k ↔ j ∈ s ∨ j = k := by
+  show NatCollection.contains (NatCollection.insert s k ()) j = true
+      ↔ NatCollection.contains s j = true ∨ j = k
+  rw [NatCollection.contains_eq, NatCollection.contains_eq, NatCollection.get?_insert]
+  by_cases hk : j = k
+  · simp [hk]
+  · simp [hk]
+
 /-- The union of a set with itself is the set. -/
 @[simp]
 theorem union_self (s : NatSet) : s ∪ s = s := by
@@ -631,6 +641,22 @@ theorem inter_self (s : NatSet) : s ∩ s = s := by
   cases NatCollection.get? s k with
   | none => rfl
   | some u => cases u; rfl
+
+/-- Membership in a union: `j ∈ s ∪ t` exactly when `j` is in either operand. -/
+theorem mem_union {s t : NatSet} {j : Nat} : j ∈ s ∪ t ↔ j ∈ s ∨ j ∈ t := by
+  show NatCollection.contains (NatCollection.join (fun _ _ => ()) s t) j = true
+      ↔ NatCollection.contains s j = true ∨ NatCollection.contains t j = true
+  rw [NatCollection.contains_eq, NatCollection.contains_eq, NatCollection.contains_eq,
+      NatCollection.get?_join]
+  cases hs : NatCollection.get? s j <;> cases ht : NatCollection.get? t j <;> simp [optVjoin]
+
+/-- Membership in an intersection: `j ∈ s ∩ t` exactly when `j` is in both operands. -/
+theorem mem_inter {s t : NatSet} {j : Nat} : j ∈ s ∩ t ↔ j ∈ s ∧ j ∈ t := by
+  show NatCollection.contains (NatCollection.meet (fun _ _ => ()) s t) j = true
+      ↔ NatCollection.contains s j = true ∧ NatCollection.contains t j = true
+  rw [NatCollection.contains_eq, NatCollection.contains_eq, NatCollection.contains_eq,
+      NatCollection.get?_meet]
+  cases hs : NatCollection.get? s j <;> cases ht : NatCollection.get? t j <;> simp [optVmeet]
 
 /-- Intersection distributes over union: `s ∩ (t ∪ u) = (s ∩ t) ∪ (s ∩ u)`. The set `combine` is
 constantly `()`, so the distributivity side-condition is trivially `rfl`. -/
@@ -1127,6 +1153,22 @@ theorem popMax?_eq_none {s : NatSet} : s.popMax? = none ↔ s = ∅ := by
     show (NatCollection.popMaxEntry? (∅ : NatSet)).map (fun e => (e.1.1, e.2)) = none
     rw [(NatCollection.popMaxEntry?_eq_none (∅ : NatSet)).mpr rfl]
     rfl
+
+/-- `min?` answers `none` exactly on the empty set (totality: a non-empty set has a minimum). -/
+theorem min?_eq_none {s : NatSet} : s.min? = none ↔ s = ∅ := by
+  rw [← popMin?_eq_none]
+  show (NatCollection.minEntry? s).map Prod.fst = none
+      ↔ (NatCollection.popMinEntry? s).map (fun e => (e.1.1, e.2)) = none
+  unfold NatCollection.popMinEntry?
+  cases hm : NatCollection.minEntry? s <;> simp
+
+/-- `max?` answers `none` exactly on the empty set (totality: a non-empty set has a maximum). -/
+theorem max?_eq_none {s : NatSet} : s.max? = none ↔ s = ∅ := by
+  rw [← popMax?_eq_none]
+  show (NatCollection.maxEntry? s).map Prod.fst = none
+      ↔ (NatCollection.popMaxEntry? s).map (fun e => (e.1.1, e.2)) = none
+  unfold NatCollection.popMaxEntry?
+  cases hm : NatCollection.maxEntry? s <;> simp
 
 end NatSet
 
