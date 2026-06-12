@@ -644,6 +644,22 @@ theorem union_inter_distrib (s t u : NatSet) : s ∪ (t ∩ u) = (s ∪ t) ∩ (
   NatCollection.join_meet_distrib (fun _ _ => ()) (fun _ _ => ())
     (fun _ => rfl) (fun _ _ => rfl) (fun _ _ => rfl) (fun _ _ _ => rfl) s t u
 
+/-- The minimum is a member: a `min? = some k` answer is an element of the set. -/
+theorem min?_mem {s : NatSet} {k : Nat} (h : s.min? = some k) : k ∈ s :=
+  NatCollection.contains_of_minKey? s k h
+
+/-- The minimum is a lower bound: no element of the set is below `min?`'s answer. -/
+theorem min?_le {s : NatSet} {k j : Nat} (h : s.min? = some k) (hj : j ∈ s) : k ≤ j :=
+  NatCollection.minKey?_le s k j h hj
+
+/-- The maximum is a member: a `max? = some k` answer is an element of the set. -/
+theorem max?_mem {s : NatSet} {k : Nat} (h : s.max? = some k) : k ∈ s :=
+  NatCollection.contains_of_maxKey? s k h
+
+/-- The maximum is an upper bound: no element of the set is above `max?`'s answer. -/
+theorem le_max? {s : NatSet} {k j : Nat} (h : s.max? = some k) (hj : j ∈ s) : j ≤ k :=
+  NatCollection.le_maxKey? s k j h hj
+
 end NatSet
 
 end NatCol

@@ -192,6 +192,10 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   /-- The representative slot of a non-empty leaf is actually present. Backs `PTree.witnessKey`,
   which must exhibit a real member of the leaf. -/
   contains_someSlot : ∀ (l : L), isEmpty l = false → contains l (someSlot l) = true
+  /-- The occupancy bitmap is accurate: an in-range bit is set exactly when the slot is present.
+  What lets the ordered queries' bit-scans (`lowestSetIdx`/`highestSetIdx` over `slotsMask`)
+  select real members and skip none — `PTree.minEntry?`'s denotational laws ride on it. -/
+  testBit_slotsMask : ∀ (l : L) (i : UInt32), i < 32 → testBit (slotsMask l) i = contains l i
 
 /-- Leaf operations for sets: a `UInt32` is a 32-element bitset; the value type is `Unit`. This is
 the set leaf instance the path-compressed `PTree` (and `NatSet`) instantiates at; it lives here in
@@ -300,6 +304,7 @@ instance : LeafOps UInt32 Unit where
         simp [hbi]
   someSlot_lt u h := lowestSetIdx_lt u (beq_eq_false_iff_ne.mp h)
   contains_someSlot u h := testBit_lowestSetIdx u (beq_eq_false_iff_ne.mp h)
+  testBit_slotsMask _ _ _ := rfl
 
 namespace Node
 

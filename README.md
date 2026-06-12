@@ -135,6 +135,8 @@ Proven generically over `NatCollection` and lifted to `NatSet`/`NatMap` (the `Na
 - `join` is the **least upper bound** and `meet` the **greatest lower bound** for `restricts`.
 - both **distributive** laws: `meet` over `join` and `join` over `meet`.
 - `get?`-after-`insert`, the membership/lookup spec, inclusion–exclusion on `size`, etc.
+- `min?`/`max?` (`minEntry?`/`maxEntry?` on maps) return a **real member** whose key is a
+  **lower/upper bound** on every present key.
 - `NatSet`/`NatMap` are `LawfulBEq`; `NatMap` is a `LawfulFunctor`.
 
 Each law is backed by `#guard` example-tests on concrete (including multi-level, cross-prefix)

@@ -63,6 +63,7 @@ instance {α : Type u} : LeafOps (Node α) α where
   get?_restricts rel _ a b := Node.restricts_iff rel a b
   someSlot_lt n h := lowestSetIdx_lt n.positionsMask (beq_eq_false_iff_ne.mp h)
   contains_someSlot n h := testBit_lowestSetIdx n.positionsMask (beq_eq_false_iff_ne.mp h)
+  testBit_slotsMask _ _ _ := rfl
 
 /-- A map from natural numbers to `α`. -/
 def NatMap (α : Type u) : Type u := NatCollection (Node α)

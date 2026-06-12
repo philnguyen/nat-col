@@ -496,6 +496,70 @@ theorem join_meet_distrib (combineJoin combineMeet : V → V → V)
   exact PTree.union_meet_distrib combineJoin combineMeet hidem habs1 habs2 hdist
     a.tree b.tree e.tree a.wf b.wf e.wf
 
+/-! ### Ordered queries
+
+The `minEntry?`/`maxEntry?` denotations, lifted from `PTree` (the bundled `wf` proof discharges
+the well-formedness hypotheses): the returned entry is real, and its key bounds every present
+key. The `minKey?`/`maxKey?` corollaries are what `NatSet.min?`/`max?` re-export. -/
+
+/-- The entry `minEntry?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_minEntry? (c : NatCollection L) (k : Nat) (v : V)
+    (h : c.minEntry? = some (k, v)) : c.get? k = some v :=
+  PTree.get?_of_minEntry? c.tree c.wf k v h
+
+/-- The entry `maxEntry?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_maxEntry? (c : NatCollection L) (k : Nat) (v : V)
+    (h : c.maxEntry? = some (k, v)) : c.get? k = some v :=
+  PTree.get?_of_maxEntry? c.tree c.wf k v h
+
+/-- `minEntry?`'s key is a lower bound on every present key. -/
+theorem minEntry?_le (c : NatCollection L) (k : Nat) (v : V) (j : Nat)
+    (h : c.minEntry? = some (k, v)) (hj : c.contains j = true) : k ≤ j :=
+  PTree.minEntry?_le c.tree c.wf k v j h hj
+
+/-- `maxEntry?`'s key is an upper bound on every present key. -/
+theorem le_maxEntry? (c : NatCollection L) (k : Nat) (v : V) (j : Nat)
+    (h : c.maxEntry? = some (k, v)) (hj : c.contains j = true) : j ≤ k :=
+  PTree.le_maxEntry? c.tree c.wf k v j h hj
+
+/-- The key `minKey?` returns is present. -/
+theorem contains_of_minKey? (c : NatCollection L) (k : Nat) (h : c.minKey? = some k) :
+    c.contains k = true := by
+  replace h : c.minEntry?.map Prod.fst = some k := h
+  obtain ⟨⟨k', v⟩, hmin, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hk : k' = k := hfst
+  subst hk
+  rw [contains_eq, get?_of_minEntry? c k' v hmin]
+  rfl
+
+/-- The key `maxKey?` returns is present. -/
+theorem contains_of_maxKey? (c : NatCollection L) (k : Nat) (h : c.maxKey? = some k) :
+    c.contains k = true := by
+  replace h : c.maxEntry?.map Prod.fst = some k := h
+  obtain ⟨⟨k', v⟩, hmax, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hk : k' = k := hfst
+  subst hk
+  rw [contains_eq, get?_of_maxEntry? c k' v hmax]
+  rfl
+
+/-- `minKey?`'s answer is a lower bound on every present key. -/
+theorem minKey?_le (c : NatCollection L) (k j : Nat) (h : c.minKey? = some k)
+    (hj : c.contains j = true) : k ≤ j := by
+  replace h : c.minEntry?.map Prod.fst = some k := h
+  obtain ⟨⟨k', v⟩, hmin, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hk : k' = k := hfst
+  subst hk
+  exact minEntry?_le c k' v j hmin hj
+
+/-- `maxKey?`'s answer is an upper bound on every present key. -/
+theorem le_maxKey? (c : NatCollection L) (k j : Nat) (h : c.maxKey? = some k)
+    (hj : c.contains j = true) : j ≤ k := by
+  replace h : c.maxEntry?.map Prod.fst = some k := h
+  obtain ⟨⟨k', v⟩, hmax, hfst⟩ := Option.map_eq_some_iff.mp h
+  have hk : k' = k := hfst
+  subst hk
+  exact le_maxEntry? c k' v j hmax hj
+
 end NatCollection
 
 end NatCol

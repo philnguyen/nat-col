@@ -8293,5 +8293,305 @@ private theorem mapList_comp {L' : Type u'} {L'' : Type u''} (g₁ : L → L') (
   | c :: rest => by rw [mapList, mapList, mapList, map_comp g₁ g₂ c, mapList_comp g₁ g₂ rest]
 end
 
+/-! ### Ordered queries: `minEntry?`/`maxEntry?` denotations
+
+`minEntry?` returns a real entry — `get?` reads its value back at its key — and that key is a
+lower bound on every present key (`maxEntry?` mirrors, as an upper bound). The walks pick slots by
+bit-scans over the leaf occupancy bitmap (`LeafOps.slotsMask`) and the branch mask, so the proofs
+ride on the bitmap-accuracy law (`LeafOps.testBit_slotsMask`) plus big-endian ordering: keys that
+agree on the prefix above a level are ordered by their chunks at that level. -/
+
+/-- Big-endian ordering: keys agreeing on the prefix above `l` are ordered by their level-`l`
+chunks. The ordering core of the `minEntry?`/`maxEntry?` bound proofs. -/
+private theorem lt_of_chunk_lt {k j : Nat} (l : Nat)
+    (hp : prefixAbove k l = prefixAbove j l) (hc : chunk k l < chunk j l) : k < j := by
+  have hmod : ∀ n : Nat, (chunk n l).toNat = (n >>> (5 * l)) % 32 := by
+    intro n
+    unfold chunk
+    rw [show (31 : Nat) = 2 ^ 5 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod]
+    exact UInt32.toNat_ofNat_of_lt' (Nat.lt_trans (Nat.mod_lt _ (by decide)) (by decide))
+  have hc' : (k >>> (5 * l)) % 32 < (j >>> (5 * l)) % 32 := by
+    have h := UInt32.lt_iff_toNat_lt.mp hc
+    rwa [hmod k, hmod j] at h
+  have hp' : (k >>> (5 * l)) / 32 = (j >>> (5 * l)) / 32 := by
+    have h : (k >>> (5 * l)) >>> 5 = (j >>> (5 * l)) >>> 5 := by
+      rw [← Nat.shiftRight_add, ← Nat.shiftRight_add, show 5 * l + 5 = 5 * (l + 1) from by omega]
+      exact hp
+    rw [Nat.shiftRight_eq_div_pow (k >>> (5 * l)) 5, Nat.shiftRight_eq_div_pow (j >>> (5 * l)) 5,
+        show (2 : Nat) ^ 5 = 32 from rfl] at h
+    exact h
+  have hlt : k >>> (5 * l) < j >>> (5 * l) := by omega
+  refine Nat.not_le.mp fun hge => ?_
+  have hle : j >>> (5 * l) ≤ k >>> (5 * l) := by
+    rw [Nat.shiftRight_eq_div_pow j (5 * l), Nat.shiftRight_eq_div_pow k (5 * l)]
+    exact Nat.div_le_div_right hge
+  omega
+
+/-- The key a `tip` ordered query reconstructs (`(pfx <<< 5) ||| s.toNat`, slot `s < 32`) has
+bottom chunk exactly `s` — the low-bits companion of `shiftLeft_lor_shiftRight`. -/
+private theorem chunk_shiftLeft_lor_zero (p : Nat) (s : UInt32) (hs : s < 32) :
+    chunk ((p <<< 5) ||| s.toNat) 0 = s := by
+  have key : chunk ((p <<< 5) ||| s.toNat) 0 = chunk s.toNat 0 := by
+    unfold chunk
+    congr 1
+    simp only [Nat.mul_zero, Nat.shiftRight_zero]
+    apply Nat.eq_of_testBit_eq
+    intro i
+    rw [Nat.testBit_and, Nat.testBit_and, Nat.testBit_or, Nat.testBit_shiftLeft]
+    by_cases hi : i < 5
+    · rw [decide_eq_false (by omega : ¬ 5 ≤ i)]
+      simp
+    · rw [show Nat.testBit 31 i = false from by
+            rw [show (31 : Nat) = 2 ^ 5 - 1 from rfl, Nat.testBit_two_pow_sub_one]
+            exact decide_eq_false hi,
+          Bool.and_false, Bool.and_false]
+  rw [key, chunk_toNat_zero s hs]
+
+/-- A non-empty leaf's occupancy bitmap is non-zero: its representative slot's bit is set. -/
+private theorem slotsMask_ne_zero (leaf : L) (hb : LeafOps.isEmpty (V := V) leaf = false) :
+    LeafOps.slotsMask (V := V) leaf ≠ 0 := by
+  intro h0
+  have hcs : LeafOps.contains leaf (LeafOps.someSlot (V := V) leaf) = true :=
+    LeafOps.contains_someSlot leaf hb
+  rw [← LeafOps.testBit_slotsMask leaf (LeafOps.someSlot (V := V) leaf)
+        (LeafOps.someSlot_lt leaf hb),
+      h0, testBit_zero] at hcs
+  exact absurd hcs (by decide)
+
+/-- The entry `minEntry?` returns is real: `get?` reads its value back at its key. Member
+recursion down the first-child spine; at the `tip`, the reconstructed key routes back to the
+scanned slot. -/
+theorem get?_of_minEntry? : (t : PTree L) → WF t → ∀ (k : Nat) (v : V),
+    minEntry? t = some (k, v) → get? k t = some v
+  | .nil => fun _ k v h => by
+      rw [minEntry?] at h
+      exact absurd h (by simp)
+  | .tip pfx leaf => fun hwf k v h => by
+      rw [WF] at hwf
+      rw [minEntry?] at h
+      obtain ⟨v', hg, hkv⟩ := Option.map_eq_some_iff.mp h
+      injection hkv with hk hv
+      subst hk hv
+      have hm : LeafOps.slotsMask leaf ≠ 0 := slotsMask_ne_zero leaf hwf
+      have hs : lowestSetIdx (LeafOps.slotsMask leaf) < 32 := lowestSetIdx_lt _ hm
+      rw [get?_tip,
+          if_pos (beq_iff_eq.mpr (shiftLeft_lor_shiftRight pfx _ 5
+            (UInt32.lt_iff_toNat_lt.mp hs))),
+          chunk_shiftLeft_lor_zero pfx _ hs]
+      exact hg
+  | .bin pfx level mask kids => fun hwf k v h => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, _, hal⟩ := hwf'
+      have hm : mask ≠ 0 := by
+        intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+      have hb : 0 < kids.size := by rw [hsz]; omega
+      rw [minEntry?, dif_pos hb] at h
+      have hwk : WF (kids[0]'hb) := hwfk _ (Array.getElem_mem hb)
+      have ih := get?_of_minEntry? (kids[0]'hb) hwk k v h
+      have hc0 : childAt mask kids (lowestSetIdx mask) = kids[0]'hb := by
+        unfold childAt
+        rw [arrayIndex_lowestSetIdx mask hm, Array.getElem?_eq_getElem hb, Option.getD_some]
+      have hkmem : contains k (kids[0]'hb) = true := by
+        rw [contains_eq_isSome, ih]; rfl
+      have halk := hal (lowestSetIdx mask) (lowestSetIdx_lt mask hm) (testBit_lowestSetIdx mask hm)
+      rw [hc0] at halk
+      obtain ⟨hck, _⟩ := halk k hkmem
+      rw [get?_bin, hck, if_pos (testBit_lowestSetIdx mask hm), hc0]
+      exact ih
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- The entry `maxEntry?` returns is real: `get?` reads its value back at its key (the
+`get?_of_minEntry?` mirror down the last-child spine). -/
+theorem get?_of_maxEntry? : (t : PTree L) → WF t → ∀ (k : Nat) (v : V),
+    maxEntry? t = some (k, v) → get? k t = some v
+  | .nil => fun _ k v h => by
+      rw [maxEntry?] at h
+      exact absurd h (by simp)
+  | .tip pfx leaf => fun hwf k v h => by
+      rw [WF] at hwf
+      rw [maxEntry?] at h
+      obtain ⟨v', hg, hkv⟩ := Option.map_eq_some_iff.mp h
+      injection hkv with hk hv
+      subst hk hv
+      have hm : LeafOps.slotsMask leaf ≠ 0 := slotsMask_ne_zero leaf hwf
+      have hs : highestSetIdx (LeafOps.slotsMask leaf) < 32 := highestSetIdx_lt _ hm
+      rw [get?_tip,
+          if_pos (beq_iff_eq.mpr (shiftLeft_lor_shiftRight pfx _ 5
+            (UInt32.lt_iff_toNat_lt.mp hs))),
+          chunk_shiftLeft_lor_zero pfx _ hs]
+      exact hg
+  | .bin pfx level mask kids => fun hwf k v h => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, _, hal⟩ := hwf'
+      have hm : mask ≠ 0 := by
+        intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+      have hb0 : 0 < kids.size := by rw [hsz]; omega
+      have hb : kids.size - 1 < kids.size := by omega
+      rw [maxEntry?, dif_pos hb] at h
+      have hwk : WF (kids[kids.size - 1]'hb) := hwfk _ (Array.getElem_mem hb)
+      have ih := get?_of_maxEntry? (kids[kids.size - 1]'hb) hwk k v h
+      have hidx : arrayIndex mask (highestSetIdx mask) = kids.size - 1 := by
+        rw [arrayIndex_highestSetIdx mask hm, hsz]
+      have hc31 : childAt mask kids (highestSetIdx mask) = kids[kids.size - 1]'hb := by
+        unfold childAt
+        rw [hidx, Array.getElem?_eq_getElem hb, Option.getD_some]
+      have hkmem : contains k (kids[kids.size - 1]'hb) = true := by
+        rw [contains_eq_isSome, ih]; rfl
+      have halk := hal (highestSetIdx mask) (highestSetIdx_lt mask hm)
+        (testBit_highestSetIdx mask hm)
+      rw [hc31] at halk
+      obtain ⟨hck, _⟩ := halk k hkmem
+      rw [get?_bin, hck, if_pos (testBit_highestSetIdx mask hm), hc31]
+      exact ih
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- `minEntry?`'s key is a lower bound: no present key is below it. At the `tip`, the chosen slot
+is the bitmap minimum (`lowestSetIdx_le_of_testBit`); at a `bin`, any key outside the first child
+routes to a strictly higher slot, and big-endian ordering lifts slot order to key order. -/
+theorem minEntry?_le : (t : PTree L) → WF t → ∀ (k : Nat) (v : V) (j : Nat),
+    minEntry? t = some (k, v) → contains j t = true → k ≤ j
+  | .nil => fun _ k v j h _ => by
+      rw [minEntry?] at h
+      exact absurd h (by simp)
+  | .tip pfx leaf => fun hwf k v j h hj => by
+      rw [WF] at hwf
+      rw [minEntry?] at h
+      obtain ⟨v', hg, hkv⟩ := Option.map_eq_some_iff.mp h
+      injection hkv with hk hv
+      subst hk
+      rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj
+      obtain ⟨hj5, hjc⟩ := hj
+      have hm : LeafOps.slotsMask leaf ≠ 0 := slotsMask_ne_zero leaf hwf
+      have hs : lowestSetIdx (LeafOps.slotsMask leaf) < 32 := lowestSetIdx_lt _ hm
+      have hkhi : ((pfx <<< 5) ||| (lowestSetIdx (LeafOps.slotsMask leaf)).toNat) >>> 5 = pfx :=
+        shiftLeft_lor_shiftRight pfx _ 5 (UInt32.lt_iff_toNat_lt.mp hs)
+      have hkc : chunk ((pfx <<< 5) ||| (lowestSetIdx (LeafOps.slotsMask leaf)).toNat) 0
+          = lowestSetIdx (LeafOps.slotsMask leaf) := chunk_shiftLeft_lor_zero pfx _ hs
+      have htbj : testBit (LeafOps.slotsMask leaf) (chunk j 0) = true := by
+        rw [LeafOps.testBit_slotsMask leaf (chunk j 0) (chunk_lt j 0)]
+        exact hjc
+      have hle := lowestSetIdx_le_of_testBit (LeafOps.slotsMask leaf) (chunk j 0)
+        (chunk_lt j 0) htbj
+      by_cases heq : lowestSetIdx (LeafOps.slotsMask leaf) = chunk j 0
+      · exact Nat.le_of_eq ((key_eq_iff _ j).mpr ⟨hkhi.trans hj5.symm, by rw [hkc, heq]⟩)
+      · refine Nat.le_of_lt (lt_of_chunk_lt 0 ?_ ?_)
+        · show _ >>> 5 = j >>> 5
+          rw [hkhi, hj5]
+        · rw [hkc]
+          rcases UInt32.lt_or_lt_of_ne heq with hlt | hgt
+          · exact hlt
+          · exact absurd (UInt32.le_iff_toNat_le.mp hle)
+              (by have := UInt32.lt_iff_toNat_lt.mp hgt; omega)
+  | .bin pfx level mask kids => fun hwf k v j h hj => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, _, hal⟩ := hwf'
+      have hm : mask ≠ 0 := by
+        intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+      have hb : 0 < kids.size := by rw [hsz]; omega
+      rw [minEntry?, dif_pos hb] at h
+      have hwk : WF (kids[0]'hb) := hwfk _ (Array.getElem_mem hb)
+      have hc0 : childAt mask kids (lowestSetIdx mask) = kids[0]'hb := by
+        unfold childAt
+        rw [arrayIndex_lowestSetIdx mask hm, Array.getElem?_eq_getElem hb, Option.getD_some]
+      rw [contains_bin, Bool.and_eq_true] at hj
+      obtain ⟨htj, hjc⟩ := hj
+      by_cases hcj : chunk j level = lowestSetIdx mask
+      · rw [hcj, hc0] at hjc
+        exact minEntry?_le (kids[0]'hb) hwk k v j h hjc
+      · have hkmem : contains k (kids[0]'hb) = true := by
+          rw [contains_eq_isSome, get?_of_minEntry? (kids[0]'hb) hwk k v h]; rfl
+        have halk := hal (lowestSetIdx mask) (lowestSetIdx_lt mask hm)
+          (testBit_lowestSetIdx mask hm)
+        rw [hc0] at halk
+        obtain ⟨hck, hpk⟩ := halk k hkmem
+        obtain ⟨_, hpj⟩ := hal (chunk j level) (chunk_lt j level) htj j hjc
+        have hle := lowestSetIdx_le_of_testBit mask (chunk j level) (chunk_lt j level) htj
+        refine Nat.le_of_lt (lt_of_chunk_lt level (hpk.trans hpj.symm) ?_)
+        rw [hck]
+        rcases UInt32.lt_or_lt_of_ne (fun hh => hcj hh.symm) with hlt | hgt
+        · exact hlt
+        · exact absurd (UInt32.le_iff_toNat_le.mp hle)
+            (by have := UInt32.lt_iff_toNat_lt.mp hgt; omega)
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
+/-- `maxEntry?`'s key is an upper bound: no present key is above it (the `minEntry?_le` mirror:
+highest slot at the `tip`, last child at a `bin`). -/
+theorem le_maxEntry? : (t : PTree L) → WF t → ∀ (k : Nat) (v : V) (j : Nat),
+    maxEntry? t = some (k, v) → contains j t = true → j ≤ k
+  | .nil => fun _ k v j h _ => by
+      rw [maxEntry?] at h
+      exact absurd h (by simp)
+  | .tip pfx leaf => fun hwf k v j h hj => by
+      rw [WF] at hwf
+      rw [maxEntry?] at h
+      obtain ⟨v', hg, hkv⟩ := Option.map_eq_some_iff.mp h
+      injection hkv with hk hv
+      subst hk
+      rw [contains_tip, Bool.and_eq_true, beq_iff_eq] at hj
+      obtain ⟨hj5, hjc⟩ := hj
+      have hm : LeafOps.slotsMask leaf ≠ 0 := slotsMask_ne_zero leaf hwf
+      have hs : highestSetIdx (LeafOps.slotsMask leaf) < 32 := highestSetIdx_lt _ hm
+      have hkhi : ((pfx <<< 5) ||| (highestSetIdx (LeafOps.slotsMask leaf)).toNat) >>> 5 = pfx :=
+        shiftLeft_lor_shiftRight pfx _ 5 (UInt32.lt_iff_toNat_lt.mp hs)
+      have hkc : chunk ((pfx <<< 5) ||| (highestSetIdx (LeafOps.slotsMask leaf)).toNat) 0
+          = highestSetIdx (LeafOps.slotsMask leaf) := chunk_shiftLeft_lor_zero pfx _ hs
+      have htbj : testBit (LeafOps.slotsMask leaf) (chunk j 0) = true := by
+        rw [LeafOps.testBit_slotsMask leaf (chunk j 0) (chunk_lt j 0)]
+        exact hjc
+      have hle := le_highestSetIdx_of_testBit (LeafOps.slotsMask leaf) (chunk j 0)
+        (chunk_lt j 0) htbj
+      by_cases heq : highestSetIdx (LeafOps.slotsMask leaf) = chunk j 0
+      · exact Nat.le_of_eq ((key_eq_iff _ j).mpr ⟨hkhi.trans hj5.symm, by rw [hkc, heq]⟩).symm
+      · refine Nat.le_of_lt (lt_of_chunk_lt 0 ?_ ?_)
+        · show j >>> 5 = _ >>> 5
+          rw [hkhi, hj5]
+        · rw [hkc]
+          rcases UInt32.lt_or_lt_of_ne heq with hlt | hgt
+          · exact absurd (UInt32.le_iff_toNat_le.mp hle)
+              (by have := UInt32.lt_iff_toNat_lt.mp hlt; omega)
+          · exact hgt
+  | .bin pfx level mask kids => fun hwf k v j h hj => by
+      have hwf' := hwf
+      rw [WF] at hwf'
+      obtain ⟨hl, hsz, hpc, hwfk, _, hal⟩ := hwf'
+      have hm : mask ≠ 0 := by
+        intro h0; rw [h0, show popCount 0 = 0 from rfl] at hpc; omega
+      have hb0 : 0 < kids.size := by rw [hsz]; omega
+      have hb : kids.size - 1 < kids.size := by omega
+      rw [maxEntry?, dif_pos hb] at h
+      have hwk : WF (kids[kids.size - 1]'hb) := hwfk _ (Array.getElem_mem hb)
+      have hidx : arrayIndex mask (highestSetIdx mask) = kids.size - 1 := by
+        rw [arrayIndex_highestSetIdx mask hm, hsz]
+      have hc31 : childAt mask kids (highestSetIdx mask) = kids[kids.size - 1]'hb := by
+        unfold childAt
+        rw [hidx, Array.getElem?_eq_getElem hb, Option.getD_some]
+      rw [contains_bin, Bool.and_eq_true] at hj
+      obtain ⟨htj, hjc⟩ := hj
+      by_cases hcj : chunk j level = highestSetIdx mask
+      · rw [hcj, hc31] at hjc
+        exact le_maxEntry? (kids[kids.size - 1]'hb) hwk k v j h hjc
+      · have hkmem : contains k (kids[kids.size - 1]'hb) = true := by
+          rw [contains_eq_isSome, get?_of_maxEntry? (kids[kids.size - 1]'hb) hwk k v h]; rfl
+        have halk := hal (highestSetIdx mask) (highestSetIdx_lt mask hm)
+          (testBit_highestSetIdx mask hm)
+        rw [hc31] at halk
+        obtain ⟨hck, hpk⟩ := halk k hkmem
+        obtain ⟨_, hpj⟩ := hal (chunk j level) (chunk_lt j level) htj j hjc
+        have hle := le_highestSetIdx_of_testBit mask (chunk j level) (chunk_lt j level) htj
+        refine Nat.le_of_lt (lt_of_chunk_lt level (hpj.trans hpk.symm) ?_)
+        rw [hck]
+        rcases UInt32.lt_or_lt_of_ne hcj with hlt | hgt
+        · exact hlt
+        · exact absurd (UInt32.le_iff_toNat_le.mp hle)
+            (by have := UInt32.lt_iff_toNat_lt.mp hgt; omega)
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hb); omega
+
 end PTree
 end NatCol

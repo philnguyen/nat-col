@@ -431,6 +431,34 @@ theorem arrayIndex_eq_popCount_of_below (m i : UInt32) (hi : i < 32)
     · simp only [Bool.not_eq_true] at hb; rw [hb]; rfl
   unfold arrayIndex; rw [hand]
 
+/-! ### Lemmas backing the ordered queries (`highestSetIdx`)
+
+The max/predecessor walks (`PTree.maxEntry?`/`entryLT?`) select the *highest* present slot; these
+mirror the `lowestSetIdx` facts above. Each is a fixed-width `UInt32` fact discharged by
+`bv_decide` (the smear-shift inside `highestSetIdx` is just shifts and ors). -/
+
+/-- The highest-set-bit index is a valid slot (`< 32`) when `m` is nonzero. -/
+theorem highestSetIdx_lt (m : UInt32) (hm : m ≠ 0) : highestSetIdx m < 32 := by
+  unfold highestSetIdx popCountAux; bv_decide
+
+/-- The highest-set-bit index does name a set bit when `m` is nonzero. -/
+theorem testBit_highestSetIdx (m : UInt32) (hm : m ≠ 0) : testBit m (highestSetIdx m) = true := by
+  unfold testBit highestSetIdx popCountAux; bv_decide
+
+/-- `highestSetIdx` is the *maximum* set slot: every present bit sits at or below it. -/
+theorem le_highestSetIdx_of_testBit (m c : UInt32) (hc : c < 32) (h : testBit m c = true) :
+    c ≤ highestSetIdx m := by
+  unfold testBit highestSetIdx popCountAux at *; bv_decide
+
+/-- The highest set bit sits at the *last* compact index (every other set bit counts below it).
+The max walk's child selection: the greatest subtree is the last child. -/
+theorem arrayIndex_highestSetIdx (m : UInt32) (hm : m ≠ 0) :
+    arrayIndex m (highestSetIdx m) = popCount m - 1 := by
+  have key : popCount m = popCount (m &&& lowerMask (highestSetIdx m)) + 1 :=
+    popCount_eq_succ_of_aux (by unfold highestSetIdx lowerMask popCountAux; bv_decide)
+  show popCount (m &&& lowerMask (highestSetIdx m)) = popCount m - 1
+  omega
+
 /-- A 5-bit chunk is always a valid slot index (`< 32`). -/
 theorem chunk_lt (k level : Nat) : chunk k level < 32 := by
   have hle : (k >>> (5 * level)) &&& 31 ≤ 31 := Nat.and_le_right
