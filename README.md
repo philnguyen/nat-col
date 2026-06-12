@@ -99,16 +99,30 @@ Both collections follow the naming of `Std.Data.HashMap`/`HashSet`.
 
 **`NatSet`** — `empty`/`∅`, `isEmpty`, `size`, `contains` / `∈`, `insert`, `erase`, `ofList`,
 `toList`, `fold`/`foldM`, `all`/`any`/`filter`/`partition` (+ monadic `allM`/`anyM`/`filterM`), and
-the lattice ops `union` (`∪`), `inter` (`∩`), `diff` (`\`), `subset` (`⊆`).
+the lattice ops `union` (`∪`), `inter` (`∩`), `diff` (`\`), `symmDiff`, `subset` (`⊆`),
+`isDisjoint`.
 
 **`NatMap α`** — the above keyed form (`get?`, `getD`, `alter`, `modify`, value-aware
-`fold`/`filter`/…, plus `keys`/`values` and `domain`, the key set as a `NatSet`), plus
+`fold`/`filter`/`partition`/…, plus `keys`/`values` and `domain`, the key set as a `NatSet`), plus
 `join`/`meet`/`restricts` taking a `combine : α → α → α` (resp. `rel : α → α → Bool`) to
-reconcile values at coinciding keys, and `NatMap.map : (α → β) → NatMap α → NatMap β` (the `Functor`
-action `f <$> m`).
+reconcile values at coinciding keys, key-only `diff`/`symmDiff`/`isDisjoint`, and
+`NatMap.map : (α → β) → NatMap α → NatMap β` (the `Functor` action `f <$> m`).
 
-`filter` and the monadic variants return a **canonical** result — equal to the collection rebuilt
-from the survivors, so structural equality still coincides with logical equality.
+**Ordered queries** — the trie keeps keys in ascending order structurally, so these are O(depth)
+descents (a hash structure scans all *n* entries): `min?`/`max?` (`minKey?`/`maxKey?`/
+`minEntry?`/`maxEntry?` on maps), successor/predecessor `succ?`/`pred?`/`succEq?`/`predEq?`
+(`entryGT?`/`entryGE?`/`entryLT?`/`entryLE?` on maps), `popMin?`/`popMax?` (the priority-queue
+step), and the bound prunes `split` (at a key) and `range` (inclusive window), which keep whole
+off-path subtrees shared instead of copying them.
+
+**Structural merges** — `diff`, `symmDiff`, and `isDisjoint` are Patricia merge walks, not
+per-element probes: subtrees whose prefixes cannot meet are kept whole (shared) or answered in
+O(1), aligned leaves combine in one bitwise op, and `isDisjoint` is allocation-free with an early
+exit at the first shared key.
+
+`filter`, the monadic variants, and all of the above return a **canonical** result — equal to the
+collection rebuilt from the survivors, so structural equality still coincides with logical
+equality.
 
 ## Verified laws
 

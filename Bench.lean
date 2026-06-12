@@ -6,7 +6,7 @@ For each *domain* of inputs
   * `sequential` — `0, 1, …, N-1`
   * `shuffled`   — a fixed seeded shuffle of `0 … N-1` (so values stay "small")
   * `random`     — `N` values in `[0, 2⁶³)`
-we time seven *operations*
+we time nine *operations*
   * `insertion`  — build the set from the value list (report its size)
   * `lookup`     — sum the elements found while probing every value (report the sum)
   * `union`      — turn the values into singletons, then fold them pairwise into one set
@@ -16,6 +16,13 @@ we time seven *operations*
                       shadows `2v+1` — every erase is a logical no-op (report the size)
   * `re-insert`     — build the set, then insert the same values again — every insert
                       is a logical no-op (report the size)
+  * `difference`    — build `s` from the values and `t` from the values shifted by `N`,
+                      then take `s \ t` (report its size). On `seq`/`shuffled` the two
+                      ranges are disjoint, so `NatSet`'s structural merge prunes whole
+                      subtrees against `t`'s prefix instead of probing per element
+  * `disjoint`      — the `erase absent` setup (evens vs odd shadows: interleaved, so
+                      every shared leaf range really is compared — no early exit), then
+                      check `s` and `t` share no element (report 1/0)
 
 `Std.HashSet` ships a `union`; `PersistentHashSet` does not, so we synthesize one
 with `fold` (per the design note). Neither ships a `subset`, so we synthesize those
@@ -248,6 +255,40 @@ def reinsertPHashSet (data : List Nat) : IO Sample := do
   let s ← forceIO (fun _ => data.foldl (·.insert ·) emptyPSet)
   measure (fun _ => data.foldl (·.insert ·) s) psSize
 
+-- difference: `s` from the values, `t` from the values shifted by `n` (range-disjoint on
+-- seq/shuffled, overlapping ranges on random) — both in setup; time `s \ t`; check = size.
+-- The hash sets have no difference, so each rebuilds via fold + contains (the natural route).
+def diffNatSet (data : List Nat) (n : Nat) : IO Sample := do
+  let s ← forceIO (fun _ => NatSet.ofList data)
+  let t ← forceIO (fun _ => NatSet.ofList (data.map (· + n)))
+  measure (fun _ => s \ t) (·.size)
+def diffHashSet (data : List Nat) (n : Nat) : IO Sample := do
+  let s ← forceIO (fun _ => data.foldl (·.insert ·) emptyHSet)
+  let t ← forceIO (fun _ => (data.map (· + n)).foldl (·.insert ·) emptyHSet)
+  measure (fun _ => s.fold (fun (acc : HSet) k => if t.contains k then acc else acc.insert k)
+    emptyHSet) (·.size)
+def diffPHashSet (data : List Nat) (n : Nat) : IO Sample := do
+  let s ← forceIO (fun _ => data.foldl (·.insert ·) emptyPSet)
+  let t ← forceIO (fun _ => (data.map (· + n)).foldl (·.insert ·) emptyPSet)
+  measure (fun _ => s.fold (fun (acc : PSet) k => if t.contains k then acc else acc.insert k)
+    emptyPSet) psSize
+
+-- disjoint: evens vs their odd shadows (interleaved-disjoint — every shared leaf range is
+-- genuinely compared, no degenerate early exit) — both in setup; time the check; check = 1.
+-- `NatSet` compares occupancy bitmaps allocation-free; the hash sets probe per element.
+def disjointNatSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => NatSet.ofList (data.map (· * 2)))
+  let t ← forceIO (fun _ => NatSet.ofList (data.map (2 * · + 1)))
+  measure (fun _ => s.isDisjoint t) boolCheck
+def disjointHashSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => (data.map (· * 2)).foldl (·.insert ·) emptyHSet)
+  let t ← forceIO (fun _ => (data.map (2 * · + 1)).foldl (·.insert ·) emptyHSet)
+  measure (fun _ => s.all (fun k => !(t.contains k))) boolCheck
+def disjointPHashSet (data : List Nat) : IO Sample := do
+  let s ← forceIO (fun _ => (data.map (· * 2)).foldl (·.insert ·) emptyPSet)
+  let t ← forceIO (fun _ => (data.map (2 * · + 1)).foldl (·.insert ·) emptyPSet)
+  measure (fun _ => s.fold (fun acc k => acc && !(t.contains k)) true) boolCheck
+
 def runOne (struct domain op : String) (n : Nat) : IO Sample := do
   let data := mkData domain n
   match op, struct with
@@ -272,6 +313,12 @@ def runOne (struct domain op : String) (n : Nat) : IO Sample := do
   | "reinsert", "natset" => reinsertNatSet data
   | "reinsert", "hashset" => reinsertHashSet data
   | "reinsert", "phashset" => reinsertPHashSet data
+  | "diff", "natset" => diffNatSet data n
+  | "diff", "hashset" => diffHashSet data n
+  | "diff", "phashset" => diffPHashSet data n
+  | "disjoint", "natset" => disjointNatSet data
+  | "disjoint", "hashset" => disjointHashSet data
+  | "disjoint", "phashset" => disjointPHashSet data
   | _, _ => throw <| IO.userError s!"unknown benchmark: op={op} struct={struct}"
 
 /-! ## Worker / driver plumbing -/
@@ -282,10 +329,11 @@ def structs : List (String × String) :=
 /-- The three input domains. -/
 def domains : List (String × String) :=
   [("seq", "sequential"), ("shuffled", "shuffled"), ("random", "random 0..2⁶³")]
-/-- The seven operations. -/
+/-- The nine operations. -/
 def ops : List (String × String) :=
   [("insert", "insertion"), ("lookup", "lookup"), ("union", "union"), ("subset", "subset"),
-   ("erasep", "erase present"), ("erasea", "erase absent"), ("reinsert", "re-insert")]
+   ("erasep", "erase present"), ("erasea", "erase absent"), ("reinsert", "re-insert"),
+   ("diff", "difference"), ("disjoint", "disjoint")]
 
 /-- Format nanoseconds as milliseconds with two decimals, using integer math. -/
 def fmtMs (nanos : Nat) : String :=
