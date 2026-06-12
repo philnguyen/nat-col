@@ -60,6 +60,8 @@ instance {α : Type u} : LeafOps (Node α) α where
     cases Node.get? a i <;> cases Node.get? b i <;> rfl
   get?_insert l i j v hi hj := Node.get?_insert l i v j hi hj
   get?_erase l i j hi hj := Node.get?_erase l i j hi hj
+  get?_filter p n j hj :=
+    Node.get?_filterMap (fun i a => if p i a then some a else none) n j hj
   get?_ext a b h := Node.ext h
   get?_restricts rel _ a b := Node.restricts_iff rel a b
   someSlot_lt n h := lowestSetIdx_lt n.positionsMask (beq_eq_false_iff_ne.mp h)
@@ -1005,6 +1007,47 @@ theorem popMaxEntry?_eq_none {m : NatMap α} : m.popMaxEntry? = none ↔ m = Nat
 theorem get?_erase (m : NatMap α) (k j : Nat) :
     (m.erase k).get? j = if j = k then none else m.get? j :=
   NatCollection.get?_erase m k j
+
+/-- Lookup in `split`'s left part: exactly the entries with key strictly below the split key. -/
+theorem get?_split_left (m : NatMap α) (k j : Nat) :
+    (m.split k).1.get? j = if j < k then m.get? j else none :=
+  NatCollection.get?_filterLt m k j
+
+/-- `split`'s middle component is the value at the split key itself. -/
+theorem split_at (m : NatMap α) (k : Nat) : (m.split k).2.1 = m.get? k := rfl
+
+/-- Lookup in `split`'s right part: exactly the entries with key strictly above the split key. -/
+theorem get?_split_right (m : NatMap α) (k j : Nat) :
+    (m.split k).2.2.get? j = if k < j then m.get? j else none :=
+  NatCollection.get?_filterGE m (k + 1) j
+
+/-- Lookup in `range`: a key reads through exactly when it lies in the inclusive window
+`[lo, hi]`. -/
+theorem get?_range (m : NatMap α) (lo hi j : Nat) :
+    (m.range lo hi).get? j = if lo ≤ j ∧ j ≤ hi then m.get? j else none :=
+  NatCollection.get?_range m lo hi j
+
+/-- Membership in `range`: exactly the keys within the inclusive window `[lo, hi]`. -/
+theorem mem_range {m : NatMap α} {lo hi j : Nat} :
+    j ∈ m.range lo hi ↔ j ∈ m ∧ lo ≤ j ∧ j ≤ hi := by
+  show NatCollection.contains (NatCollection.range m lo hi) j = true ↔ _
+  rw [NatCollection.contains_eq, NatCollection.get?_range]
+  constructor
+  · intro h
+    by_cases hin : lo ≤ j ∧ j ≤ hi
+    · rw [if_pos hin] at h
+      refine ⟨?_, hin.1, hin.2⟩
+      show NatCollection.contains m j = true
+      rw [NatCollection.contains_eq]
+      exact h
+    · rw [if_neg hin] at h
+      simp at h
+  · intro h
+    obtain ⟨hm, h1, h2⟩ := h
+    rw [if_pos ⟨h1, h2⟩]
+    replace hm : NatCollection.contains m j = true := hm
+    rw [NatCollection.contains_eq] at hm
+    exact hm
 
 /-- Membership after `erase`: `j` survives exactly when it was present and is not the erased
 key. -/

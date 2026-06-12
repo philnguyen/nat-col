@@ -182,6 +182,12 @@ class LeafOps (L : Type u) (V : outParam (Type u)) where
   `PTree.get?_erase`. -/
   get?_erase : ∀ (l : L) (i j : UInt32), i < 32 → j < 32 →
     get? (erase l i) j = if j = i then none else get? l j
+  /-- `get?` reads a `filter` pointwise: a slot survives exactly when present and accepted by the
+  predicate. The leaf base case of `PTree.get?_filterLt`/`get?_filterGE`. -/
+  get?_filter : ∀ (p : UInt32 → V → Bool) (l : L) (j : UInt32), j < 32 →
+    get? (filter p l) j = match get? l j with
+      | some v => if p j v then some v else none
+      | none => none
   /-- A leaf is determined by its `get?` at in-range slots. The leaf base case of `PTree.ext_get?`. -/
   get?_ext : ∀ (a b : L), (∀ i, i < 32 → get? a i = get? b i) → a = b
   /-- `restricts` reads denotationally: it holds exactly when, slot by slot, a present left value
@@ -282,6 +288,12 @@ instance : LeafOps UInt32 Unit where
       simp
     · rw [if_neg hji, beq_eq_false_iff_ne.mpr (fun hc => hji hc.symm), Bool.not_false,
           Bool.and_true]
+  get?_filter p u j hj := by
+    have hjn : j.toNat < 32 := by
+      have h := UInt32.lt_iff_toNat_lt.mp hj
+      simpa using h
+    rw [testBit_filterFold p u 32 (Nat.le_refl 32) j hj, decide_eq_true hjn, Bool.true_and]
+    by_cases htb : testBit u j = true <;> by_cases hp : p j () = true <;> simp [htb, hp]
   get?_ext a b h := by
     apply eq_of_testBit_eq
     intro i hi
@@ -1340,6 +1352,58 @@ theorem get?_join (combine : α → α → Option α) (a b : Node α) (j : UInt3
     obtain ⟨hna, hnb⟩ := hjm
     rw [get?_eq_none_of_testBit a j (by simpa using hna),
         get?_eq_none_of_testBit b j (by simpa using hnb)]
+    exact get?_emptyWithCapacity _ j
+
+/-- `get?` of `filterMapStep` at the slot it visits: the filtered-and-mapped value, provided the
+accumulator is fresh there. The `hself` obligation of `get?_mergeLoop` for `filterMap`. -/
+private theorem filterMapStep_get?_self (f : UInt32 → α → Option α) (n : Node α)
+    (acc : Node α) (i : UInt32) (hi : i < 32) (hfresh : acc.get? i = none) :
+    (filterMapStep f n acc i).get? i
+      = match n.get? i with
+        | some v => f i v
+        | none => none := by
+  unfold filterMapStep
+  split
+  · rename_i h
+    rw [get?_eq_some_get n i h]
+    split
+    · rename_i y hy
+      rw [get?_insert _ _ _ _ hi hi, if_pos rfl]
+      exact hy.symm
+    · rename_i hy
+      rw [hfresh]
+      exact hy.symm
+  · rename_i h
+    rw [get?_eq_none_of_testBit n i h]
+    exact hfresh
+
+/-- `get?` of `filterMapStep` off the slot it visits: unchanged from `acc`. The `hother`
+obligation of `get?_mergeLoop` for `filterMap`. -/
+private theorem filterMapStep_get?_other (f : UInt32 → α → Option α) (n : Node α)
+    (acc : Node α) (i j : UInt32) (hi : i < 32) (hj : j < 32) (hne : j ≠ i) :
+    (filterMapStep f n acc i).get? j = acc.get? j := by
+  unfold filterMapStep
+  split
+  · split
+    · rw [get?_insert _ _ _ _ hi hj, if_neg hne]
+    · rfl
+  · rfl
+
+/-- `get?` of a `filterMap`: the lookup, filtered and mapped value-wise. Specializes
+`get?_mergeLoop` (step `filterMapStep`, mask `n`'s own); a slot outside the mask is `none` on
+both sides. -/
+theorem get?_filterMap (f : UInt32 → α → Option α) (n : Node α) (j : UInt32) (hj : j < 32) :
+    (Node.filterMap f n).get? j
+      = match n.get? j with
+        | some v => f j v
+        | none => none := by
+  unfold Node.filterMap
+  rw [get?_mergeLoop (filterMapStep_get?_self f n) (filterMapStep_get?_other f n)
+        n.positionsMask (Node.emptyWithCapacity (popCount n.positionsMask)) j hj
+        (fun s _ _ => get?_emptyWithCapacity _ s)]
+  by_cases hjm : testBit n.positionsMask j = true
+  · rw [if_pos hjm]
+  · rw [if_neg hjm, get?_eq_none_of_testBit n j (by simpa using hjm)]
     exact get?_emptyWithCapacity _ j
 
 /-- Associativity of `Node.join` for a combine that merges associatively at every slot. Both sides

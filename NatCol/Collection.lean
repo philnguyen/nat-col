@@ -895,6 +895,31 @@ theorem contains_erase (c : NatCollection L) (k j : Nat) :
   · rw [if_neg hjk, beq_eq_false_iff_ne.mpr hjk]
     simp
 
+/-! ### Range-restriction denotation -/
+
+/-- Lookup after `filterLt`: a key reads through exactly when it is strictly below the bound. -/
+theorem get?_filterLt (c : NatCollection L) (k j : Nat) :
+    (c.filterLt k).get? j = if j < k then c.get? j else none :=
+  PTree.get?_filterLt k c.tree c.wf j
+
+/-- Lookup after `filterGE`: a key reads through exactly when it is at or above the bound. -/
+theorem get?_filterGE (c : NatCollection L) (k j : Nat) :
+    (c.filterGE k).get? j = if k ≤ j then c.get? j else none :=
+  PTree.get?_filterGE k c.tree c.wf j
+
+/-- Lookup in `range`: a key reads through exactly when it lies in the inclusive window
+`[lo, hi]`. -/
+theorem get?_range (c : NatCollection L) (lo hi j : Nat) :
+    (c.range lo hi).get? j = if lo ≤ j ∧ j ≤ hi then c.get? j else none := by
+  show ((c.filterGE lo).filterLt (hi + 1)).get? j = _
+  rw [get?_filterLt]
+  by_cases h1 : j < hi + 1
+  · rw [if_pos h1, get?_filterGE]
+    by_cases h2 : lo ≤ j
+    · rw [if_pos h2, if_pos ⟨h2, by omega⟩]
+    · rw [if_neg h2, if_neg (fun h => h2 h.1)]
+  · rw [if_neg h1, if_neg (fun h => h1 (by omega))]
+
 end NatCollection
 
 end NatCol

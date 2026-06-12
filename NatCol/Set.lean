@@ -812,6 +812,70 @@ theorem gt_of_predEq?_eq_none {s : NatSet} {k j : Nat} (h : s.predEq? k = none) 
     rw [hle] at h
     exact absurd h (by simp)
 
+/-- Membership in `split`'s left part: exactly the members strictly below the split key. -/
+theorem mem_split_left {s : NatSet} {k j : Nat} : j ∈ (s.split k).1 ↔ j ∈ s ∧ j < k := by
+  show NatCollection.contains (NatCollection.filterLt s k) j = true ↔ _
+  rw [NatCollection.contains_eq, NatCollection.get?_filterLt]
+  constructor
+  · intro h
+    by_cases hjk : j < k
+    · rw [if_pos hjk] at h
+      refine ⟨?_, hjk⟩
+      show NatCollection.contains s j = true
+      rw [NatCollection.contains_eq]
+      exact h
+    · rw [if_neg hjk] at h
+      simp at h
+  · intro h
+    obtain ⟨hm, hjk⟩ := h
+    rw [if_pos hjk]
+    replace hm : NatCollection.contains s j = true := hm
+    rw [NatCollection.contains_eq] at hm
+    exact hm
+
+/-- Membership in `split`'s right part: exactly the members at or above the split key. -/
+theorem mem_split_right {s : NatSet} {k j : Nat} : j ∈ (s.split k).2 ↔ j ∈ s ∧ k ≤ j := by
+  show NatCollection.contains (NatCollection.filterGE s k) j = true ↔ _
+  rw [NatCollection.contains_eq, NatCollection.get?_filterGE]
+  constructor
+  · intro h
+    by_cases hjk : k ≤ j
+    · rw [if_pos hjk] at h
+      refine ⟨?_, hjk⟩
+      show NatCollection.contains s j = true
+      rw [NatCollection.contains_eq]
+      exact h
+    · rw [if_neg hjk] at h
+      simp at h
+  · intro h
+    obtain ⟨hm, hjk⟩ := h
+    rw [if_pos hjk]
+    replace hm : NatCollection.contains s j = true := hm
+    rw [NatCollection.contains_eq] at hm
+    exact hm
+
+/-- Membership in `range`: exactly the members within the inclusive window `[lo, hi]`. -/
+theorem mem_range {s : NatSet} {lo hi j : Nat} :
+    j ∈ s.range lo hi ↔ j ∈ s ∧ lo ≤ j ∧ j ≤ hi := by
+  show NatCollection.contains (NatCollection.range s lo hi) j = true ↔ _
+  rw [NatCollection.contains_eq, NatCollection.get?_range]
+  constructor
+  · intro h
+    by_cases hin : lo ≤ j ∧ j ≤ hi
+    · rw [if_pos hin] at h
+      refine ⟨?_, hin.1, hin.2⟩
+      show NatCollection.contains s j = true
+      rw [NatCollection.contains_eq]
+      exact h
+    · rw [if_neg hin] at h
+      simp at h
+  · intro h
+    obtain ⟨hm, h1, h2⟩ := h
+    rw [if_pos ⟨h1, h2⟩]
+    replace hm : NatCollection.contains s j = true := hm
+    rw [NatCollection.contains_eq] at hm
+    exact hm
+
 /-- Membership after `erase`: `j` survives exactly when it was present and is not the erased
 element. -/
 theorem mem_erase {s : NatSet} {k j : Nat} : j ∈ s.erase k ↔ j ∈ s ∧ j ≠ k := by

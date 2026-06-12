@@ -358,6 +358,58 @@ theorem arrayIndex_clearBit_of_gt (m i j : UInt32) (hi : i < 32) (hj : j < 32)
     arrayIndex m j = arrayIndex (clearBit m i) j + 1 :=
   popCount_eq_succ_of_aux (by unfold popCountAux clearBit lowerMask testBit at *; bv_decide)
 
+/-! ### The set-leaf `filter` fold
+
+The `UInt32` leaf's `filter` rebuilds the bitset by folding slots `0..31`, keeping each present
+slot the predicate accepts. This invariant reads the fold under `testBit`, backing the set
+instance's `get?_filter` law. -/
+
+/-- After folding slots `0..m-1`, bit `j` is set exactly when `j < m`, present in `u`, and
+accepted by `p`. -/
+theorem testBit_filterFold (p : UInt32 → Unit → Bool) (u : UInt32) :
+    ∀ (m : Nat), m ≤ 32 → ∀ (j : UInt32), j < 32 →
+      testBit (Nat.fold m (fun i _ acc =>
+          let iu := UInt32.ofNat i
+          if testBit u iu && p iu () then setBit acc iu else acc) (0 : UInt32)) j
+        = (decide (j.toNat < m) && (testBit u j && p j ())) := by
+  intro m
+  induction m with
+  | zero =>
+    intro _ j hj
+    rw [Nat.fold_zero, testBit_zero]
+    simp
+  | succ i ih =>
+    intro hm j hj
+    simp only [Nat.fold_succ]
+    have hiu : (UInt32.ofNat i) < 32 := by
+      rw [UInt32.lt_iff_toNat_lt,
+          UInt32.toNat_ofNat_of_lt' (Nat.lt_of_lt_of_le (show i < 32 by omega) (by decide)),
+          show (32 : UInt32).toNat = 32 from rfl]
+      omega
+    have htn : (UInt32.ofNat i).toNat = i :=
+      UInt32.toNat_ofNat_of_lt' (Nat.lt_of_lt_of_le (show i < 32 by omega) (by decide))
+    by_cases hstep : (testBit u (UInt32.ofNat i) && p (UInt32.ofNat i) ()) = true
+    · rw [if_pos hstep, testBit_setBit _ _ _ hiu hj, ih (by omega) j hj]
+      by_cases hji : j = UInt32.ofNat i
+      · subst hji
+        simp [htn, hstep]
+      · have hbe : (UInt32.ofNat i == j) = false :=
+          beq_eq_false_iff_ne.mpr (fun he => hji he.symm)
+        have hne : j.toNat ≠ i := by
+          intro he
+          exact hji (UInt32.toNat_inj.mp (by rw [htn, he]))
+        rw [hbe, Bool.or_false, decide_eq_decide.mpr (show j.toNat < i ↔ j.toNat < i + 1 by omega)]
+    · rw [if_neg hstep, ih (by omega) j hj]
+      by_cases hji : j = UInt32.ofNat i
+      · subst hji
+        have hstep' : (testBit u (UInt32.ofNat i) && p (UInt32.ofNat i) ()) = false := by
+          simpa using hstep
+        rw [hstep', Bool.and_false, Bool.and_false]
+      · have hne : j.toNat ≠ i := by
+          intro he
+          exact hji (UInt32.toNat_inj.mp (by rw [htn, he]))
+        rw [decide_eq_decide.mpr (show j.toNat < i ↔ j.toNat < i + 1 by omega)]
+
 /-- The compact index is strictly monotone on present slots. -/
 theorem arrayIndex_lt_of_lt (m a b : UInt32) (ha : a < 32) (hb : b < 32)
     (h1 : testBit m a = true) (h2 : a < b) : arrayIndex m a < arrayIndex m b := by

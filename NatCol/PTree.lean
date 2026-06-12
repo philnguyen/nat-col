@@ -9782,5 +9782,438 @@ theorem get?_erase (k : Nat) (t : PTree L) (hwf : WF t) (j : Nat) :
     get? j (erase k t) = if j = k then none else get? j t :=
   get?_eraseU k t hwf j
 
+/-! ### Range-restriction denotation
+
+`get?` after `filterLt`/`filterGE`: a key reads through exactly when it is on the kept side of
+the bound. Member recursion down the bound's routed path; the rebuilt `bin` reads via
+`get?_finalize` + `childAt_ltKids`/`ltChild_eq` (the fold seams), with `filterLt_WF_keys`'
+keys-provenance transferring `AlignedAt` across the rebuilt children. The whole-subtree
+prune/keep cases close by the routing invariant: a key on the wrong side of the bound is also
+misaligned with the subtree, so it reads `none` off the original too. -/
+
+/-- Shifting right is monotone (the contrapositive of `lt_of_shiftRight_lt`). -/
+private theorem shiftRight_le_of_le {k j : Nat} (n : Nat) (h : k ≤ j) : k >>> n ≤ j >>> n :=
+  Nat.not_lt.mp fun hlt => Nat.not_lt.mpr h (lt_of_shiftRight_lt hlt)
+
+/-- Prefixes are monotone in the key. -/
+private theorem prefixAbove_le_of_le {k j : Nat} (level : Nat) (h : k ≤ j) :
+    prefixAbove k level ≤ prefixAbove j level :=
+  shiftRight_le_of_le _ h
+
+/-- A key that violates a subtree's routing alignment reads `none` off it. -/
+private theorem get?_eq_none_of_misaligned (j : Nat) (level : Nat) (c : UInt32) (p : Nat)
+    (t : PTree L) (halign : AlignedAt level c p t) (hne : prefixAbove j level ≠ p) :
+    get? j t = none := by
+  cases hg : get? j t with
+  | none => rfl
+  | some v =>
+    have hc : contains j t = true := by
+      rw [contains_eq_isSome, hg]; rfl
+    exact absurd (halign j hc).2 hne
+
+/-- A key whose prefix disagrees with a well-formed `bin` reads `none` off it: `get?` routes by
+chunk alone, but the routing invariant pins every present key's prefix. -/
+private theorem get?_bin_eq_none_of_prefix_ne (j pfx level : Nat) (mask : UInt32)
+    (kids : Array (PTree L)) (hwf : WF (.bin pfx level mask kids))
+    (hne : prefixAbove j level ≠ pfx) :
+    get? j (.bin pfx level mask kids) = none := by
+  rw [get?_bin]
+  by_cases htb : testBit mask (chunk j level) = true
+  · rw [if_pos htb]
+    rw [WF] at hwf
+    obtain ⟨_, _, _, _, _, hal⟩ := hwf
+    exact get?_eq_none_of_misaligned j level (chunk j level) pfx _
+      (hal (chunk j level) (chunk_lt _ _) htb) hne
+  · rw [if_neg htb]
+
+private theorem get?_filterLtU (k : Nat) : (t : PTree L) → WF t → ∀ j,
+    get? j (filterLtU k t) = if j < k then get? j t else none
+  | .nil => fun _ j => by
+      rw [filterLtU, get?_nil]
+      by_cases hjk : j < k
+      · rw [if_pos hjk]
+      · rw [if_neg hjk]
+  | .tip pfx leaf => fun hwf j => by
+      rw [filterLtU]
+      by_cases h1 : k >>> 5 < pfx
+      · -- whole tip above the bound: dropped; any j < k reads none off it anyway
+        rw [if_pos h1, get?_nil]
+        by_cases hjk : j < k
+        · rw [if_pos hjk, get?_tip,
+              if_neg (by
+                intro hp
+                replace hp : j >>> 5 = pfx := by simpa using hp
+                have hle := shiftRight_le_of_le 5 (Nat.le_of_lt hjk)
+                rw [hp] at hle
+                exact Nat.not_le.mpr h1 hle)]
+        · rw [if_neg hjk]
+      · rw [if_neg h1]
+        by_cases h2 : pfx < k >>> 5
+        · -- whole tip below the bound: kept; any j ≥ k reads none off it anyway
+          rw [if_pos h2]
+          by_cases hjk : j < k
+          · rw [if_pos hjk]
+          · rw [if_neg hjk, get?_tip,
+                if_neg (by
+                  intro hp
+                  replace hp : j >>> 5 = pfx := by simpa using hp
+                  have hle := shiftRight_le_of_le 5 (Nat.not_lt.mp hjk)
+                  rw [hp] at hle
+                  exact Nat.not_le.mpr h2 hle)]
+        · -- the bound's own leaf: keep the slots strictly below the bound's chunk
+          have hpe : k >>> 5 = pfx := by omega
+          rw [if_neg h2]
+          by_cases he : LeafOps.isEmpty
+              (LeafOps.filter (fun s _ => decide (s < chunk k 0)) leaf) = true
+          · rw [if_pos he, get?_nil]
+            have hread := LeafOps.get?_filter (V := V)
+              (fun s _ => decide (s < chunk k 0)) leaf (chunk j 0) (chunk_lt _ _)
+            rw [LeafOps.eq_empty_of_isEmpty _ he, LeafOps.get?_empty] at hread
+            by_cases hjk : j < k
+            · rw [if_pos hjk, get?_tip]
+              by_cases hjp : (j >>> 5 == pfx) = true
+              · rw [if_pos hjp]
+                replace hjp : j >>> 5 = pfx := by simpa using hjp
+                have hclt : chunk j 0 < chunk k 0 :=
+                  chunk0_lt_of_lt (hjp.trans hpe.symm) hjk
+                cases hg : LeafOps.get? (V := V) leaf (chunk j 0) with
+                | none => rfl
+                | some v =>
+                  rw [hg] at hread
+                  simp [hclt] at hread
+              · rw [if_neg hjp]
+            · rw [if_neg hjk]
+          · rw [if_neg he, get?_tip, get?_tip]
+            by_cases hjp : (j >>> 5 == pfx) = true
+            · rw [if_pos hjp, if_pos hjp,
+                  LeafOps.get?_filter (V := V)
+                    (fun s _ => decide (s < chunk k 0)) leaf (chunk j 0) (chunk_lt _ _)]
+              replace hjp : j >>> 5 = pfx := by simpa using hjp
+              by_cases hclt : chunk j 0 < chunk k 0
+              · have hjk : j < k :=
+                  lt_of_chunk_lt 0
+                    (show prefixAbove j 0 = prefixAbove k 0 from hjp.trans hpe.symm) hclt
+                rw [if_pos hjk]
+                cases hg : LeafOps.get? (V := V) leaf (chunk j 0) with
+                | none => rfl
+                | some v => simp [hclt]
+              · have hjk : ¬(j < k) :=
+                  fun hjk => hclt (chunk0_lt_of_lt (hjp.trans hpe.symm) hjk)
+                rw [if_neg hjk]
+                cases hg : LeafOps.get? (V := V) leaf (chunk j 0) with
+                | none => rfl
+                | some v => simp [hclt]
+            · rw [if_neg hjp, if_neg hjp]
+              by_cases hjk : j < k
+              · rw [if_pos hjk]
+              · rw [if_neg hjk]
+  | .bin pfx level mask kids => fun hwf j => by
+      rw [filterLtU]
+      by_cases h1 : prefixAbove k level < pfx
+      · -- whole branch above the bound: dropped; any j < k is misaligned with it anyway
+        rw [if_pos h1, get?_nil]
+        by_cases hjk : j < k
+        · rw [if_pos hjk,
+              get?_bin_eq_none_of_prefix_ne j pfx level mask kids hwf
+                (fun hp => Nat.not_le.mpr h1
+                  (hp ▸ prefixAbove_le_of_le level (Nat.le_of_lt hjk)))]
+        · rw [if_neg hjk]
+      · rw [if_neg h1]
+        by_cases h2 : pfx < prefixAbove k level
+        · -- whole branch below the bound: kept; any j ≥ k is misaligned with it anyway
+          rw [if_pos h2]
+          by_cases hjk : j < k
+          · rw [if_pos hjk]
+          · rw [if_neg hjk,
+                get?_bin_eq_none_of_prefix_ne j pfx level mask kids hwf
+                  (fun hp => Nat.not_le.mpr h2
+                    (hp ▸ prefixAbove_le_of_le level (Nat.not_lt.mp hjk)))]
+        · -- the bound's routed branch: rebuilt slot-interval-wise
+          have hpe : prefixAbove k level = pfx := by omega
+          rw [if_neg h2, Array.emptyWithCapacity_eq]
+          have hwf' := hwf
+          rw [WF] at hwf'
+          obtain ⟨hl, hsz, _, hwfk, _, hal⟩ := hwf'
+          have hslot : ∀ c, c < 32 → testBit mask c = true →
+              WF (ltChild k level mask kids c)
+              ∧ ∀ j2, contains j2 (ltChild k level mask kids c) = true →
+                  ∃ j', contains j' (childAt mask kids c) = true ∧ j2 >>> 5 = j' >>> 5 := by
+            intro c hc htc
+            have hbc : arrayIndex mask c < kids.size := by
+              rw [hsz]; exact arrayIndex_lt mask c htc
+            have hcA : childAt mask kids c = kids[arrayIndex mask c]'hbc := by
+              unfold childAt; rw [Array.getElem?_eq_getElem hbc, Option.getD_some]
+            rw [ltChild_eq]
+            by_cases hclt : c < chunk k level
+            · rw [if_pos hclt, hcA]
+              exact ⟨hwfk _ (Array.getElem_mem hbc), fun j2 hj2 => ⟨j2, hj2, rfl⟩⟩
+            · rw [if_neg hclt]
+              by_cases hceq : (c == chunk k level) = true
+              · rw [if_pos hceq, hcA]
+                exact filterLt_WF_keys k (kids[arrayIndex mask c]'hbc)
+                  (hwfk _ (Array.getElem_mem hbc))
+              · rw [if_neg hceq]
+                exact ⟨by rw [WF]; trivial,
+                       fun j2 hj2 => by rw [contains_nil] at hj2; exact absurd hj2 (by decide)⟩
+          have hal' : ∀ c, c < 32 → testBit mask c = true →
+              AlignedAt level c pfx (childAt mask (ltKids k level mask kids mask #[]) c) := by
+            intro c hc htc
+            rw [childAt_ltKids k level mask kids c hc htc]
+            intro j2 hj2
+            obtain ⟨j', hj', h5⟩ := (hslot c hc htc).2 j2 hj2
+            obtain ⟨hch, hpf⟩ := hal c hc htc j' hj'
+            exact ⟨(chunk_eq_of_hi level hl h5).trans hch,
+                   (prefixAbove_eq_of_hi level h5).trans hpf⟩
+          rw [get?_finalize j pfx level mask _ hal', get?_bin]
+          by_cases hjp : prefixAbove j level = pfx
+          · by_cases htj : testBit mask (chunk j level) = true
+            · rw [if_pos htj, childAt_ltKids k level mask kids (chunk j level) (chunk_lt _ _) htj,
+                  ltChild_eq]
+              by_cases hclt : chunk j level < chunk k level
+              · have hjk : j < k := lt_of_chunk_lt level (hjp.trans hpe.symm) hclt
+                rw [if_pos hclt, if_pos hjk, if_pos htj]
+              · rw [if_neg hclt]
+                by_cases hceq : (chunk j level == chunk k level) = true
+                · rw [if_pos hceq]
+                  have hbc : arrayIndex mask (chunk j level) < kids.size := by
+                    rw [hsz]; exact arrayIndex_lt mask _ htj
+                  have hcA : childAt mask kids (chunk j level)
+                      = kids[arrayIndex mask (chunk j level)]'hbc := by
+                    unfold childAt; rw [Array.getElem?_eq_getElem hbc, Option.getD_some]
+                  rw [hcA, get?_filterLtU k (kids[arrayIndex mask (chunk j level)]'hbc)
+                        (hwfk _ (Array.getElem_mem hbc)) j]
+                  by_cases hjk : j < k
+                  · rw [if_pos hjk, if_pos hjk, if_pos htj]
+                  · rw [if_neg hjk, if_neg hjk]
+                · rw [if_neg hceq, get?_nil]
+                  have hne : chunk j level ≠ chunk k level := by simpa using hceq
+                  rcases UInt32.lt_or_lt_of_ne hne with h | h
+                  · exact absurd h hclt
+                  · have hkj : k < j := lt_of_chunk_lt level (hpe.trans hjp.symm) h
+                    rw [if_neg (Nat.lt_asymm hkj)]
+            · rw [if_neg htj]
+              by_cases hjk : j < k
+              · rw [if_pos hjk, if_neg htj]
+              · rw [if_neg hjk]
+          · -- j misaligned with this branch: it reads none off both the rebuilt and the original
+            by_cases htj : testBit mask (chunk j level) = true
+            · rw [if_pos htj,
+                  get?_eq_none_of_misaligned j level (chunk j level) pfx _
+                    (hal' (chunk j level) (chunk_lt _ _) htj) hjp]
+              by_cases hjk : j < k
+              · rw [if_pos hjk, if_pos htj,
+                    get?_eq_none_of_misaligned j level (chunk j level) pfx _
+                      (hal (chunk j level) (chunk_lt _ _) htj) hjp]
+              · rw [if_neg hjk]
+            · rw [if_neg htj]
+              by_cases hjk : j < k
+              · rw [if_pos hjk, if_neg htj]
+              · rw [if_neg hjk]
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hbc); omega
+
+private theorem get?_filterGEU (k : Nat) : (t : PTree L) → WF t → ∀ j,
+    get? j (filterGEU k t) = if k ≤ j then get? j t else none
+  | .nil => fun _ j => by
+      rw [filterGEU, get?_nil]
+      by_cases hjk : k ≤ j
+      · rw [if_pos hjk]
+      · rw [if_neg hjk]
+  | .tip pfx leaf => fun hwf j => by
+      rw [filterGEU]
+      by_cases h1 : k >>> 5 < pfx
+      · -- whole tip above the bound: kept; any j < k is misaligned with it anyway
+        rw [if_pos h1]
+        by_cases hjk : k ≤ j
+        · rw [if_pos hjk]
+        · rw [if_neg hjk, get?_tip,
+              if_neg (by
+                intro hp
+                replace hp : j >>> 5 = pfx := by simpa using hp
+                have hle := shiftRight_le_of_le 5 (Nat.le_of_lt (Nat.not_le.mp hjk))
+                rw [hp] at hle
+                exact Nat.not_le.mpr h1 hle)]
+      · rw [if_neg h1]
+        by_cases h2 : pfx < k >>> 5
+        · -- whole tip below the bound: dropped; any j ≥ k is misaligned with it anyway
+          rw [if_pos h2, get?_nil]
+          by_cases hjk : k ≤ j
+          · rw [if_pos hjk, get?_tip,
+                if_neg (by
+                  intro hp
+                  replace hp : j >>> 5 = pfx := by simpa using hp
+                  have hle := shiftRight_le_of_le 5 hjk
+                  rw [hp] at hle
+                  exact Nat.not_le.mpr h2 hle)]
+          · rw [if_neg hjk]
+        · -- the bound's own leaf: keep the slots at or above the bound's chunk
+          have hpe : k >>> 5 = pfx := by omega
+          rw [if_neg h2]
+          by_cases he : LeafOps.isEmpty
+              (LeafOps.filter (fun s _ => decide (chunk k 0 ≤ s)) leaf) = true
+          · rw [if_pos he, get?_nil]
+            have hread := LeafOps.get?_filter (V := V)
+              (fun s _ => decide (chunk k 0 ≤ s)) leaf (chunk j 0) (chunk_lt _ _)
+            rw [LeafOps.eq_empty_of_isEmpty _ he, LeafOps.get?_empty] at hread
+            by_cases hjk : k ≤ j
+            · rw [if_pos hjk, get?_tip]
+              by_cases hjp : (j >>> 5 == pfx) = true
+              · rw [if_pos hjp]
+                replace hjp : j >>> 5 = pfx := by simpa using hjp
+                have hcle : chunk k 0 ≤ chunk j 0 :=
+                  chunk_le_of_le 0
+                    (show prefixAbove k 0 = prefixAbove j 0 from hpe.trans hjp.symm) hjk
+                cases hg : LeafOps.get? (V := V) leaf (chunk j 0) with
+                | none => rfl
+                | some v =>
+                  rw [hg] at hread
+                  simp [hcle] at hread
+              · rw [if_neg hjp]
+            · rw [if_neg hjk]
+          · rw [if_neg he, get?_tip, get?_tip]
+            by_cases hjp : (j >>> 5 == pfx) = true
+            · rw [if_pos hjp, if_pos hjp,
+                  LeafOps.get?_filter (V := V)
+                    (fun s _ => decide (chunk k 0 ≤ s)) leaf (chunk j 0) (chunk_lt _ _)]
+              replace hjp : j >>> 5 = pfx := by simpa using hjp
+              by_cases hcle : chunk k 0 ≤ chunk j 0
+              · have hjk : k ≤ j := by
+                  by_cases h : k ≤ j
+                  · exact h
+                  · exfalso
+                    have hlt := chunk0_lt_of_lt (hjp.trans hpe.symm) (Nat.not_le.mp h)
+                    have h1' := UInt32.lt_iff_toNat_lt.mp hlt
+                    have h2' := UInt32.le_iff_toNat_le.mp hcle
+                    omega
+                rw [if_pos hjk]
+                cases hg : LeafOps.get? (V := V) leaf (chunk j 0) with
+                | none => rfl
+                | some v => simp [hcle]
+              · have hjk : ¬(k ≤ j) :=
+                  fun hk => hcle (chunk_le_of_le 0
+                    (show prefixAbove k 0 = prefixAbove j 0 from hpe.trans hjp.symm) hk)
+                rw [if_neg hjk]
+                cases hg : LeafOps.get? (V := V) leaf (chunk j 0) with
+                | none => rfl
+                | some v => simp [hcle]
+            · rw [if_neg hjp, if_neg hjp]
+              by_cases hjk : k ≤ j
+              · rw [if_pos hjk]
+              · rw [if_neg hjk]
+  | .bin pfx level mask kids => fun hwf j => by
+      rw [filterGEU]
+      by_cases h1 : prefixAbove k level < pfx
+      · -- whole branch above the bound: kept; any j < k is misaligned with it anyway
+        rw [if_pos h1]
+        by_cases hjk : k ≤ j
+        · rw [if_pos hjk]
+        · rw [if_neg hjk,
+              get?_bin_eq_none_of_prefix_ne j pfx level mask kids hwf
+                (fun hp => Nat.not_le.mpr h1
+                  (hp ▸ prefixAbove_le_of_le level (Nat.le_of_lt (Nat.not_le.mp hjk))))]
+      · rw [if_neg h1]
+        by_cases h2 : pfx < prefixAbove k level
+        · -- whole branch below the bound: dropped; any j ≥ k is misaligned with it anyway
+          rw [if_pos h2, get?_nil]
+          by_cases hjk : k ≤ j
+          · rw [if_pos hjk,
+                get?_bin_eq_none_of_prefix_ne j pfx level mask kids hwf
+                  (fun hp => Nat.not_le.mpr h2
+                    (hp ▸ prefixAbove_le_of_le level hjk))]
+          · rw [if_neg hjk]
+        · -- the bound's routed branch: rebuilt slot-interval-wise
+          have hpe : prefixAbove k level = pfx := by omega
+          rw [if_neg h2, Array.emptyWithCapacity_eq]
+          have hwf' := hwf
+          rw [WF] at hwf'
+          obtain ⟨hl, hsz, _, hwfk, _, hal⟩ := hwf'
+          have hslot : ∀ c, c < 32 → testBit mask c = true →
+              WF (geChild k level mask kids c)
+              ∧ ∀ j2, contains j2 (geChild k level mask kids c) = true →
+                  ∃ j', contains j' (childAt mask kids c) = true ∧ j2 >>> 5 = j' >>> 5 := by
+            intro c hc htc
+            have hbc : arrayIndex mask c < kids.size := by
+              rw [hsz]; exact arrayIndex_lt mask c htc
+            have hcA : childAt mask kids c = kids[arrayIndex mask c]'hbc := by
+              unfold childAt; rw [Array.getElem?_eq_getElem hbc, Option.getD_some]
+            rw [geChild_eq]
+            by_cases hcgt : chunk k level < c
+            · rw [if_pos hcgt, hcA]
+              exact ⟨hwfk _ (Array.getElem_mem hbc), fun j2 hj2 => ⟨j2, hj2, rfl⟩⟩
+            · rw [if_neg hcgt]
+              by_cases hceq : (c == chunk k level) = true
+              · rw [if_pos hceq, hcA]
+                exact filterGE_WF_keys k (kids[arrayIndex mask c]'hbc)
+                  (hwfk _ (Array.getElem_mem hbc))
+              · rw [if_neg hceq]
+                exact ⟨by rw [WF]; trivial,
+                       fun j2 hj2 => by rw [contains_nil] at hj2; exact absurd hj2 (by decide)⟩
+          have hal' : ∀ c, c < 32 → testBit mask c = true →
+              AlignedAt level c pfx (childAt mask (geKids k level mask kids mask #[]) c) := by
+            intro c hc htc
+            rw [childAt_geKids k level mask kids c hc htc]
+            intro j2 hj2
+            obtain ⟨j', hj', h5⟩ := (hslot c hc htc).2 j2 hj2
+            obtain ⟨hch, hpf⟩ := hal c hc htc j' hj'
+            exact ⟨(chunk_eq_of_hi level hl h5).trans hch,
+                   (prefixAbove_eq_of_hi level h5).trans hpf⟩
+          rw [get?_finalize j pfx level mask _ hal', get?_bin]
+          by_cases hjp : prefixAbove j level = pfx
+          · by_cases htj : testBit mask (chunk j level) = true
+            · rw [if_pos htj, childAt_geKids k level mask kids (chunk j level) (chunk_lt _ _) htj,
+                  geChild_eq]
+              by_cases hcgt : chunk k level < chunk j level
+              · have hjk : k ≤ j :=
+                  Nat.le_of_lt (lt_of_chunk_lt level (hpe.trans hjp.symm) hcgt)
+                rw [if_pos hcgt, if_pos hjk, if_pos htj]
+              · rw [if_neg hcgt]
+                by_cases hceq : (chunk j level == chunk k level) = true
+                · rw [if_pos hceq]
+                  have hbc : arrayIndex mask (chunk j level) < kids.size := by
+                    rw [hsz]; exact arrayIndex_lt mask _ htj
+                  have hcA : childAt mask kids (chunk j level)
+                      = kids[arrayIndex mask (chunk j level)]'hbc := by
+                    unfold childAt; rw [Array.getElem?_eq_getElem hbc, Option.getD_some]
+                  rw [hcA, get?_filterGEU k (kids[arrayIndex mask (chunk j level)]'hbc)
+                        (hwfk _ (Array.getElem_mem hbc)) j]
+                  by_cases hjk : k ≤ j
+                  · rw [if_pos hjk, if_pos hjk, if_pos htj]
+                  · rw [if_neg hjk, if_neg hjk]
+                · rw [if_neg hceq, get?_nil]
+                  have hne : chunk j level ≠ chunk k level := by simpa using hceq
+                  rcases UInt32.lt_or_lt_of_ne hne with h | h
+                  · have hjk : j < k := lt_of_chunk_lt level (hjp.trans hpe.symm) h
+                    rw [if_neg (Nat.not_le.mpr hjk)]
+                  · exact absurd h hcgt
+            · rw [if_neg htj]
+              by_cases hjk : k ≤ j
+              · rw [if_pos hjk, if_neg htj]
+              · rw [if_neg hjk]
+          · by_cases htj : testBit mask (chunk j level) = true
+            · rw [if_pos htj,
+                  get?_eq_none_of_misaligned j level (chunk j level) pfx _
+                    (hal' (chunk j level) (chunk_lt _ _) htj) hjp]
+              by_cases hjk : k ≤ j
+              · rw [if_pos hjk, if_pos htj,
+                    get?_eq_none_of_misaligned j level (chunk j level) pfx _
+                      (hal (chunk j level) (chunk_lt _ _) htj) hjp]
+              · rw [if_neg hjk]
+            · rw [if_neg htj]
+              by_cases hjk : k ≤ j
+              · rw [if_pos hjk, if_neg htj]
+              · rw [if_neg hjk]
+termination_by t => sizeOf t
+decreasing_by simp_wf; have := Array.sizeOf_lt_of_mem (Array.getElem_mem hbc); omega
+
+/-- `get?` after `filterLt`: a key reads through exactly when it is strictly below the bound. -/
+theorem get?_filterLt (k : Nat) (t : PTree L) (hwf : WF t) (j : Nat) :
+    get? j (filterLt k t) = if j < k then get? j t else none :=
+  get?_filterLtU k t hwf j
+
+/-- `get?` after `filterGE`: a key reads through exactly when it is at or above the bound. -/
+theorem get?_filterGE (k : Nat) (t : PTree L) (hwf : WF t) (j : Nat) :
+    get? j (filterGE k t) = if k ≤ j then get? j t else none :=
+  get?_filterGEU k t hwf j
+
 end PTree
 end NatCol
