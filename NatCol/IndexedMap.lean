@@ -346,6 +346,26 @@ private def cm : IndexedMap Char Nat :=
 #guard cm.popMaxEntry? = some (('c', 30), IndexedMap.ofList [('a', 10), ('b', 20)])
 #guard (∅ : IndexedMap Char Nat).popMinEntry? = none
 
+-- popMinEntry? drains in ascending encoding order (recovering `toList`), popMaxEntry? in
+-- descending order, with the values riding along
+private def drainMinM {κ : Type} [Countable κ] {V : Type} :
+    Nat → IndexedMap κ V → List (κ × V)
+  | 0, _ => []
+  | fuel + 1, m =>
+    match m.popMinEntry? with
+    | none => []
+    | some (e, rest) => e :: drainMinM fuel rest
+private def drainMaxM {κ : Type} [Countable κ] {V : Type} :
+    Nat → IndexedMap κ V → List (κ × V)
+  | 0, _ => []
+  | fuel + 1, m =>
+    match m.popMaxEntry? with
+    | none => []
+    | some (e, rest) => e :: drainMaxM fuel rest
+#guard drainMinM 10 cm = [('a', 10), ('b', 20), ('c', 30)]
+#guard drainMinM 10 cm = cm.toList
+#guard drainMaxM 10 cm = [('c', 30), ('b', 20), ('a', 10)]
+
 -- split / range: structural prunes at encoding-order bounds
 #guard (cm.split 'b').1 = IndexedMap.ofList [('a', 10)]
 #guard (cm.split 'b').2.1 = some 20
@@ -392,6 +412,7 @@ private def deepM : IndexedMap UInt64 String :=
 #guard deepM.minEntry? = some (1, "one")
 #guard deepM.maxEntry? = some (18446744073709551615, "max")
 #guard (deepM.erase 5000000000).keys = [1, 18446744073709551615]
+#guard drainMinM 10 deepM = deepM.toList
 
 -- `IndexedMap Nat` coincides with `NatMap` (the identity encoding)
 #guard (IndexedMap.ofList [(3, "c"), (1, "a")] : IndexedMap Nat String).raw
