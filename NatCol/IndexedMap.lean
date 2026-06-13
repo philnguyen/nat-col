@@ -704,89 +704,73 @@ theorem mem_domain (m : IndexedMap κ V) (k : κ) : k ∈ m.domain ↔ k ∈ m :
   show m.domain.contains k = true ↔ m.contains k = true
   rw [contains_domain]
 
-/-- The entry `minEntry?` returns is real: `get?` reads its value back at its key. -/
-theorem get?_of_minEntry? {m : IndexedMap κ V} {k : κ} {v : V}
-    (h : m.minEntry? = some (k, v)) : m.get? k = some v := by
-  replace h : m.raw.minEntry?.bind (fun e => (ofNat? e.1).map fun k => (k, e.2)) = some (k, v) := h
-  cases hm : m.raw.minEntry? with
-  | none => rw [hm] at h; exact absurd h (by simp)
+/-- Decoding seam for entry answers: a decoded `some (k, v)` pins the raw entry to
+`(toNat k, v)` — the pair-form sibling of `Countable.bind_ofNat?_eq_some`. -/
+private theorem entryDecode_eq_some {o : Option (Nat × V)} {k : κ} {v : V}
+    (h : o.bind (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (k, v)) :
+    o = some (toNat k, v) := by
+  cases o with
+  | none => exact absurd h (by simp)
   | some e =>
-    rw [hm] at h
     replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (k, v) := h
     obtain ⟨k', hd, hpair⟩ := Option.map_eq_some_iff.mp h
     replace hpair : (k', e.2) = (k, v) := hpair
     injection hpair with h1 h2
     subst h1
     subst h2
-    show m.raw.get? (toNat k') = some e.2
     rw [toNat_ofNat? hd]
-    exact NatMap.get?_of_minEntry? hm
+
+/-- Decoding seam for entry answers: when every raw key the answer could carry is in `toNat`'s
+image (the `wf` invariant), a decoded `none` means the raw answer was already `none` — the
+pair-form sibling of `Countable.bind_ofNat?_eq_none`. -/
+private theorem entryDecode_eq_none {o : Option (Nat × V)}
+    (h : o.bind (fun e => (ofNat? (α := κ) e.1).map fun k' => (k', e.2)) = none)
+    (hwf : ∀ e, o = some e → ∃ a : κ, toNat a = e.1) : o = none := by
+  cases o with
+  | none => rfl
+  | some e =>
+    obtain ⟨a, ha⟩ := hwf e rfl
+    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = none := h
+    rw [ofNat?_eq_some_iff.mpr ha] at h
+    exact absurd h (by simp)
+
+/-- The entry `minEntry?` returns is real: `get?` reads its value back at its key. -/
+theorem get?_of_minEntry? {m : IndexedMap κ V} {k : κ} {v : V}
+    (h : m.minEntry? = some (k, v)) : m.get? k = some v := by
+  replace h : m.raw.minEntry?.bind (fun e => (ofNat? e.1).map fun k => (k, e.2)) = some (k, v) := h
+  show m.raw.get? (toNat k) = some v
+  exact NatMap.get?_of_minEntry? (entryDecode_eq_some h)
 
 /-- The entry `maxEntry?` returns is real: `get?` reads its value back at its key. -/
 theorem get?_of_maxEntry? {m : IndexedMap κ V} {k : κ} {v : V}
     (h : m.maxEntry? = some (k, v)) : m.get? k = some v := by
   replace h : m.raw.maxEntry?.bind (fun e => (ofNat? e.1).map fun k => (k, e.2)) = some (k, v) := h
-  cases hm : m.raw.maxEntry? with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (k, v) := h
-    obtain ⟨k', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (k', e.2) = (k, v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    subst h2
-    show m.raw.get? (toNat k') = some e.2
-    rw [toNat_ofNat? hd]
-    exact NatMap.get?_of_maxEntry? hm
+  show m.raw.get? (toNat k) = some v
+  exact NatMap.get?_of_maxEntry? (entryDecode_eq_some h)
 
 /-- The least key (in encoding order) is present. -/
 theorem minKey?_mem {m : IndexedMap κ V} {k : κ} (h : m.minKey? = some k) : k ∈ m := by
   replace h : m.raw.minKey?.bind ofNat? = some k := h
-  cases hm : m.raw.minKey? with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some k := h
-    show toNat k ∈ m.raw
-    rw [toNat_ofNat? h]
-    exact NatMap.minKey?_mem hm
+  show toNat k ∈ m.raw
+  exact NatMap.minKey?_mem (bind_ofNat?_eq_some h)
 
 /-- The least key is a lower bound in encoding order. -/
 theorem minKey?_le {m : IndexedMap κ V} {k j : κ} (h : m.minKey? = some k) (hj : j ∈ m) :
     toNat k ≤ toNat j := by
   replace h : m.raw.minKey?.bind ofNat? = some k := h
-  cases hm : m.raw.minKey? with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some k := h
-    rw [toNat_ofNat? h]
-    exact NatMap.minKey?_le hm hj
+  exact NatMap.minKey?_le (bind_ofNat?_eq_some h) hj
 
 /-- The greatest key (in encoding order) is present. -/
 theorem maxKey?_mem {m : IndexedMap κ V} {k : κ} (h : m.maxKey? = some k) : k ∈ m := by
   replace h : m.raw.maxKey?.bind ofNat? = some k := h
-  cases hm : m.raw.maxKey? with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some k := h
-    show toNat k ∈ m.raw
-    rw [toNat_ofNat? h]
-    exact NatMap.maxKey?_mem hm
+  show toNat k ∈ m.raw
+  exact NatMap.maxKey?_mem (bind_ofNat?_eq_some h)
 
 /-- The greatest key is an upper bound in encoding order. -/
 theorem le_maxKey? {m : IndexedMap κ V} {k j : κ} (h : m.maxKey? = some k) (hj : j ∈ m) :
     toNat j ≤ toNat k := by
   replace h : m.raw.maxKey?.bind ofNat? = some k := h
-  cases hm : m.raw.maxKey? with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some k := h
-    rw [toNat_ofNat? h]
-    exact NatMap.le_maxKey? hm hj
+  exact NatMap.le_maxKey? (bind_ofNat?_eq_some h) hj
 
 /-- `minKey?` answers `none` exactly on the empty map (totality: decoding the least key of a
 well-formed map never fails). -/
@@ -794,14 +778,8 @@ theorem minKey?_eq_none {m : IndexedMap κ V} : m.minKey? = none ↔ m = empty :
   constructor
   · intro h
     replace h : m.raw.minKey?.bind ofNat? = none := h
-    cases hm : m.raw.minKey? with
-    | none => exact ext (NatMap.minKey?_eq_none.mp hm)
-    | some n =>
-      rw [hm] at h
-      replace h : ofNat? n = none := h
-      obtain ⟨k, hk, _⟩ := ofNat?_of_mem_raw (NatMap.minKey?_mem hm)
-      rw [hk] at h
-      exact absurd h (by simp)
+    exact ext (NatMap.minKey?_eq_none.mp
+      (bind_ofNat?_eq_none h fun n hm => m.wf n (NatMap.minKey?_mem hm)))
   · intro h
     subst h
     show ((empty : IndexedMap κ V).raw.minKey?).bind ofNat? = none
@@ -813,14 +791,8 @@ theorem maxKey?_eq_none {m : IndexedMap κ V} : m.maxKey? = none ↔ m = empty :
   constructor
   · intro h
     replace h : m.raw.maxKey?.bind ofNat? = none := h
-    cases hm : m.raw.maxKey? with
-    | none => exact ext (NatMap.maxKey?_eq_none.mp hm)
-    | some n =>
-      rw [hm] at h
-      replace h : ofNat? n = none := h
-      obtain ⟨k, hk, _⟩ := ofNat?_of_mem_raw (NatMap.maxKey?_mem hm)
-      rw [hk] at h
-      exact absurd h (by simp)
+    exact ext (NatMap.maxKey?_eq_none.mp
+      (bind_ofNat?_eq_none h fun n hm => m.wf n (NatMap.maxKey?_mem hm)))
   · intro h
     subst h
     show ((empty : IndexedMap κ V).raw.maxKey?).bind ofNat? = none
@@ -832,19 +804,12 @@ theorem minEntry?_eq_none {m : IndexedMap κ V} : m.minEntry? = none ↔ m = emp
   constructor
   · intro h
     replace h : m.raw.minEntry?.bind (fun e => (ofNat? e.1).map fun k => (k, e.2)) = none := h
-    cases hm : m.raw.minEntry? with
-    | none =>
-      refine ext (NatMap.minKey?_eq_none.mp ?_)
-      show (NatCollection.minEntry? m.raw).map Prod.fst = none
-      rw [show NatCollection.minEntry? m.raw = none from hm]
-      rfl
-    | some e =>
-      rw [hm] at h
-      replace h : (ofNat? e.1).map (fun k => (k, e.2)) = none := h
-      obtain ⟨k, hk, _⟩ :=
-        ofNat?_of_mem_raw (mem_of_get?_eq_some (NatMap.get?_of_minEntry? hm))
-      rw [hk] at h
-      exact absurd h (by simp)
+    have hraw : m.raw.minEntry? = none := entryDecode_eq_none h
+      fun e hm => m.wf e.1 (mem_of_get?_eq_some (NatMap.get?_of_minEntry? hm))
+    refine ext (NatMap.minKey?_eq_none.mp ?_)
+    show (NatCollection.minEntry? m.raw).map Prod.fst = none
+    rw [show NatCollection.minEntry? m.raw = none from hraw]
+    rfl
   · intro h
     subst h
     show (NatCollection.minEntry? (empty : IndexedMap κ V).raw).bind
@@ -860,19 +825,12 @@ theorem maxEntry?_eq_none {m : IndexedMap κ V} : m.maxEntry? = none ↔ m = emp
   constructor
   · intro h
     replace h : m.raw.maxEntry?.bind (fun e => (ofNat? e.1).map fun k => (k, e.2)) = none := h
-    cases hm : m.raw.maxEntry? with
-    | none =>
-      refine ext (NatMap.maxKey?_eq_none.mp ?_)
-      show (NatCollection.maxEntry? m.raw).map Prod.fst = none
-      rw [show NatCollection.maxEntry? m.raw = none from hm]
-      rfl
-    | some e =>
-      rw [hm] at h
-      replace h : (ofNat? e.1).map (fun k => (k, e.2)) = none := h
-      obtain ⟨k, hk, _⟩ :=
-        ofNat?_of_mem_raw (mem_of_get?_eq_some (NatMap.get?_of_maxEntry? hm))
-      rw [hk] at h
-      exact absurd h (by simp)
+    have hraw : m.raw.maxEntry? = none := entryDecode_eq_none h
+      fun e hm => m.wf e.1 (mem_of_get?_eq_some (NatMap.get?_of_maxEntry? hm))
+    refine ext (NatMap.maxKey?_eq_none.mp ?_)
+    show (NatCollection.maxEntry? m.raw).map Prod.fst = none
+    rw [show NatCollection.maxEntry? m.raw = none from hraw]
+    rfl
   · intro h
     subst h
     show (NatCollection.maxEntry? (empty : IndexedMap κ V).raw).bind
@@ -888,36 +846,15 @@ theorem get?_of_entryGT? {m : IndexedMap κ V} {k j : κ} {v : V}
     (h : m.entryGT? k = some (j, v)) : m.get? j = some v := by
   replace h : (m.raw.entryGT? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j, v) := h
-  cases hm : m.raw.entryGT? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j, v) := h
-    obtain ⟨j', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j', e.2) = (j, v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    subst h2
-    show m.raw.get? (toNat j') = some e.2
-    rw [toNat_ofNat? hd]
-    exact NatMap.get?_of_entryGT? hm
+  show m.raw.get? (toNat j) = some v
+  exact NatMap.get?_of_entryGT? (entryDecode_eq_some h)
 
 /-- `entryGT?`'s key is strictly greater (in encoding order) than the query key. -/
 theorem entryGT?_gt {m : IndexedMap κ V} {k j : κ} {v : V} (h : m.entryGT? k = some (j, v)) :
     toNat k < toNat j := by
   replace h : (m.raw.entryGT? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j, v) := h
-  cases hm : m.raw.entryGT? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j, v) := h
-    obtain ⟨j', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j', e.2) = (j, v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    rw [toNat_ofNat? hd]
-    exact NatMap.entryGT?_gt hm
+  exact NatMap.entryGT?_gt (entryDecode_eq_some h)
 
 /-- `entryGT?` returns the *least* key beyond the query key (in encoding order). -/
 theorem entryGT?_le {m : IndexedMap κ V} {k j' j : κ} {v : V}
@@ -925,17 +862,7 @@ theorem entryGT?_le {m : IndexedMap κ V} {k j' j : κ} {v : V}
     toNat j' ≤ toNat j := by
   replace h : (m.raw.entryGT? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j', v) := h
-  cases hm : m.raw.entryGT? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j', v) := h
-    obtain ⟨j'', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j'', e.2) = (j', v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    rw [toNat_ofNat? hd]
-    exact NatMap.entryGT?_le hm hj hk
+  exact NatMap.entryGT?_le (entryDecode_eq_some h) hj hk
 
 /-- A `none` from `entryGT?` is complete: no key of the map lies strictly above the query key
 (in encoding order). -/
@@ -943,51 +870,23 @@ theorem le_of_entryGT?_eq_none {m : IndexedMap κ V} {k j : κ} (h : m.entryGT? 
     (hj : j ∈ m) : toNat j ≤ toNat k := by
   replace h : (m.raw.entryGT? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = none := h
-  cases hm : m.raw.entryGT? (toNat k) with
-  | none => exact NatMap.le_of_entryGT?_eq_none hm hj
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = none := h
-    obtain ⟨k', hk', _⟩ :=
-      ofNat?_of_mem_raw (mem_of_get?_eq_some (NatMap.get?_of_entryGT? hm))
-    rw [hk'] at h
-    exact absurd h (by simp)
+  exact NatMap.le_of_entryGT?_eq_none (entryDecode_eq_none h
+    fun e hm => m.wf e.1 (mem_of_get?_eq_some (NatMap.get?_of_entryGT? hm))) hj
 
 /-- The entry `entryLT?` returns is real: `get?` reads its value back at its key. -/
 theorem get?_of_entryLT? {m : IndexedMap κ V} {k j : κ} {v : V}
     (h : m.entryLT? k = some (j, v)) : m.get? j = some v := by
   replace h : (m.raw.entryLT? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j, v) := h
-  cases hm : m.raw.entryLT? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j, v) := h
-    obtain ⟨j', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j', e.2) = (j, v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    subst h2
-    show m.raw.get? (toNat j') = some e.2
-    rw [toNat_ofNat? hd]
-    exact NatMap.get?_of_entryLT? hm
+  show m.raw.get? (toNat j) = some v
+  exact NatMap.get?_of_entryLT? (entryDecode_eq_some h)
 
 /-- `entryLT?`'s key is strictly less (in encoding order) than the query key. -/
 theorem entryLT?_lt {m : IndexedMap κ V} {k j : κ} {v : V} (h : m.entryLT? k = some (j, v)) :
     toNat j < toNat k := by
   replace h : (m.raw.entryLT? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j, v) := h
-  cases hm : m.raw.entryLT? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j, v) := h
-    obtain ⟨j', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j', e.2) = (j, v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    rw [toNat_ofNat? hd]
-    exact NatMap.entryLT?_lt hm
+  exact NatMap.entryLT?_lt (entryDecode_eq_some h)
 
 /-- `entryLT?` returns the *greatest* key below the query key (in encoding order). -/
 theorem le_entryLT? {m : IndexedMap κ V} {k j' j : κ} {v : V}
@@ -995,17 +894,7 @@ theorem le_entryLT? {m : IndexedMap κ V} {k j' j : κ} {v : V}
     toNat j ≤ toNat j' := by
   replace h : (m.raw.entryLT? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j', v) := h
-  cases hm : m.raw.entryLT? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j', v) := h
-    obtain ⟨j'', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j'', e.2) = (j', v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    rw [toNat_ofNat? hd]
-    exact NatMap.le_entryLT? hm hj hk
+  exact NatMap.le_entryLT? (entryDecode_eq_some h) hj hk
 
 /-- A `none` from `entryLT?` is complete: no key of the map lies strictly below the query key
 (in encoding order). -/
@@ -1013,51 +902,23 @@ theorem ge_of_entryLT?_eq_none {m : IndexedMap κ V} {k j : κ} (h : m.entryLT? 
     (hj : j ∈ m) : toNat k ≤ toNat j := by
   replace h : (m.raw.entryLT? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = none := h
-  cases hm : m.raw.entryLT? (toNat k) with
-  | none => exact NatMap.ge_of_entryLT?_eq_none hm hj
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = none := h
-    obtain ⟨k', hk', _⟩ :=
-      ofNat?_of_mem_raw (mem_of_get?_eq_some (NatMap.get?_of_entryLT? hm))
-    rw [hk'] at h
-    exact absurd h (by simp)
+  exact NatMap.ge_of_entryLT?_eq_none (entryDecode_eq_none h
+    fun e hm => m.wf e.1 (mem_of_get?_eq_some (NatMap.get?_of_entryLT? hm))) hj
 
 /-- The entry `entryGE?` returns is real: `get?` reads its value back at its key. -/
 theorem get?_of_entryGE? {m : IndexedMap κ V} {k j : κ} {v : V}
     (h : m.entryGE? k = some (j, v)) : m.get? j = some v := by
   replace h : (m.raw.entryGE? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j, v) := h
-  cases hm : m.raw.entryGE? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j, v) := h
-    obtain ⟨j', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j', e.2) = (j, v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    subst h2
-    show m.raw.get? (toNat j') = some e.2
-    rw [toNat_ofNat? hd]
-    exact NatMap.get?_of_entryGE? hm
+  show m.raw.get? (toNat j) = some v
+  exact NatMap.get?_of_entryGE? (entryDecode_eq_some h)
 
 /-- `entryGE?`'s key is at or above the query key (in encoding order). -/
 theorem entryGE?_ge {m : IndexedMap κ V} {k j : κ} {v : V} (h : m.entryGE? k = some (j, v)) :
     toNat k ≤ toNat j := by
   replace h : (m.raw.entryGE? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j, v) := h
-  cases hm : m.raw.entryGE? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j, v) := h
-    obtain ⟨j', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j', e.2) = (j, v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    rw [toNat_ofNat? hd]
-    exact NatMap.entryGE?_ge hm
+  exact NatMap.entryGE?_ge (entryDecode_eq_some h)
 
 /-- `entryGE?` returns the *least* key at or beyond the query key (in encoding order). -/
 theorem entryGE?_le {m : IndexedMap κ V} {k j' j : κ} {v : V}
@@ -1065,17 +926,7 @@ theorem entryGE?_le {m : IndexedMap κ V} {k j' j : κ} {v : V}
     toNat j' ≤ toNat j := by
   replace h : (m.raw.entryGE? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j', v) := h
-  cases hm : m.raw.entryGE? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j', v) := h
-    obtain ⟨j'', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j'', e.2) = (j', v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    rw [toNat_ofNat? hd]
-    exact NatMap.entryGE?_le hm hj hk
+  exact NatMap.entryGE?_le (entryDecode_eq_some h) hj hk
 
 /-- A `none` from `entryGE?` is complete: every key of the map lies strictly below the query key
 (in encoding order). -/
@@ -1083,51 +934,23 @@ theorem lt_of_entryGE?_eq_none {m : IndexedMap κ V} {k j : κ} (h : m.entryGE? 
     (hj : j ∈ m) : toNat j < toNat k := by
   replace h : (m.raw.entryGE? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = none := h
-  cases hm : m.raw.entryGE? (toNat k) with
-  | none => exact NatMap.lt_of_entryGE?_eq_none hm hj
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = none := h
-    obtain ⟨k', hk', _⟩ :=
-      ofNat?_of_mem_raw (mem_of_get?_eq_some (NatMap.get?_of_entryGE? hm))
-    rw [hk'] at h
-    exact absurd h (by simp)
+  exact NatMap.lt_of_entryGE?_eq_none (entryDecode_eq_none h
+    fun e hm => m.wf e.1 (mem_of_get?_eq_some (NatMap.get?_of_entryGE? hm))) hj
 
 /-- The entry `entryLE?` returns is real: `get?` reads its value back at its key. -/
 theorem get?_of_entryLE? {m : IndexedMap κ V} {k j : κ} {v : V}
     (h : m.entryLE? k = some (j, v)) : m.get? j = some v := by
   replace h : (m.raw.entryLE? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j, v) := h
-  cases hm : m.raw.entryLE? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j, v) := h
-    obtain ⟨j', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j', e.2) = (j, v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    subst h2
-    show m.raw.get? (toNat j') = some e.2
-    rw [toNat_ofNat? hd]
-    exact NatMap.get?_of_entryLE? hm
+  show m.raw.get? (toNat j) = some v
+  exact NatMap.get?_of_entryLE? (entryDecode_eq_some h)
 
 /-- `entryLE?`'s key is at or below the query key (in encoding order). -/
 theorem entryLE?_le {m : IndexedMap κ V} {k j : κ} {v : V} (h : m.entryLE? k = some (j, v)) :
     toNat j ≤ toNat k := by
   replace h : (m.raw.entryLE? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j, v) := h
-  cases hm : m.raw.entryLE? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j, v) := h
-    obtain ⟨j', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j', e.2) = (j, v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    rw [toNat_ofNat? hd]
-    exact NatMap.entryLE?_le hm
+  exact NatMap.entryLE?_le (entryDecode_eq_some h)
 
 /-- `entryLE?` returns the *greatest* key at or below the query key (in encoding order). -/
 theorem le_entryLE? {m : IndexedMap κ V} {k j' j : κ} {v : V}
@@ -1135,17 +958,7 @@ theorem le_entryLE? {m : IndexedMap κ V} {k j' j : κ} {v : V}
     toNat j ≤ toNat j' := by
   replace h : (m.raw.entryLE? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = some (j', v) := h
-  cases hm : m.raw.entryLE? (toNat k) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = some (j', v) := h
-    obtain ⟨j'', hd, hpair⟩ := Option.map_eq_some_iff.mp h
-    replace hpair : (j'', e.2) = (j', v) := hpair
-    injection hpair with h1 h2
-    subst h1
-    rw [toNat_ofNat? hd]
-    exact NatMap.le_entryLE? hm hj hk
+  exact NatMap.le_entryLE? (entryDecode_eq_some h) hj hk
 
 /-- A `none` from `entryLE?` is complete: every key of the map lies strictly above the query key
 (in encoding order). -/
@@ -1153,15 +966,8 @@ theorem gt_of_entryLE?_eq_none {m : IndexedMap κ V} {k j : κ} (h : m.entryLE? 
     (hj : j ∈ m) : toNat k < toNat j := by
   replace h : (m.raw.entryLE? (toNat k)).bind
       (fun e => (ofNat? e.1).map fun k' => (k', e.2)) = none := h
-  cases hm : m.raw.entryLE? (toNat k) with
-  | none => exact NatMap.gt_of_entryLE?_eq_none hm hj
-  | some e =>
-    rw [hm] at h
-    replace h : (ofNat? e.1).map (fun k' => (k', e.2)) = none := h
-    obtain ⟨k', hk', _⟩ :=
-      ofNat?_of_mem_raw (mem_of_get?_eq_some (NatMap.get?_of_entryLE? hm))
-    rw [hk'] at h
-    exact absurd h (by simp)
+  exact NatMap.gt_of_entryLE?_eq_none (entryDecode_eq_none h
+    fun e hm => m.wf e.1 (mem_of_get?_eq_some (NatMap.get?_of_entryLE? hm))) hj
 
 /-- `popMinEntry?` pops the least entry: its entry is `minEntry?`'s answer. -/
 theorem minEntry?_of_popMinEntry? {m : IndexedMap κ V} {e : κ × V} {m' : IndexedMap κ V}

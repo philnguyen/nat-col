@@ -190,6 +190,30 @@ theorem toNat_inj {a b : α} (h : toNat a = toNat b) : a = b := by
   rw [ofNat?_toNat b] at ha
   exact (Option.some.inj ha).symm
 
+/-- Decoding seam: a decoded `some` answer pins the raw key to `toNat` of the result. This is
+the workhorse behind every `IndexedSet`/`IndexedMap` ordered-query theorem whose hypothesis is
+a decoded raw answer. -/
+theorem bind_ofNat?_eq_some {o : Option Nat} {a : α} (h : o.bind (ofNat? (α := α)) = some a) :
+    o = some (toNat a) := by
+  cases o with
+  | none => exact absurd h (by simp)
+  | some n =>
+    replace h : ofNat? n = some a := h
+    rw [toNat_ofNat? h]
+
+/-- Decoding seam: when every raw key the answer could carry is in `toNat`'s image (the
+well-formedness invariant of `IndexedSet`/`IndexedMap`), a decoded `none` answer means the raw
+answer was already `none`. -/
+theorem bind_ofNat?_eq_none {o : Option Nat} (h : o.bind (ofNat? (α := α)) = none)
+    (hwf : ∀ n, o = some n → ∃ a : α, toNat a = n) : o = none := by
+  cases o with
+  | none => rfl
+  | some n =>
+    obtain ⟨a, ha⟩ := hwf n rfl
+    replace h : ofNat? n = none := h
+    rw [ofNat?_eq_some_iff.mpr ha] at h
+    exact absurd h (by simp)
+
 end Countable
 
 end NatCol

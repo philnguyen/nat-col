@@ -504,50 +504,26 @@ theorem union_inter_distrib (s t u : IndexedSet α) : s ∪ (t ∩ u) = (s ∪ t
 /-- The minimum (in encoding order) is a member. -/
 theorem min?_mem {s : IndexedSet α} {a : α} (h : s.min? = some a) : a ∈ s := by
   replace h : s.raw.min?.bind ofNat? = some a := h
-  cases hm : s.raw.min? with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some a := h
-    show toNat a ∈ s.raw
-    rw [toNat_ofNat? h]
-    exact NatSet.min?_mem hm
+  show toNat a ∈ s.raw
+  exact NatSet.min?_mem (bind_ofNat?_eq_some h)
 
 /-- The minimum is a lower bound in encoding order. -/
 theorem min?_le {s : IndexedSet α} {a b : α} (h : s.min? = some a) (hb : b ∈ s) :
     toNat a ≤ toNat b := by
   replace h : s.raw.min?.bind ofNat? = some a := h
-  cases hm : s.raw.min? with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some a := h
-    rw [toNat_ofNat? h]
-    exact NatSet.min?_le hm hb
+  exact NatSet.min?_le (bind_ofNat?_eq_some h) hb
 
 /-- The maximum (in encoding order) is a member. -/
 theorem max?_mem {s : IndexedSet α} {a : α} (h : s.max? = some a) : a ∈ s := by
   replace h : s.raw.max?.bind ofNat? = some a := h
-  cases hm : s.raw.max? with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some a := h
-    show toNat a ∈ s.raw
-    rw [toNat_ofNat? h]
-    exact NatSet.max?_mem hm
+  show toNat a ∈ s.raw
+  exact NatSet.max?_mem (bind_ofNat?_eq_some h)
 
 /-- The maximum is an upper bound in encoding order. -/
 theorem le_max? {s : IndexedSet α} {a b : α} (h : s.max? = some a) (hb : b ∈ s) :
     toNat b ≤ toNat a := by
   replace h : s.raw.max?.bind ofNat? = some a := h
-  cases hm : s.raw.max? with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some a := h
-    rw [toNat_ofNat? h]
-    exact NatSet.le_max? hm hb
+  exact NatSet.le_max? (bind_ofNat?_eq_some h) hb
 
 /-- `min?` answers `none` exactly on the empty set (totality: decoding the minimum of a
 well-formed set never fails). -/
@@ -555,14 +531,8 @@ theorem min?_eq_none {s : IndexedSet α} : s.min? = none ↔ s = ∅ := by
   constructor
   · intro h
     replace h : s.raw.min?.bind ofNat? = none := h
-    cases hm : s.raw.min? with
-    | none => exact ext (NatSet.min?_eq_none.mp hm)
-    | some n =>
-      rw [hm] at h
-      replace h : ofNat? n = none := h
-      obtain ⟨a, ha, _⟩ := ofNat?_of_mem_raw (NatSet.min?_mem hm)
-      rw [ha] at h
-      exact absurd h (by simp)
+    exact ext (NatSet.min?_eq_none.mp
+      (bind_ofNat?_eq_none h fun n hm => s.wf n (NatSet.min?_mem hm)))
   · intro h
     subst h
     show ((∅ : IndexedSet α).raw.min?).bind ofNat? = none
@@ -574,14 +544,8 @@ theorem max?_eq_none {s : IndexedSet α} : s.max? = none ↔ s = ∅ := by
   constructor
   · intro h
     replace h : s.raw.max?.bind ofNat? = none := h
-    cases hm : s.raw.max? with
-    | none => exact ext (NatSet.max?_eq_none.mp hm)
-    | some n =>
-      rw [hm] at h
-      replace h : ofNat? n = none := h
-      obtain ⟨a, ha, _⟩ := ofNat?_of_mem_raw (NatSet.max?_mem hm)
-      rw [ha] at h
-      exact absurd h (by simp)
+    exact ext (NatSet.max?_eq_none.mp
+      (bind_ofNat?_eq_none h fun n hm => s.wf n (NatSet.max?_mem hm)))
   · intro h
     subst h
     show ((∅ : IndexedSet α).raw.max?).bind ofNat? = none
@@ -591,202 +555,106 @@ theorem max?_eq_none {s : IndexedSet α} : s.max? = none ↔ s = ∅ := by
 /-- The successor is a member: a `succ? a = some b` answer is an element of the set. -/
 theorem succ?_mem {s : IndexedSet α} {a b : α} (h : s.succ? a = some b) : b ∈ s := by
   replace h : (s.raw.succ? (toNat a)).bind ofNat? = some b := h
-  cases hm : s.raw.succ? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b := h
-    show toNat b ∈ s.raw
-    rw [toNat_ofNat? h]
-    exact NatSet.succ?_mem hm
+  show toNat b ∈ s.raw
+  exact NatSet.succ?_mem (bind_ofNat?_eq_some h)
 
 /-- The successor is strictly greater in encoding order. -/
 theorem succ?_gt {s : IndexedSet α} {a b : α} (h : s.succ? a = some b) :
     toNat a < toNat b := by
   replace h : (s.raw.succ? (toNat a)).bind ofNat? = some b := h
-  cases hm : s.raw.succ? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b := h
-    rw [toNat_ofNat? h]
-    exact NatSet.succ?_gt hm
+  exact NatSet.succ?_gt (bind_ofNat?_eq_some h)
 
 /-- The successor is the *least* element above `a` in encoding order. -/
 theorem succ?_le {s : IndexedSet α} {a b' b : α} (h : s.succ? a = some b') (hb : b ∈ s)
     (ha : toNat a < toNat b) : toNat b' ≤ toNat b := by
   replace h : (s.raw.succ? (toNat a)).bind ofNat? = some b' := h
-  cases hm : s.raw.succ? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b' := h
-    rw [toNat_ofNat? h]
-    exact NatSet.succ?_le hm hb ha
+  exact NatSet.succ?_le (bind_ofNat?_eq_some h) hb ha
 
 /-- A `none` from `succ?` is complete: no element of the set lies strictly above `a` in encoding
 order. (Uses `wf`: the raw answer, were there one, would decode.) -/
 theorem le_of_succ?_eq_none {s : IndexedSet α} {a b : α} (h : s.succ? a = none) (hb : b ∈ s) :
     toNat b ≤ toNat a := by
   replace h : (s.raw.succ? (toNat a)).bind ofNat? = none := h
-  cases hm : s.raw.succ? (toNat a) with
-  | none => exact NatSet.le_of_succ?_eq_none hm hb
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = none := h
-    obtain ⟨c, hc, _⟩ := ofNat?_of_mem_raw (NatSet.succ?_mem hm)
-    rw [hc] at h
-    exact absurd h (by simp)
+  exact NatSet.le_of_succ?_eq_none
+    (bind_ofNat?_eq_none h fun n hm => s.wf n (NatSet.succ?_mem hm)) hb
 
 /-- The predecessor is a member: a `pred? a = some b` answer is an element of the set. -/
 theorem pred?_mem {s : IndexedSet α} {a b : α} (h : s.pred? a = some b) : b ∈ s := by
   replace h : (s.raw.pred? (toNat a)).bind ofNat? = some b := h
-  cases hm : s.raw.pred? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b := h
-    show toNat b ∈ s.raw
-    rw [toNat_ofNat? h]
-    exact NatSet.pred?_mem hm
+  show toNat b ∈ s.raw
+  exact NatSet.pred?_mem (bind_ofNat?_eq_some h)
 
 /-- The predecessor is strictly less in encoding order. -/
 theorem pred?_lt {s : IndexedSet α} {a b : α} (h : s.pred? a = some b) :
     toNat b < toNat a := by
   replace h : (s.raw.pred? (toNat a)).bind ofNat? = some b := h
-  cases hm : s.raw.pred? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b := h
-    rw [toNat_ofNat? h]
-    exact NatSet.pred?_lt hm
+  exact NatSet.pred?_lt (bind_ofNat?_eq_some h)
 
 /-- The predecessor is the *greatest* element below `a` in encoding order. -/
 theorem le_pred? {s : IndexedSet α} {a b' b : α} (h : s.pred? a = some b') (hb : b ∈ s)
     (ha : toNat b < toNat a) : toNat b ≤ toNat b' := by
   replace h : (s.raw.pred? (toNat a)).bind ofNat? = some b' := h
-  cases hm : s.raw.pred? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b' := h
-    rw [toNat_ofNat? h]
-    exact NatSet.le_pred? hm hb ha
+  exact NatSet.le_pred? (bind_ofNat?_eq_some h) hb ha
 
 /-- A `none` from `pred?` is complete: no element of the set lies strictly below `a` in encoding
 order. -/
 theorem ge_of_pred?_eq_none {s : IndexedSet α} {a b : α} (h : s.pred? a = none) (hb : b ∈ s) :
     toNat a ≤ toNat b := by
   replace h : (s.raw.pred? (toNat a)).bind ofNat? = none := h
-  cases hm : s.raw.pred? (toNat a) with
-  | none => exact NatSet.ge_of_pred?_eq_none hm hb
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = none := h
-    obtain ⟨c, hc, _⟩ := ofNat?_of_mem_raw (NatSet.pred?_mem hm)
-    rw [hc] at h
-    exact absurd h (by simp)
+  exact NatSet.ge_of_pred?_eq_none
+    (bind_ofNat?_eq_none h fun n hm => s.wf n (NatSet.pred?_mem hm)) hb
 
 /-- `succEq?`'s answer is a member. -/
 theorem succEq?_mem {s : IndexedSet α} {a b : α} (h : s.succEq? a = some b) : b ∈ s := by
   replace h : (s.raw.succEq? (toNat a)).bind ofNat? = some b := h
-  cases hm : s.raw.succEq? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b := h
-    show toNat b ∈ s.raw
-    rw [toNat_ofNat? h]
-    exact NatSet.succEq?_mem hm
+  show toNat b ∈ s.raw
+  exact NatSet.succEq?_mem (bind_ofNat?_eq_some h)
 
 /-- `succEq?`'s answer is at or above `a` in encoding order. -/
 theorem succEq?_ge {s : IndexedSet α} {a b : α} (h : s.succEq? a = some b) :
     toNat a ≤ toNat b := by
   replace h : (s.raw.succEq? (toNat a)).bind ofNat? = some b := h
-  cases hm : s.raw.succEq? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b := h
-    rw [toNat_ofNat? h]
-    exact NatSet.succEq?_ge hm
+  exact NatSet.succEq?_ge (bind_ofNat?_eq_some h)
 
 /-- `succEq?` returns the *least* element at or above `a` in encoding order. -/
 theorem succEq?_le {s : IndexedSet α} {a b' b : α} (h : s.succEq? a = some b') (hb : b ∈ s)
     (ha : toNat a ≤ toNat b) : toNat b' ≤ toNat b := by
   replace h : (s.raw.succEq? (toNat a)).bind ofNat? = some b' := h
-  cases hm : s.raw.succEq? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b' := h
-    rw [toNat_ofNat? h]
-    exact NatSet.succEq?_le hm hb ha
+  exact NatSet.succEq?_le (bind_ofNat?_eq_some h) hb ha
 
 /-- A `none` from `succEq?` is complete: every element of the set lies strictly below `a` in
 encoding order. -/
 theorem lt_of_succEq?_eq_none {s : IndexedSet α} {a b : α} (h : s.succEq? a = none)
     (hb : b ∈ s) : toNat b < toNat a := by
   replace h : (s.raw.succEq? (toNat a)).bind ofNat? = none := h
-  cases hm : s.raw.succEq? (toNat a) with
-  | none => exact NatSet.lt_of_succEq?_eq_none hm hb
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = none := h
-    obtain ⟨c, hc, _⟩ := ofNat?_of_mem_raw (NatSet.succEq?_mem hm)
-    rw [hc] at h
-    exact absurd h (by simp)
+  exact NatSet.lt_of_succEq?_eq_none
+    (bind_ofNat?_eq_none h fun n hm => s.wf n (NatSet.succEq?_mem hm)) hb
 
 /-- `predEq?`'s answer is a member. -/
 theorem predEq?_mem {s : IndexedSet α} {a b : α} (h : s.predEq? a = some b) : b ∈ s := by
   replace h : (s.raw.predEq? (toNat a)).bind ofNat? = some b := h
-  cases hm : s.raw.predEq? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b := h
-    show toNat b ∈ s.raw
-    rw [toNat_ofNat? h]
-    exact NatSet.predEq?_mem hm
+  show toNat b ∈ s.raw
+  exact NatSet.predEq?_mem (bind_ofNat?_eq_some h)
 
 /-- `predEq?`'s answer is at or below `a` in encoding order. -/
 theorem predEq?_le {s : IndexedSet α} {a b : α} (h : s.predEq? a = some b) :
     toNat b ≤ toNat a := by
   replace h : (s.raw.predEq? (toNat a)).bind ofNat? = some b := h
-  cases hm : s.raw.predEq? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b := h
-    rw [toNat_ofNat? h]
-    exact NatSet.predEq?_le hm
+  exact NatSet.predEq?_le (bind_ofNat?_eq_some h)
 
 /-- `predEq?` returns the *greatest* element at or below `a` in encoding order. -/
 theorem le_predEq? {s : IndexedSet α} {a b' b : α} (h : s.predEq? a = some b') (hb : b ∈ s)
     (ha : toNat b ≤ toNat a) : toNat b ≤ toNat b' := by
   replace h : (s.raw.predEq? (toNat a)).bind ofNat? = some b' := h
-  cases hm : s.raw.predEq? (toNat a) with
-  | none => rw [hm] at h; exact absurd h (by simp)
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = some b' := h
-    rw [toNat_ofNat? h]
-    exact NatSet.le_predEq? hm hb ha
+  exact NatSet.le_predEq? (bind_ofNat?_eq_some h) hb ha
 
 /-- A `none` from `predEq?` is complete: every element of the set lies strictly above `a` in
 encoding order. -/
 theorem gt_of_predEq?_eq_none {s : IndexedSet α} {a b : α} (h : s.predEq? a = none)
     (hb : b ∈ s) : toNat a < toNat b := by
   replace h : (s.raw.predEq? (toNat a)).bind ofNat? = none := h
-  cases hm : s.raw.predEq? (toNat a) with
-  | none => exact NatSet.gt_of_predEq?_eq_none hm hb
-  | some n =>
-    rw [hm] at h
-    replace h : ofNat? n = none := h
-    obtain ⟨c, hc, _⟩ := ofNat?_of_mem_raw (NatSet.predEq?_mem hm)
-    rw [hc] at h
-    exact absurd h (by simp)
+  exact NatSet.gt_of_predEq?_eq_none
+    (bind_ofNat?_eq_none h fun n hm => s.wf n (NatSet.predEq?_mem hm)) hb
 
 /-- Membership in `split`'s left part: exactly the members strictly below the split element in
 encoding order. -/
